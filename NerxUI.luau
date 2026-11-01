@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.0.1
+	Nerx UI Library · v1.0.2
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.0.1"
+Nerx.Version = "1.0.2"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -481,14 +481,23 @@ end
 -- ---------------------------------------------------------------------------------------
 
 U.KeyNames = {
-	[Enum.KeyCode.MouseButton1] = "MB1",
-	[Enum.KeyCode.MouseButton2] = "MB2",
-	[Enum.KeyCode.MouseButton3] = "MB3",
+	[Enum.UserInputType.MouseButton1] = "MB1",
+	[Enum.UserInputType.MouseButton2] = "MB2",
+	[Enum.UserInputType.MouseButton3] = "MB3",
 	[Enum.KeyCode.Escape] = "ESC",
 	[Enum.KeyCode.Insert] = "INS",
 	[Enum.KeyCode.Delete] = "DEL",
 	[Enum.KeyCode.KeypadEnter] = "ENTER",
 	[Enum.KeyCode.Return] = "ENTER",
+}
+
+U.MouseKeys = {
+    MB1 = Enum.UserInputType.MouseButton1,
+    MB2 = Enum.UserInputType.MouseButton2,
+    MB3 = Enum.UserInputType.MouseButton3,
+    MouseButton1 = Enum.UserInputType.MouseButton1,
+    MouseButton2 = Enum.UserInputType.MouseButton2,
+    MouseButton3 = Enum.UserInputType.MouseButton3,
 }
 
 function U.keyName(keycode)
@@ -506,6 +515,10 @@ function U.parseKey(value)
 		return nil
 	end
 	if type(value) == "string" then
+        local mouseKey = U.MouseKeys[value]
+        if mouseKey then
+            return mouseKey
+        end
 		local ok, key = pcall(function()
 			return Enum.KeyCode[value]
 		end)
@@ -2476,11 +2489,11 @@ local function createSection(page, config)
 				captureConnection = U.connect(UserInputService.InputBegan, function(input)
 					local key = input.KeyCode
 					if input.UserInputType == Enum.UserInputType.MouseButton1 then
-						key = Enum.KeyCode.MouseButton1
+						key = Enum.UserInputType.MouseButton1
 					elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
-						key = Enum.KeyCode.MouseButton2
+						key = Enum.UserInputType.MouseButton2
 					elseif input.UserInputType == Enum.UserInputType.MouseButton3 then
-						key = Enum.KeyCode.MouseButton3
+						key = Enum.UserInputType.MouseButton3
 					end
 					if key == Enum.KeyCode.Unknown then
 						return
