@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.0.2
+	Nerx UI Library · v1.0.3
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.0.2"
+Nerx.Version = "1.0.3"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -216,6 +216,10 @@ function U.new(class, props, parent)
 	return object
 end
 
+function U.canvas(parent, props)
+    return U.new("CanvasGroup", props, parent)
+end
+
 function U.frame(parent, props)
 	return U.new("Frame", props, parent)
 end
@@ -359,10 +363,31 @@ function U.viewport()
 	return Vector2.new(1280, 720)
 end
 
+function U.setGroupTransparency(object, value)
+    if not object then
+        return
+    end
+    pcall(function()
+        object.GroupTransparency = value
+    end)
+end
+
 function U.tween(object, info, props)
-	local tween = TweenService:Create(object, info or TWEEN.Default, props)
-	tween:Play()
-	return tween
+    local ok, tween = pcall(function()
+        return TweenService:Create(object, info or TWEEN.Default, props)
+    end)
+    if not ok or not tween then
+        for key, value in pairs(props or {}) do
+            pcall(function()
+                object[key] = value
+            end)
+        end
+        return nil
+    end
+    local played = pcall(function()
+        tween:Play()
+    end)
+    return played and tween or nil
 end
 
 function U.connect(signal, callback)
@@ -617,7 +642,7 @@ end
 
 local tooltip = nil
 do
-	local frame = U.frame(nil, {
+	local frame = U.canvas(nil, {
 		Name = "NerxTooltip",
 		BackgroundColor3 = Theme.Surface,
 		BackgroundTransparency = 0.02,
@@ -696,7 +721,7 @@ function U.tooltip(target, titleText, content)
 			local y = math.clamp(mouse.Y + 18, 8, viewport.Y - root.AbsoluteSize.Y - 8)
 			root.Position = UDim2.fromOffset(x, y)
 			root.Visible = true
-			root.GroupTransparency = 1
+			U.setGroupTransparency(root, 1)
 			U.tween(root, TWEEN.Fast, { GroupTransparency = 0 })
 		end)
 	end)
@@ -736,7 +761,7 @@ function U.popup(anchor, width, height, builder, alignRight)
 	})
 	overlay.Parent = screenGui
 
-	local card = U.frame(nil, {
+	local card = U.canvas(nil, {
 		Name = "NerxPopup",
 		BackgroundColor3 = Theme.SurfaceRaised,
 		BackgroundTransparency = 0.02,
@@ -773,7 +798,7 @@ function U.popup(anchor, width, height, builder, alignRight)
 	end
 
 	card.Position = UDim2.fromOffset(x, y)
-	card.GroupTransparency = 1
+	U.setGroupTransparency(card, 1)
 	card.Size = UDim2.fromOffset(width, height - 4)
 	U.tween(card, TWEEN.Fast, { GroupTransparency = 0, Size = UDim2.fromOffset(width, height) })
 
@@ -3380,7 +3405,7 @@ function Nerx:CreateWindow(config)
 		OnModeChange = config.OnModeChange,
 	}
 	window.Signal = nil
-	local root = U.frame(screenGui, {
+	local root = U.canvas(screenGui, {
 		Name = "NerxWindow",
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		BackgroundColor3 = Theme.Window,
@@ -4021,7 +4046,7 @@ function Nerx:CreateWindow(config)
 			Nerx:ClosePopup()
 			self.Visible = true
 			root.Visible = true
-			root.GroupTransparency = 1
+			U.setGroupTransparency(root, 1)
 			U.tween(root, TWEEN.Slow, { GroupTransparency = 0 })
 		else
 			self.Visible = false
@@ -4408,12 +4433,12 @@ function Nerx:CreateWindow(config)
 		U.tween(accountChevron, TWEEN.Fast, { TextTransparency = 0.45 })
 	end)
 
-	root.GroupTransparency = config.StartHidden and 1 or 0
+	U.setGroupTransparency(root, config.StartHidden and 1 or 0)
 	root.Visible = not config.StartHidden
 	window.Visible = not config.StartHidden
 
 	if not config.StartHidden then
-		root.GroupTransparency = 1
+		U.setGroupTransparency(root, 1)
 		U.tween(root, TWEEN.Slow, { GroupTransparency = 0 })
 	end
 
@@ -4902,13 +4927,13 @@ function Nerx:Notify(config)
 	local container = ensureNotifyRoot()
 	local cards = 0
 	for _, child in ipairs(container:GetChildren()) do
-		if child:IsA("Frame") and child:GetAttribute("NerxNotify") then
+		if child:IsA("GuiObject") and child:GetAttribute("NerxNotify") then
 			cards = cards + 1
 		end
 	end
 	if cards >= 4 then
 		for _, child in ipairs(container:GetChildren()) do
-			if child:IsA("Frame") and child:GetAttribute("NerxNotify") then
+			if child:IsA("GuiObject") and child:GetAttribute("NerxNotify") then
 				child:Destroy()
 				break
 			end
@@ -4916,7 +4941,7 @@ function Nerx:Notify(config)
 	end
 
 	notifyOrder = notifyOrder + 1
-	local card = U.frame(container, {
+	local card = U.canvas(container, {
 		BackgroundColor3 = Theme.SurfaceRaised,
 		BackgroundTransparency = 0.02,
 		BorderSizePixel = 0,
@@ -4975,7 +5000,7 @@ function Nerx:Notify(config)
 		ZIndex = 903,
 	})
 
-	card.GroupTransparency = 1
+	U.setGroupTransparency(card, 1)
 	card.Size = UDim2.new(1, 0, 0, 44)
 	U.tween(card, TWEEN.Default, { GroupTransparency = 0, Size = UDim2.new(1, 0, 0, 52) })
 
@@ -5030,7 +5055,7 @@ function Nerx:CreateIndicator(config)
 	color = color or Theme.Accent
 
 	local textWidth = U.measure(config.Name or "Indicator", 10.5, Fonts.Bold).X
-	local pill = U.frame(indicatorRoot, {
+	local pill = U.canvas(indicatorRoot, {
 		BackgroundColor3 = Theme.Window,
 		BackgroundTransparency = 0.35,
 		BorderSizePixel = 0,
@@ -5086,7 +5111,7 @@ function Nerx:CreateIndicator(config)
 		self.Active = value
 		if value then
 			self.Root.Visible = true
-			self.Root.GroupTransparency = 1
+			U.setGroupTransparency(self.Root, 1)
 			U.tween(self.Root, TWEEN.Default, { GroupTransparency = 0 })
 		else
 			U.tween(self.Root, TWEEN.Default, { GroupTransparency = 1 })
