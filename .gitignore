@@ -1,0 +1,19 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Roblox place / model artifacts
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+
+# Build output
+/build/
+/dist/
+/NerxAssets/
+
+# Logs
+*.log

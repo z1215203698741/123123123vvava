@@ -1,0 +1,12 @@
+{
+  "name": "NerxUI",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$ignoreUnknownInstances": true,
+      "NerxUI": {
+        "$path": "NerxUI.luau"
+      }
+    }
+  }
+}
