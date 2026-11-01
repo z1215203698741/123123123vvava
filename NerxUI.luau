@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.0.3
+	Nerx UI Library · v1.0.4
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.0.3"
+Nerx.Version = "1.0.4"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -297,15 +297,19 @@ function U.padding(parent, top, right, bottom, left)
 	return padding
 end
 
-function U.list(parent, padding, horizontal, vertical)
+function U.list(parent, padding, horizontal, vertical, direction)
 	local layout = Instance.new("UIListLayout")
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Padding = UDim.new(0, padding or 0)
-	layout.FillDirection = Enum.FillDirection.Vertical
+	layout.FillDirection = direction or Enum.FillDirection.Vertical
 	layout.HorizontalAlignment = horizontal or Enum.HorizontalAlignment.Left
 	layout.VerticalAlignment = vertical or Enum.VerticalAlignment.Top
 	layout.Parent = parent
 	return layout
+end
+
+function U.hlist(parent, padding, horizontal, vertical)
+	return U.list(parent, padding, horizontal, vertical, Enum.FillDirection.Horizontal)
 end
 
 function U.inputButton(parent, callback)
@@ -1962,7 +1966,7 @@ local function addRow(section, config, options)
 			Size = UDim2.fromOffset(0, 24),
 			AutomaticSize = Enum.AutomaticSize.X,
 		})
-		U.list(controls, 6, Enum.HorizontalAlignment.Right, Enum.VerticalAlignment.Center)
+		U.hlist(controls, 6, Enum.HorizontalAlignment.Right, Enum.VerticalAlignment.Center)
 	end
 
 	section.Rows[#section.Rows + 1] = {
@@ -2030,18 +2034,29 @@ local function createSection(page, config)
 	local labelRow = U.frame(root, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(0, 0),
-		Size = UDim2.new(1, 0, 0, 15),
+		Position = UDim2.fromOffset(flat and 10 or 0, 0),
+		Size = UDim2.new(1, flat and -20 or 0, 0, 15),
 	})
+	local labelText = string.upper(name)
 	local label = U.label(labelRow, {
-		Text = string.upper(name),
+		Text = labelText,
 		Font = Fonts.Bold,
 		TextSize = 10,
 		TextColor3 = Theme.Muted,
 		TextTransparency = 0.5,
 		Position = UDim2.fromOffset(0, 0),
-		Size = UDim2.new(0.62, 0, 1, 0),
+		Size = UDim2.fromOffset(0, 15),
 		TextTruncate = Enum.TextTruncate.AtEnd,
+	})
+	local labelWidth = U.measure(labelText, 10, Fonts.Bold).X
+	label.Size = UDim2.fromOffset(labelWidth + 2, 15)
+	U.frame(labelRow, {
+		AnchorPoint = Vector2.new(0, 0.5),
+		BackgroundColor3 = Theme.Divider,
+		BackgroundTransparency = 0.4,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0, labelWidth + 10, 0.5, 0),
+		Size = UDim2.new(1, -(labelWidth + 10), 0, 1),
 	})
 	local actions = U.frame(labelRow, {
 		AnchorPoint = Vector2.new(1, 0.5),
@@ -2051,7 +2066,7 @@ local function createSection(page, config)
 		Size = UDim2.fromOffset(0, 19),
 		AutomaticSize = Enum.AutomaticSize.X,
 	})
-	U.list(actions, 4, Enum.HorizontalAlignment.Right, Enum.VerticalAlignment.Center)
+	U.hlist(actions, 4, Enum.HorizontalAlignment.Right, Enum.VerticalAlignment.Center)
 
 	local card = U.frame(root, {
 		BackgroundColor3 = useCard and Theme.Surface or Theme.White,
@@ -2079,7 +2094,7 @@ local function createSection(page, config)
 		RowCount = 0,
 		Options = {},
 		Flat = flat,
-		Inset = flat and 0 or 12,
+		Inset = flat and 10 or 12,
 	}
 
 	function section:AddOption(optionName, callback)
@@ -2839,13 +2854,17 @@ local function createSection(page, config)
 	end
 
 	function section:AddHeaderAction(action)
+		action = action or {}
+		if not section.HeaderActionGroup then
+			section.HeaderActionGroup = { Items = {}, Selected = nil }
+		end
 		local textWidth = U.measure(action.Name or "", 9, Fonts.Regular).X
 		local extra = action.Dot and 10 or 0
 		local root = U.frame(section.Actions, {
 			BackgroundColor3 = Theme.Field,
-			BackgroundTransparency = 0.15,
+			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Size = UDim2.fromOffset((action.Icon and 26 or 16) + textWidth + extra, 18),
+			Size = UDim2.fromOffset((action.Icon and 26 or 22) + textWidth + extra, 18),
 		})
 		U.corner(root, 9)
 		if action.Icon then
@@ -2855,7 +2874,7 @@ local function createSection(page, config)
 				TextTransparency = 0.35,
 			})
 		end
-		U.label(root, {
+		local label = U.label(root, {
 			Text = action.Name or "",
 			TextSize = 9,
 			TextColor3 = Theme.Muted,
@@ -2863,8 +2882,9 @@ local function createSection(page, config)
 			Position = UDim2.fromOffset(action.Icon and 18 or 8, 0),
 			Size = UDim2.fromOffset(textWidth + 2, 18),
 		})
+		local dot
 		if action.Dot then
-			local dot = U.frame(root, {
+			dot = U.frame(root, {
 				AnchorPoint = Vector2.new(1, 0.5),
 				BackgroundColor3 = action.Dot == true and Theme.Green or action.Dot,
 				BorderSizePixel = 0,
@@ -2873,10 +2893,73 @@ local function createSection(page, config)
 			})
 			U.corner(dot, 2)
 		end
-		if action.Callback then
-			U.inputButton(root, action.Callback)
+
+		local entry = {
+			Root = root,
+			Label = label,
+			Dot = dot,
+			Name = action.Name,
+			Selected = false,
+		}
+
+		function entry:SetSelected(value, silent)
+			self.Selected = value == true
+			if self.Selected then
+				root.BackgroundTransparency = 0.1
+				label.TextColor3 = Theme.Text
+				label.TextTransparency = 0.05
+				if dot then
+					dot.BackgroundTransparency = 0
+				end
+			else
+				root.BackgroundTransparency = 1
+				label.TextColor3 = Theme.Muted
+				label.TextTransparency = 0.35
+				if dot then
+					dot.BackgroundTransparency = 0.1
+				end
+			end
+		end
+
+		local function selectEntry()
+			section.HeaderActionGroup.Selected = entry
+			for _, item in ipairs(section.HeaderActionGroup.Items) do
+				item:SetSelected(item == entry, true)
+			end
+		end
+
+		U.inputButton(root, function()
+			selectEntry()
+			if action.Callback then
+				action.Callback(entry)
+			end
+		end)
+
+		root.LayoutOrder = #section.HeaderActionGroup.Items + 1
+		table.insert(section.HeaderActionGroup.Items, entry)
+		if action.Selected == true or (action.Selected ~= false and section.HeaderActionGroup.Selected == nil) then
+			selectEntry()
+		else
+			entry:SetSelected(false, true)
 		end
 		return root
+	end
+
+	function section:SetHeaderAction(name)
+		local group = section.HeaderActionGroup
+		if not group then
+			return nil
+		end
+		for _, item in ipairs(group.Items) do
+			if string.lower(item.Name or "") == string.lower(name or "") then
+				group.Selected = item
+				for _, other in ipairs(group.Items) do
+					other:SetSelected(other == item, true)
+				end
+				return item
+			end
+		end
+		return nil
 	end
 
 	function section:ApplyFilter(query)
@@ -2928,7 +3011,7 @@ local function createPage(window, host, tab, config)
 		BlockIndex = 0,
 		HasRight = false,
 		HasChips = false,
-		RightWidth = config.RightWidth or 330,
+		RightWidth = config.RightWidth or 322,
 		SectionStyle = config.SectionStyle or "card",
 		Custom = false,
 		Filter = "",
@@ -2973,7 +3056,7 @@ local function createPage(window, host, tab, config)
 		Size = UDim2.fromOffset(0, 24),
 		AutomaticSize = Enum.AutomaticSize.X,
 	})
-	U.list(headerControls, 12, Enum.HorizontalAlignment.Right, Enum.VerticalAlignment.Center)
+	U.hlist(headerControls, 12, Enum.HorizontalAlignment.Right, Enum.VerticalAlignment.Center)
 	page.HeaderControls = headerControls
 
 	local chipBar = U.frame(root, {
@@ -3010,8 +3093,8 @@ local function createPage(window, host, tab, config)
 	local rightHost = U.frame(root, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Position = UDim2.new(1, -350, 0, 56),
-		Size = UDim2.fromOffset(330, 1),
+		Position = UDim2.new(1, -336, 0, 56),
+		Size = UDim2.fromOffset(322, 1),
 		Visible = false,
 	})
 	page.RightHost = rightHost
@@ -3043,7 +3126,7 @@ local function createPage(window, host, tab, config)
 		BackgroundColor3 = Theme.Divider,
 		BackgroundTransparency = 0.4,
 		BorderSizePixel = 0,
-		Position = UDim2.new(1, -362, 0, 56),
+		Position = UDim2.new(1, -348, 0, 56),
 		Size = UDim2.fromOffset(1, 1),
 		Visible = false,
 	})
@@ -3142,11 +3225,11 @@ local function createPage(window, host, tab, config)
 			leftScroll.Position = UDim2.fromOffset(20, top)
 			leftScroll.Size = UDim2.new(1, -(40 + 24 + rightWidth), 1, -(top + bottom))
 
-			rightHost.Position = UDim2.new(1, -(20 + rightWidth), 0, top)
+			rightHost.Position = UDim2.new(1, -(14 + rightWidth), 0, top)
 			rightHost.Size = UDim2.new(0, rightWidth, 1, -(top + bottom))
 			rightHost.Visible = true
 
-			divider.Position = UDim2.new(1, -(20 + rightWidth + 12), 0, 0)
+			divider.Position = UDim2.new(1, -(14 + rightWidth + 12), 0, 0)
 			divider.Size = UDim2.new(0, 1, 1, 0)
 			divider.Visible = true
 		else
@@ -3220,10 +3303,10 @@ local function createPage(window, host, tab, config)
 		function api:SetValue(value, silent)
 			for _, chip in ipairs(chips) do
 				local isMatch = valueOf(chip.Item) == value
-				chip.Item.Selected = match
+				chip.Item.Selected = isMatch
 				chip:SetSelected(isMatch, true)
 				if isMatch then
-					self.Value = value
+					api.Value = value
 				end
 			end
 			if not silent and selectorConfig.Callback then
@@ -3459,7 +3542,7 @@ function Nerx:CreateWindow(config)
 	local brand = U.frame(sidebar, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Size = UDim2.new(1, 0, 0, 62),
+		Size = UDim2.new(1, 0, 0, 52),
 		Active = true,
 	})
 	window.Brand = brand
@@ -3467,7 +3550,7 @@ function Nerx:CreateWindow(config)
 	local logoBox = U.frame(brand, {
 		BackgroundColor3 = Theme.SurfaceRaised,
 		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(16, 14),
+		Position = UDim2.fromOffset(16, 9),
 		Size = UDim2.fromOffset(34, 34),
 	})
 	U.corner(logoBox, 8)
@@ -3531,7 +3614,7 @@ function Nerx:CreateWindow(config)
 		Font = Fonts.Bold,
 		TextSize = 14,
 		TextColor3 = Theme.Text,
-		Position = UDim2.fromOffset(58, 13),
+		Position = UDim2.fromOffset(58, 8),
 		Size = UDim2.fromOffset(130, 18),
 		TextTruncate = Enum.TextTruncate.AtEnd,
 	})
@@ -3541,7 +3624,7 @@ function Nerx:CreateWindow(config)
 		TextSize = 8.5,
 		TextColor3 = Theme.Muted,
 		TextTransparency = 0.45,
-		Position = UDim2.fromOffset(58, 31),
+		Position = UDim2.fromOffset(58, 26),
 		Size = UDim2.fromOffset(130, 13),
 		TextTruncate = Enum.TextTruncate.AtEnd,
 	})
@@ -3658,13 +3741,17 @@ function Nerx:CreateWindow(config)
 	})
 	window.TopBar = topBar
 
-	U.frame(topBar, {
-		AnchorPoint = Vector2.new(0.5, 1),
+	-- Full-width rule: the brand column and the page header share the same
+	-- baseline, so the vertical sidebar divider and this line meet cleanly.
+	U.frame(root, {
+		Name = "TopDivider",
+		AnchorPoint = Vector2.new(0, 0),
 		BackgroundColor3 = Theme.Divider,
 		BackgroundTransparency = 0.35,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0.5, 0, 1, 0),
+		Position = UDim2.fromOffset(0, 52),
 		Size = UDim2.new(1, 0, 0, 1),
+		ZIndex = 2,
 	})
 
 	local dragFrame = U.frame(topBar, {
@@ -3695,7 +3782,7 @@ function Nerx:CreateWindow(config)
 		BackgroundColor3 = Theme.Field,
 		BackgroundTransparency = 0.05,
 		BorderSizePixel = 0,
-		Position = UDim2.new(1, -318, 0.5, 0),
+		Position = UDim2.new(1, -321, 0.5, 0),
 		Size = UDim2.fromOffset(84, 28),
 		ZIndex = 4,
 	})
@@ -3731,8 +3818,8 @@ function Nerx:CreateWindow(config)
 		AnchorPoint = Vector2.new(1, 0.5),
 		BackgroundColor3 = Theme.Primary,
 		BorderSizePixel = 0,
-		Position = UDim2.new(1, -236, 0.5, 0),
-		Size = UDim2.fromOffset(74, 30),
+		Position = UDim2.new(1, -253, 0.5, 0),
+		Size = UDim2.fromOffset(61, 30),
 		ZIndex = 4,
 	})
 	U.corner(saveButton, 6)
@@ -3753,8 +3840,8 @@ function Nerx:CreateWindow(config)
 		BackgroundColor3 = Theme.Field,
 		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
-		Position = UDim2.new(1, -18, 0.5, 0),
-		Size = UDim2.fromOffset(210, 30),
+		Position = UDim2.new(1, -13, 0.5, 0),
+		Size = UDim2.fromOffset(228, 30),
 		ZIndex = 4,
 	})
 	U.corner(search, 8)
@@ -3772,7 +3859,7 @@ function Nerx:CreateWindow(config)
 		PlaceholderText = "Search features",
 		PlaceholderColor3 = Theme.Faint,
 		TextColor3 = Theme.Text,
-		TextSize = 10.5,
+		TextSize = 11,
 		ClearTextOnFocus = false,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Position = UDim2.fromOffset(30, 0),
@@ -3787,28 +3874,28 @@ function Nerx:CreateWindow(config)
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		Position = UDim2.new(1, -7, 0.5, 0),
-		Size = UDim2.fromOffset(47, 18),
+		Size = UDim2.fromOffset(49, 20),
 	})
-	U.list(keyHints, 3, Enum.HorizontalAlignment.Right, Enum.VerticalAlignment.Center)
+	U.hlist(keyHints, 3, Enum.HorizontalAlignment.Right, Enum.VerticalAlignment.Center)
 	local ctrlHint = U.label(keyHints, {
 		Text = "Ctrl",
 		Font = Fonts.Regular,
-		TextSize = 8,
+		TextSize = 9,
 		TextColor3 = Theme.Faint,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		BackgroundTransparency = 1,
-		Size = UDim2.fromOffset(26, 18),
+		Size = UDim2.fromOffset(28, 20),
 	})
 	U.corner(ctrlHint, 4)
 	U.stroke(ctrlHint, Theme.Stroke, 0.4, 1)
 	local fHint = U.label(keyHints, {
 		Text = "F",
 		Font = Fonts.Regular,
-		TextSize = 8,
+		TextSize = 9,
 		TextColor3 = Theme.Faint,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		BackgroundTransparency = 1,
-		Size = UDim2.fromOffset(18, 18),
+		Size = UDim2.fromOffset(18, 20),
 	})
 	U.corner(fHint, 4)
 	U.stroke(fHint, Theme.Stroke, 0.4, 1)
@@ -3880,11 +3967,17 @@ function Nerx:CreateWindow(config)
 		if selected then
 			U.tween(tab.Button, TWEEN.Default, { BackgroundTransparency = 0, BackgroundColor3 = Theme.Selected })
 			tab.Stroke.Transparency = 0.85
+			if tab.Indicator then
+				U.tween(tab.Indicator, TWEEN.Fast, { BackgroundTransparency = 0 })
+			end
 			U.tween(tab.Icon, TWEEN.Default, { TextColor3 = Theme.Text, TextTransparency = 0.05 })
 			U.tween(tab.Label, TWEEN.Default, { TextColor3 = Theme.Text, TextTransparency = 0.05 })
 		else
 			U.tween(tab.Button, TWEEN.Default, { BackgroundTransparency = 1 })
 			tab.Stroke.Transparency = 1
+			if tab.Indicator then
+				tab.Indicator.BackgroundTransparency = 1
+			end
 			U.tween(tab.Icon, TWEEN.Default, { TextColor3 = Theme.Muted, TextTransparency = 0.4 })
 			U.tween(tab.Label, TWEEN.Default, { TextColor3 = Theme.Muted, TextTransparency = 0.45 })
 		end
@@ -3898,7 +3991,15 @@ function Nerx:CreateWindow(config)
 				TextColor3 = selected and Theme.Text or Theme.Muted,
 				TextTransparency = selected and 0.05 or 0.5,
 			})
-			sub.Tick.Visible = selected
+			U.tween(sub.Tick, TWEEN.Fast, {
+				BackgroundTransparency = selected and 0 or 1,
+			})
+			if sub.Connector then
+				U.tween(sub.Connector, TWEEN.Fast, {
+					BackgroundColor3 = selected and Theme.Text or Theme.Divider,
+					BackgroundTransparency = selected and 0 or 0.15,
+				})
+			end
 		end
 	end
 
@@ -4188,6 +4289,19 @@ function Nerx:CreateWindow(config)
 		local tabStroke = U.stroke(button, Theme.Stroke, 1, 1)
 		tab.Stroke = tabStroke
 
+		-- Active marker on the left edge of the parent pill (reference "I" bar).
+		local tabIndicator = U.frame(button, {
+			AnchorPoint = Vector2.new(0, 0.5),
+			BackgroundColor3 = Theme.Text,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.new(0, 1, 0.5, 0),
+			Size = UDim2.fromOffset(3, 16),
+			ZIndex = 3,
+		})
+		U.corner(tabIndicator, 2)
+		tab.Indicator = tabIndicator
+
 		tab.Icon = U.icon(button, tab.Icon, 15, Theme.Muted, {
 			AnchorPoint = Vector2.new(0, 0.5),
 			Position = UDim2.new(0, 10, 0.5, 0),
@@ -4200,8 +4314,8 @@ function Nerx:CreateWindow(config)
 			TextColor3 = Theme.Muted,
 			TextTransparency = 0.45,
 			AnchorPoint = Vector2.new(0, 0.5),
-			Position = UDim2.new(0, 36, 0.5, 0),
-			Size = UDim2.new(1, -46, 1, 0),
+			Position = UDim2.new(0, 44, 0.5, 0),
+			Size = UDim2.new(1, -54, 1, 0),
 			TextTruncate = Enum.TextTruncate.AtEnd,
 		})
 
@@ -4233,7 +4347,7 @@ function Nerx:CreateWindow(config)
 			BackgroundColor3 = Theme.Divider,
 			BackgroundTransparency = 0.3,
 			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(30, 4),
+			Position = UDim2.fromOffset(17, 4),
 			Size = UDim2.new(0, 1, 0, 0),
 		})
 		tab.TreeLine = treeLine
@@ -4259,11 +4373,11 @@ function Nerx:CreateWindow(config)
 				BackgroundColor3 = Theme.White,
 				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
-				Position = UDim2.fromOffset(40, (index - 1) * 25),
-				Size = UDim2.new(1, -40, 0, 25),
+				Position = UDim2.fromOffset(33, (index - 1) * 25),
+				Size = UDim2.new(1, -33, 0, 25),
 			})
 			U.corner(subButton, 5)
-		local label = U.label(subButton, {
+			local label = U.label(subButton, {
 				Text = sub.Name,
 				TextSize = 11.5,
 				TextColor3 = Theme.Muted,
@@ -4272,18 +4386,27 @@ function Nerx:CreateWindow(config)
 				Size = UDim2.new(1, -14, 1, 0),
 				TextTruncate = Enum.TextTruncate.AtEnd,
 			})
+			-- Tree branch: horizontal connector plus the tall white active bar
+			-- (reference "I-" marker) sitting on the vertical guide line.
+			local connector = U.frame(subButton, {
+				AnchorPoint = Vector2.new(0, 0.5),
+				BackgroundColor3 = Theme.Divider,
+				BackgroundTransparency = 0.15,
+				BorderSizePixel = 0,
+				Position = UDim2.new(0, -16, 0.5, 0),
+				Size = UDim2.fromOffset(9, 1),
+				ZIndex = 1,
+			})
 			local tick = U.frame(subButton, {
 				AnchorPoint = Vector2.new(0, 0.5),
-				BackgroundColor3 = Theme.Accent,
+				BackgroundColor3 = Theme.Text,
+				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
-				Position = UDim2.new(0, -10, 0.5, 0),
-				Size = UDim2.fromOffset(2, 12),
-				Visible = false,
+				Position = UDim2.new(0, -16, 0.5, 0),
+				Size = UDim2.fromOffset(2, 16),
+				ZIndex = 2,
 			})
 			U.corner(tick, 1)
-			U.onAccent(function(color)
-				tick.BackgroundColor3 = color
-			end)
 
 			local page = createPage(self.Window, pageHost, self, {
 				Name = sub.Name,
@@ -4295,6 +4418,7 @@ function Nerx:CreateWindow(config)
 			sub.Button = subButton
 			sub.Label = label
 			sub.Tick = tick
+			sub.Connector = connector
 			sub.Page = page
 
 			local input = U.inputButton(subButton, function()
@@ -4464,8 +4588,8 @@ function U.preview(page, config)
 	local root = U.frame(page.PreviewHost, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(0, 14),
-		Size = UDim2.new(1, 0, 1, -14),
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.new(1, 0, 1, 0),
 	})
 	preview.Root = root
 
@@ -4608,8 +4732,8 @@ function U.preview(page, config)
 		TextColor3 = Theme.Text,
 		TextTransparency = 0.05,
 		TextXAlignment = Enum.TextXAlignment.Center,
-		Position = UDim2.new(0, 0, 0, 42),
-		Size = UDim2.new(1, 0, 0, 16),
+		Position = UDim2.new(0, 0, 0, 7),
+		Size = UDim2.new(1, 0, 0, 26),
 	})
 	preview.Name = name
 
@@ -4617,7 +4741,7 @@ function U.preview(page, config)
 		AnchorPoint = Vector2.new(1, 0),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Position = UDim2.new(1, -10, 0, 62),
+		Position = UDim2.new(1, -10, 0, 40),
 		Size = UDim2.fromOffset(140, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		ZIndex = 5,
@@ -4628,8 +4752,8 @@ function U.preview(page, config)
 	local stage = U.frame(card, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(8, 86),
-		Size = UDim2.new(1, -16, 1, -102),
+		Position = UDim2.fromOffset(8, 36),
+		Size = UDim2.new(1, -16, 1, -52),
 	})
 	preview.Stage = stage
 
@@ -4639,8 +4763,8 @@ function U.preview(page, config)
 		BackgroundColor3 = Theme.Muted,
 		BackgroundTransparency = 0.5,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0.22, 0, 0.16, 0),
-		Size = UDim2.new(0, 1, 0.58, 0),
+		Position = UDim2.new(0.1, 0, 0.08, 0),
+		Size = UDim2.new(0, 1, 0.64, 0),
 	})
 	U.frame(guide, {
 		AnchorPoint = Vector2.new(0.5, 0),
@@ -4664,8 +4788,8 @@ function U.preview(page, config)
 		BackgroundColor3 = Theme.Window,
 		BackgroundTransparency = 0.3,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0.5, 0, 1, -22),
-		Size = UDim2.fromOffset(180, 32),
+		Position = UDim2.new(0.5, 0, 1, -28),
+		Size = UDim2.fromOffset(212, 34),
 	})
 	U.corner(ground, 16)
 	U.stroke(ground, Theme.Muted, 0.45, 1)
@@ -4675,12 +4799,12 @@ function U.preview(page, config)
 		BackgroundColor3 = Theme.White,
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0.5, 0, 1, -30),
-		Size = UDim2.fromOffset(122, 196),
+		Position = UDim2.new(0.5, 0, 1, -36),
+		Size = UDim2.new(0.68, 0, 0.9, 0),
 	})
 	U.corner(placeholder, 10)
 	local placeholderStroke = U.stroke(placeholder, Theme.Stroke, 0.25, 1)
-	local placeholderIcon = U.icon(placeholder, config.PlaceholderIcon or "square-dashed-person-standing", 52, Theme.Muted, {
+	local placeholderIcon = U.icon(placeholder, config.PlaceholderIcon or "square-dashed-person-standing", 72, Theme.Muted, {
 		TextTransparency = 0.3,
 		Size = UDim2.new(1, 0, 1, -18),
 	})
@@ -4769,10 +4893,10 @@ function U.preview(page, config)
 				preview.ChipContainer.Size = UDim2.new(1, -16, 0, chipTotal)
 				preview.ChipContainer.Position = UDim2.new(0, 8, 1, -(chipTotal + 8))
 				preview.ChipContainer.Visible = true
-				stage.Size = UDim2.new(1, -16, 1, -(86 + chipTotal + 16))
+				stage.Size = UDim2.new(1, -16, 1, -(36 + chipTotal + 16))
 			else
 				preview.ChipContainer.Visible = false
-				stage.Size = UDim2.new(1, -16, 1, -102)
+				stage.Size = UDim2.new(1, -16, 1, -52)
 			end
 		end
 	end
