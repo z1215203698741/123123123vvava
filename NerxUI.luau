@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.0.4
+	Nerx UI Library · v1.0.5
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.0.4"
+Nerx.Version = "1.0.5"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -91,9 +91,9 @@ local Theme = {
 	AccentDeep = Color3.fromRGB(160, 160, 168),
 	Button = Color3.fromRGB(74, 74, 78),
 	ButtonHover = Color3.fromRGB(90, 90, 94),
-	Primary = Color3.fromRGB(132, 132, 135),
-	PrimaryHover = Color3.fromRGB(148, 148, 152),
-	PrimaryStroke = Color3.fromRGB(168, 168, 173),
+	Primary = Color3.fromRGB(78, 78, 82),
+	PrimaryHover = Color3.fromRGB(96, 96, 100),
+	PrimaryStroke = Color3.fromRGB(118, 118, 123),
 	ToggleOff = Color3.fromRGB(26, 26, 28),
 	ToggleOffKnob = Color3.fromRGB(232, 232, 238),
 	ToggleDisabledTrack = Color3.fromRGB(108, 108, 112),
@@ -167,6 +167,7 @@ Nerx.AccentListeners = {}
 Nerx.Windows = {}
 Nerx.Popup = nil
 Nerx.PopupOverlay = nil
+Nerx.PopupHost = nil
 Nerx.Indicators = nil
 
 local screenGui = Instance.new("ScreenGui")
@@ -189,10 +190,13 @@ protect(screenGui)
 Nerx.Scale = 1
 
 local TWEEN = {
-	Fast = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-	Default = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-	Slow = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+	Fast = TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+	Default = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+	Slow = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 	VerySlow = TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+	Page = TweenInfo.new(0.28, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+	PageOut = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+	Popup = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
 }
 
 local U = {}
@@ -740,75 +744,157 @@ end
 -- Popups (dropdown lists, option menus, colour pickers, account menu)
 -- ---------------------------------------------------------------------------------------
 
-function Nerx:ClosePopup()
-	if Nerx.Popup then
-		local popup = Nerx.Popup
-		Nerx.Popup = nil
-		popup.Card:Destroy()
-		popup.Overlay:Destroy()
-		if popup.Escape then
-			popup.Escape:Disconnect()
+function Nerx:ClosePopup(instant)
+	local popup = Nerx.Popup
+	if not popup then
+		return
+	end
+	Nerx.Popup = nil
+	for _, key in ipairs({ "Escape", "Outside" }) do
+		if popup[key] then
+			pcall(function()
+				popup[key]:Disconnect()
+			end)
+			popup[key] = nil
 		end
 	end
+
+	local card = popup.Card
+	local overlay = popup.Overlay
+	if instant or not card or not card.Parent then
+		if card then
+			card:Destroy()
+		end
+		if overlay then
+			overlay:Destroy()
+		end
+		return
+	end
+
+	local position = card.Position
+	U.tween(card, TWEEN.Fast, {
+		GroupTransparency = 1,
+		Position = UDim2.new(position.X.Scale, position.X.Offset, position.Y.Scale, position.Y.Offset + 4),
+	})
+	task.delay(0.11, function()
+		if card and card.Parent then
+			card:Destroy()
+		end
+		if overlay and overlay.Parent then
+			overlay:Destroy()
+		end
+	end)
 end
 
 function U.popup(anchor, width, height, builder, alignRight)
-	Nerx:ClosePopup()
+	Nerx:ClosePopup(true)
 
-	local overlay = U.frame(nil, {
+	-- Popups live inside the window's scaled layer. Parenting them to the raw
+	-- ScreenGui was the reason dropdowns and the colour picker appeared huge
+	-- and detached from their controls when the menu was downscaled.
+	local host = Nerx.PopupHost
+	if host and not host.Parent then
+		host = nil
+	end
+	local parent = host or screenGui
+	local scale = 1
+	local originX, originY = 0, 0
+	local boundsX, boundsY = U.viewport().X, U.viewport().Y
+
+	if host then
+		scale = math.max(0.01, Nerx.Scale or 1)
+		local hostPosition = host.AbsolutePosition
+		originX, originY = hostPosition.X, hostPosition.Y
+		local hostSize = host.AbsoluteSize
+		if hostSize.X > 0 and hostSize.Y > 0 then
+			boundsX = hostSize.X / scale
+			boundsY = hostSize.Y / scale
+		end
+	end
+
+	local overlay = U.frame(parent, {
 		Name = "NerxPopupOverlay",
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		Size = UDim2.fromScale(1, 1),
-		Active = true,
-		ZIndex = 870,
+		Active = false,
+		ZIndex = 901,
 	})
-	overlay.Parent = screenGui
 
-	local card = U.canvas(nil, {
+	local card = U.canvas(parent, {
 		Name = "NerxPopup",
 		BackgroundColor3 = Theme.SurfaceRaised,
 		BackgroundTransparency = 0.02,
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(width, height),
-		ZIndex = 880,
+		ZIndex = 902,
+		Active = true,
 		ClipsDescendants = false,
 	})
-	card.Parent = screenGui
 	U.corner(card, 8)
 	U.stroke(card, Theme.Stroke, 0.45, 1)
 	U.shadow(card)
 
-	local viewport = U.viewport()
 	local absolute = anchor.AbsolutePosition
 	local size = anchor.AbsoluteSize
+	local anchorX = (absolute.X - originX) / scale
+	local anchorY = (absolute.Y - originY) / scale
+	local anchorWidth = size.X / scale
+	local anchorHeight = size.Y / scale
 
-	local x = absolute.X
-	if alignRight then
-		x = absolute.X + size.X - width
+	-- Defensive fallback for executors where AbsolutePosition can be stale or
+	-- zero while the GUI is inside a scaled/scrolling container. In that case
+	-- anchor the popup to the pointer instead of dropping it in the middle.
+	if host then
+		local hostSize = host.AbsoluteSize
+		local valid = absolute.X >= originX - 2
+			and absolute.Y >= originY - 2
+			and absolute.X <= originX + hostSize.X + 2
+			and absolute.Y <= originY + hostSize.Y + 2
+		if not valid then
+			local mouse = UserInputService:GetMouseLocation()
+			anchorX = (mouse.X - originX) / scale - width * 0.5
+			anchorY = (mouse.Y - originY) / scale
+			anchorWidth = 0
+			anchorHeight = 0
+		end
 	end
-	if x + width > viewport.X - 8 then
-		x = absolute.X + size.X - width
+
+	local x = anchorX
+	if alignRight then
+		x = anchorX + anchorWidth - width
+	end
+	if x + width > boundsX - 8 then
+		x = anchorX + anchorWidth - width
+	end
+	if x + width > boundsX - 8 then
+		x = boundsX - width - 8
 	end
 	if x < 8 then
 		x = 8
 	end
 
-	local below = absolute.Y + size.Y + 6
-	local above = absolute.Y - height - 6
+	local below = anchorY + anchorHeight + 6
+	local above = anchorY - height - 6
 	local y = below
-	if below + height > viewport.Y - 8 then
-		y = math.max(6, above)
+	if below + height > boundsY - 8 then
+		y = above
+	end
+	if y < 8 then
+		y = math.max(8, boundsY - height - 8)
 	end
 
-	card.Position = UDim2.fromOffset(x, y)
+	card.Position = UDim2.fromOffset(x, y - 4)
 	U.setGroupTransparency(card, 1)
 	card.Size = UDim2.fromOffset(width, height - 4)
-	U.tween(card, TWEEN.Fast, { GroupTransparency = 0, Size = UDim2.fromOffset(width, height) })
+	U.tween(card, TWEEN.Popup, {
+		GroupTransparency = 0,
+		Position = UDim2.fromOffset(x, y),
+		Size = UDim2.fromOffset(width, height),
+	})
 
 	builder(card)
 
-	-- Popup content is parented outside the window, so lift it above the card's own ZIndex.
 	for _, object in ipairs(card:GetDescendants()) do
 		if object:IsA("GuiObject") then
 			object.ZIndex = math.max(tonumber(object.ZIndex) or 1, card.ZIndex + 1)
@@ -819,8 +905,22 @@ function U.popup(anchor, width, height, builder, alignRight)
 		Nerx:ClosePopup()
 	end
 
-	U.connect(overlay.InputBegan, function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+	-- Close when clicking outside the card, but let the click reach the control
+	-- below so switching dropdowns or closing a picker feels like one action.
+	local outside
+	outside = U.connect(UserInputService.InputBegan, function(input)
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
+			return
+		end
+		if not card.Parent then
+			return
+		end
+		local position = input.Position
+		local cardPosition = card.AbsolutePosition
+		local cardSize = card.AbsoluteSize
+		if position.X < cardPosition.X or position.Y < cardPosition.Y
+			or position.X > cardPosition.X + cardSize.X
+			or position.Y > cardPosition.Y + cardSize.Y then
 			dismiss()
 		end
 	end)
@@ -832,7 +932,8 @@ function U.popup(anchor, width, height, builder, alignRight)
 		end
 	end)
 
-	Nerx.Popup = { Card = card, Overlay = overlay, Escape = escape }
+	Nerx.Popup = { Card = card, Overlay = overlay, Escape = escape, Outside = outside }
+	Nerx.PopupOverlay = overlay
 	return card
 end
 
@@ -916,14 +1017,42 @@ function U.colorPicker(anchor, initial, callback)
 	local cubeSize = Vector2.new(196, 104)
 	local hueWidth = 196
 	local alphaWidth = 196
-	local function emit()
-		silent = true
-		callback(Color3.fromHSV(h, s, v), alpha)
-		silent = false
-	end
 
 	U.popup(anchor, 220, 200, function(card)
 		U.padding(card, 12, 12, 12, 12)
+
+		-- Popup-local connections must be disconnected when the picker closes.
+		-- Previously the global InputChanged listeners stayed alive and could keep
+		-- recolouring the swatch (including snapping it to black) after closing.
+		local transient = {}
+		local function bind(signal, handler)
+			local connection = signal:Connect(handler)
+			table.insert(transient, connection)
+			return connection
+		end
+		local function cleanup()
+			for _, connection in ipairs(transient) do
+				pcall(function()
+					connection:Disconnect()
+				end)
+			end
+			table.clear(transient)
+		end
+		pcall(function()
+			card.Destroying:Connect(cleanup)
+		end)
+
+		local lastEmit = 0
+		local function emit(force)
+			local now = os.clock()
+			if (not force and now - lastEmit < 0.03) or not card.Parent then
+				return
+			end
+			lastEmit = now
+			silent = true
+			callback(Color3.fromHSV(h, s, v), alpha)
+			silent = false
+		end
 
 		local cube = U.frame(card, {
 			BackgroundColor3 = Color3.fromHSV(h, 1, 1),
@@ -1088,20 +1217,25 @@ function U.colorPicker(anchor, initial, callback)
 
 		local function bindArea(frame, onInput)
 			local holding = false
-			U.connect(frame.InputBegan, function(input)
+			bind(frame.InputBegan, function(input)
 				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 					holding = true
 					onInput(input)
 				end
 			end)
-			U.connect(frame.InputEnded, function(input)
-				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			bind(UserInputService.InputChanged, function(input)
+				if not frame.Parent then
 					holding = false
+					return
 				end
-			end)
-			U.connect(UserInputService.InputChanged, function(input)
 				if holding and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
 					onInput(input)
+				end
+			end)
+			bind(UserInputService.InputEnded, function(input)
+				if holding and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+					holding = false
+					emit(true)
 				end
 			end)
 		end
@@ -1130,7 +1264,7 @@ function U.colorPicker(anchor, initial, callback)
 			applyHsv(true)
 		end)
 
-		U.connect(hexBox.FocusLost, function()
+		bind(hexBox.FocusLost, function()
 			local parsed = U.fromHex(hexBox.Text)
 			if parsed then
 				h, s, v = U.rgbToHsv(parsed)
@@ -1141,7 +1275,7 @@ function U.colorPicker(anchor, initial, callback)
 		end)
 
 		for index, box in ipairs(rgbBoxes) do
-			U.connect(box.FocusLost, function()
+			bind(box.FocusLost, function()
 				local value = tonumber(box.Text)
 				if value then
 					local channelsCopy = { color.R, color.G, color.B }
@@ -1408,7 +1542,8 @@ local function openDropdown(field, options, onSelect, disabled)
 		return
 	end
 	local height = 10 + #options * 28
-	local width = math.max(140, field.AbsoluteSize.X)
+	local scale = math.max(0.01, Nerx.Scale or 1)
+	local width = math.max(140, field.AbsoluteSize.X / scale)
 	U.popup(field, width, height, function(card)
 		U.padding(card, 5, 5, 5, 5)
 		local list = U.frame(card, {
@@ -1637,22 +1772,32 @@ local function createChip(parent, rawItem, options)
 
 	local function render()
 		local selected = api.Selected
-		root.BackgroundColor3 = selected and Theme.FieldHover or Theme.Field
-		root.BackgroundTransparency = selected and 0 or 0.2
-		stroke.Transparency = selected and 0.3 or 0.55
-		stroke.Color = selected and Theme.Accent or Theme.StrokeSoft
+		U.tween(root, TWEEN.Fast, {
+			BackgroundColor3 = selected and Theme.FieldHover or Theme.Field,
+			BackgroundTransparency = selected and 0 or 0.2,
+		})
+		U.tween(stroke, TWEEN.Fast, {
+			Transparency = selected and 0.3 or 0.55,
+			Color = selected and Theme.Accent or Theme.StrokeSoft,
+		})
 
 		if textLabel then
-			textLabel.TextColor3 = selected and Theme.Text or Theme.Muted
-			textLabel.TextTransparency = selected and 0.02 or 0.35
+			U.tween(textLabel, TWEEN.Fast, {
+				TextColor3 = selected and Theme.Text or Theme.Muted,
+				TextTransparency = selected and 0.02 or 0.35,
+			})
 		end
 		if iconLabel then
-			iconLabel.TextColor3 = selected and Theme.Text or Theme.Muted
-			iconLabel.TextTransparency = selected and 0.1 or 0.5
+			U.tween(iconLabel, TWEEN.Fast, {
+				TextColor3 = selected and Theme.Text or Theme.Muted,
+				TextTransparency = selected and 0.1 or 0.5,
+			})
 		end
 		if dot then
 			dot.BackgroundColor3 = api.Color
-			dot.BackgroundTransparency = selected and 0 or 0.4
+			U.tween(dot, TWEEN.Fast, {
+				BackgroundTransparency = selected and 0 or 0.4,
+			})
 		end
 	end
 
@@ -2416,11 +2561,21 @@ local function createSection(page, config)
 			select(option, silent)
 		end
 
-		U.inputButton(field, function()
+		local fieldInput = U.inputButton(field, function()
 			local currentOptions = options
 			openDropdown(field, currentOptions, function(selected)
 				select(selected)
 			end, api.Disabled)
+		end)
+		U.connect(fieldInput.MouseEnter, function()
+			if not api.Disabled then
+				U.tween(field, TWEEN.Fast, { BackgroundColor3 = Theme.FieldHover })
+			end
+		end)
+		U.connect(fieldInput.MouseLeave, function()
+			if not api.Disabled then
+				U.tween(field, TWEEN.Fast, { BackgroundColor3 = Theme.Field })
+			end
 		end)
 
 		if dropdownConfig.Flag then
@@ -2905,18 +3060,16 @@ local function createSection(page, config)
 		function entry:SetSelected(value, silent)
 			self.Selected = value == true
 			if self.Selected then
-				root.BackgroundTransparency = 0.1
-				label.TextColor3 = Theme.Text
-				label.TextTransparency = 0.05
+				U.tween(root, TWEEN.Fast, { BackgroundTransparency = 0.1 })
+				U.tween(label, TWEEN.Fast, { TextColor3 = Theme.Text, TextTransparency = 0.05 })
 				if dot then
-					dot.BackgroundTransparency = 0
+					U.tween(dot, TWEEN.Fast, { BackgroundTransparency = 0 })
 				end
 			else
-				root.BackgroundTransparency = 1
-				label.TextColor3 = Theme.Muted
-				label.TextTransparency = 0.35
+				U.tween(root, TWEEN.Fast, { BackgroundTransparency = 1 })
+				U.tween(label, TWEEN.Fast, { TextColor3 = Theme.Muted, TextTransparency = 0.35 })
 				if dot then
-					dot.BackgroundTransparency = 0.1
+					U.tween(dot, TWEEN.Fast, { BackgroundTransparency = 0.1 })
 				end
 			end
 		end
@@ -3017,11 +3170,13 @@ local function createPage(window, host, tab, config)
 		Filter = "",
 	}
 
-	local root = U.frame(host, {
+	local root = U.canvas(host, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		Size = UDim2.fromScale(1, 1),
+		GroupTransparency = 0,
 		Visible = false,
+		ZIndex = 1,
 	})
 	page.Root = root
 
@@ -3450,10 +3605,53 @@ local function createPage(window, host, tab, config)
 	end
 
 	function page:SetActive(value)
-		root.Visible = value == true
-		if value then
+		local active = value == true
+		if active then
+			root.Visible = true
+			root.ZIndex = 3
+			root.Position = UDim2.fromOffset(0, 0)
+			U.setGroupTransparency(root, 0)
 			self:Relayout()
+		else
+			self.AnimationToken = {}
+			root.Visible = false
+			root.Position = UDim2.fromOffset(0, 0)
+			U.setGroupTransparency(root, 0)
 		end
+	end
+
+	function page:AnimateIn()
+		local token = {}
+		self.AnimationToken = token
+		root.Visible = true
+		root.ZIndex = 3
+		U.setGroupTransparency(root, 1)
+		root.Position = UDim2.fromOffset(12, 0)
+		U.tween(root, TWEEN.Page, {
+			GroupTransparency = 0,
+			Position = UDim2.fromOffset(0, 0),
+		})
+		self:Relayout()
+	end
+
+	function page:AnimateOut()
+		if not root.Visible then
+			return
+		end
+		local token = {}
+		self.AnimationToken = token
+		root.ZIndex = 2
+		U.tween(root, TWEEN.PageOut, {
+			GroupTransparency = 1,
+			Position = UDim2.fromOffset(-10, 0),
+		})
+		task.delay(0.18, function()
+			if self.AnimationToken == token and root.Parent then
+				root.Visible = false
+				root.Position = UDim2.fromOffset(0, 0)
+				U.setGroupTransparency(root, 0)
+			end
+		end)
 	end
 
 	page:SetTitle(page.Title)
@@ -3521,6 +3719,18 @@ function Nerx:CreateWindow(config)
 	if camera then
 		U.connect(camera:GetPropertyChangedSignal("ViewportSize"), updateScale)
 	end
+
+	-- Scaled popup layer: dropdowns, option menus and the colour picker inherit
+	-- the window's UIScale instead of rendering oversized on the raw screen.
+	local popupHost = U.frame(root, {
+		Name = "PopupLayer",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+		ZIndex = 900,
+	})
+	window.PopupHost = popupHost
+	Nerx.PopupHost = popupHost
 
 	local sidebar = U.frame(root, {
 		Name = "Sidebar",
@@ -3819,10 +4029,10 @@ function Nerx:CreateWindow(config)
 		BackgroundColor3 = Theme.Primary,
 		BorderSizePixel = 0,
 		Position = UDim2.new(1, -253, 0.5, 0),
-		Size = UDim2.fromOffset(61, 30),
+		Size = UDim2.fromOffset(61, 28),
 		ZIndex = 4,
 	})
-	U.corner(saveButton, 6)
+	U.corner(saveButton, 5)
 	U.stroke(saveButton, Theme.PrimaryStroke, 0.35, 1)
 	local saveLabel = U.label(saveButton, {
 		Text = "Save",
@@ -3881,7 +4091,8 @@ function Nerx:CreateWindow(config)
 		Text = "Ctrl",
 		Font = Fonts.Regular,
 		TextSize = 9,
-		TextColor3 = Theme.Faint,
+		TextColor3 = Theme.Muted,
+		TextTransparency = 0.35,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		BackgroundTransparency = 1,
 		Size = UDim2.fromOffset(28, 20),
@@ -3892,7 +4103,8 @@ function Nerx:CreateWindow(config)
 		Text = "F",
 		Font = Fonts.Regular,
 		TextSize = 9,
-		TextColor3 = Theme.Faint,
+		TextColor3 = Theme.Muted,
+		TextTransparency = 0.35,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		BackgroundTransparency = 1,
 		Size = UDim2.fromOffset(18, 20),
@@ -3981,7 +4193,38 @@ function Nerx:CreateWindow(config)
 			U.tween(tab.Icon, TWEEN.Default, { TextColor3 = Theme.Muted, TextTransparency = 0.4 })
 			U.tween(tab.Label, TWEEN.Default, { TextColor3 = Theme.Muted, TextTransparency = 0.45 })
 		end
-		tab.SubContainer.Visible = selected and tab.HasSubtabs
+
+		local sub = tab.SubContainer
+		local open = selected and tab.HasSubtabs
+		local targetHeight = tab.SubHeight or 0
+		if open then
+			local token = {}
+			tab.SubToken = token
+			if not sub.Visible then
+				sub.Visible = true
+				sub.Size = UDim2.new(1, 0, 0, 0)
+				U.setGroupTransparency(sub, 1)
+			end
+			if math.abs(sub.Size.Y.Offset - targetHeight) > 0.5 or sub.GroupTransparency > 0.01 then
+				U.tween(sub, TWEEN.Page, {
+					Size = UDim2.new(1, 0, 0, targetHeight),
+					GroupTransparency = 0,
+				})
+			end
+		elseif sub.Visible then
+			local token = {}
+			tab.SubToken = token
+			U.tween(sub, TWEEN.PageOut, {
+				Size = UDim2.new(1, 0, 0, 0),
+				GroupTransparency = 1,
+			})
+			task.delay(0.18, function()
+				if tab.SubToken == token and sub.Parent and not (self.SelectedTab == tab and tab.HasSubtabs) then
+					sub.Visible = false
+					U.setGroupTransparency(sub, 0)
+				end
+			end)
+		end
 	end
 
 	function window:RenderSubTabs(tab)
@@ -4003,10 +4246,11 @@ function Nerx:CreateWindow(config)
 		end
 	end
 
-	function window:SelectTab(tab)
+	function window:SelectTab(tab, targetPage)
 		if not tab then
 			return
 		end
+		Nerx:ClosePopup(true)
 		self.SelectedTab = tab
 		for _, other in ipairs(self.Tabs) do
 			self:RenderTab(other)
@@ -4017,14 +4261,14 @@ function Nerx:CreateWindow(config)
 
 		local page
 		if tab.HasSubtabs then
-			page = tab.CurrentPage
+			page = targetPage or tab.CurrentPage
 			if not page or page == tab.DefaultPage then
 				page = tab.SubTabs[1] and tab.SubTabs[1].Page or tab.DefaultPage
 			end
 		else
 			page = tab.DefaultPage
 		end
-		tab:SetPage(page)
+		tab:SetPage(page, true)
 		self:RenderSearch()
 		self:UpdateBreadcrumb()
 	end
@@ -4144,14 +4388,14 @@ function Nerx:CreateWindow(config)
 		end
 
 		if target then
-			Nerx:ClosePopup()
+			Nerx:ClosePopup(true)
 			self.Visible = true
 			root.Visible = true
 			U.setGroupTransparency(root, 1)
 			U.tween(root, TWEEN.Slow, { GroupTransparency = 0 })
 		else
 			self.Visible = false
-			Nerx:ClosePopup()
+			Nerx:ClosePopup(true)
 			U.tween(root, TWEEN.Default, { GroupTransparency = 1 })
 			task.delay(0.2, function()
 				if not self.Visible then
@@ -4301,6 +4545,7 @@ function Nerx:CreateWindow(config)
 		})
 		U.corner(tabIndicator, 2)
 		tab.Indicator = tabIndicator
+		tab.SubHeight = 0
 
 		tab.Icon = U.icon(button, tab.Icon, 15, Theme.Muted, {
 			AnchorPoint = Vector2.new(0, 0.5),
@@ -4334,10 +4579,12 @@ function Nerx:CreateWindow(config)
 		end)
 
 		self.SidebarOrder = self.SidebarOrder + 1
-		local subContainer = U.frame(sidebarScroll, {
+		local subContainer = U.canvas(sidebarScroll, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
+			GroupTransparency = 0,
 			Size = UDim2.new(1, 0, 0, 0),
+			ClipsDescendants = true,
 			Visible = false,
 		})
 		subContainer.LayoutOrder = self.SidebarOrder
@@ -4422,8 +4669,11 @@ function Nerx:CreateWindow(config)
 			sub.Page = page
 
 			local input = U.inputButton(subButton, function()
-				self:SetPage(page)
-				self.Window:SelectTab(self)
+				if self.Window.SelectedTab == self then
+					self:SetPage(page)
+				else
+					self.Window:SelectTab(self, page)
+				end
 			end)
 			U.connect(input.MouseEnter, function()
 				if self.CurrentPage ~= page then
@@ -4437,10 +4687,18 @@ function Nerx:CreateWindow(config)
 			self.SubTabs[index] = sub
 			self.Pages[#self.Pages + 1] = page
 			self.HasSubtabs = true
+			self.SubHeight = index * 25 + 4
 			self.DefaultPage:SetActive(false)
-			subContainer.Visible = self.Window.SelectedTab == self
-			subContainer.Size = UDim2.new(1, 0, 0, index * 25 + 4)
 			treeLine.Size = UDim2.new(0, 1, 0, math.max(0, index * 25 - 8))
+			if self.Window.SelectedTab == self then
+				subContainer.Visible = true
+				U.tween(subContainer, TWEEN.Page, {
+					Size = UDim2.new(1, 0, 0, self.SubHeight),
+					GroupTransparency = 0,
+				})
+			else
+				subContainer.Size = UDim2.new(1, 0, 0, 0)
+			end
 
 			if self.Window.SelectedTab == self and (self.CurrentPage == self.DefaultPage or self.CurrentPage == nil) then
 				self:SetPage(page)
@@ -4451,18 +4709,29 @@ function Nerx:CreateWindow(config)
 			return page
 		end
 
-		function tab:SetPage(page)
+		function tab:SetPage(page, forceAnimate)
 			if not page then
 				return
 			end
+			Nerx:ClosePopup(true)
+			local previous = self.CurrentPage
+			local animate = forceAnimate == true or (previous ~= nil and previous ~= page)
+
 			for _, other in ipairs(self.Pages) do
-				if other ~= page then
+				if other ~= page and other ~= previous then
 					other:SetActive(false)
 				end
 			end
-			page:SetActive(true)
+
 			self.CurrentPage = page
 			self.Window.CurrentPage = page
+			page:SetActive(true)
+			if animate then
+				page:AnimateIn()
+				if previous and previous ~= page then
+					previous:AnimateOut()
+				end
+			end
 			self.Window:RenderSubTabs(self)
 			self.Window:RenderSearch()
 			self.Window:UpdateBreadcrumb()
