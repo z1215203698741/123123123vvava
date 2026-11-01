@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.0.6
+	Nerx UI Library · v1.0.8
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.0.6"
+Nerx.Version = "1.0.8"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -175,6 +175,10 @@ Nerx.Icons = {
 }
 
 Nerx.Flags = {}
+Nerx.Components = {}
+Nerx.ComponentsById = {}
+Nerx.ComponentCounter = 0
+Nerx.LayoutState = {}
 Nerx.Connections = {}
 Nerx.Queries = {}
 Nerx.AccentListeners = {}
@@ -2288,6 +2292,8 @@ local function createSection(page, config)
 			Root = row,
 			Default = toggleConfig.Default,
 			Name = toggleConfig.Name,
+			Kind = "toggle",
+			Flag = toggleConfig.Flag,
 		})
 
 		if toggleConfig.ShowOption then
@@ -2452,6 +2458,8 @@ local function createSection(page, config)
 			Root = row,
 			Default = sliderConfig.Default,
 			Name = sliderConfig.Name,
+			Kind = "slider",
+			Flag = sliderConfig.Flag,
 		})
 
 		function api:GetValue()
@@ -2543,6 +2551,8 @@ local function createSection(page, config)
 			Root = row,
 			Default = dropdownConfig.Default or options[1],
 			Name = dropdownConfig.Name,
+			Kind = "dropdown",
+			Flag = dropdownConfig.Flag,
 			Disabled = dropdownConfig.Disabled == true,
 			Value = dropdownConfig.Default or options[1],
 		})
@@ -2635,6 +2645,8 @@ local function createSection(page, config)
 			Root = row,
 			Default = keyConfig.Default,
 			Name = keyConfig.Name,
+			Kind = "keybind",
+			Flag = keyConfig.Flag,
 			Key = key,
 		})
 
@@ -2765,6 +2777,8 @@ local function createSection(page, config)
 			Box = box,
 			Default = inputConfig.Default,
 			Name = inputConfig.Name,
+			Kind = "input",
+			Flag = inputConfig.Flag,
 			Value = inputConfig.Default or "",
 		})
 
@@ -3190,6 +3204,8 @@ local function createPage(window, host, tab, config)
 		SectionStyle = config.SectionStyle or "card",
 		Custom = false,
 		Filter = "",
+		Path = tostring(tab and tab.Name or "Tab") .. "/" .. tostring(config.Name or "Page"),
+		ComponentCounter = 0,
 	}
 
 	local root = U.canvas(host, {
@@ -3322,6 +3338,18 @@ local function createPage(window, host, tab, config)
 
 	function page:RegisterComponent(component)
 		self.Components[#self.Components + 1] = component
+		self.ComponentCounter = (self.ComponentCounter or 0) + 1
+		Nerx.ComponentCounter = Nerx.ComponentCounter + 1
+		local identifier = tostring(self.Path or self.Title or "Page")
+			.. "@" .. tostring(self.ComponentCounter)
+		component.Id = identifier
+		component.Path = identifier
+		component.Kind = component.Kind or "control"
+		if component.Name == nil or component.Name == "" then
+			component.Name = component.Kind
+		end
+		Nerx.Components[#Nerx.Components + 1] = component
+		Nerx.ComponentsById[identifier] = component
 		return component
 	end
 
@@ -3454,9 +3482,9 @@ local function createPage(window, host, tab, config)
 			local chip = createChip(chipHolder, item, {
 				Height = 26,
 				TextSize = 11.5,
-				IconSize = 14,
+				IconSize = 15,
 				IconGap = 7,
-				IconFilled = true,
+				IconFilled = false,
 				PaddingX = 12,
 				Radio = true,
 				DotSide = "right",
@@ -5407,6 +5435,1778 @@ function U.preview(page, config)
 	end
 
 	return preview
+end
+
+-- ---------------------------------------------------------------------------------------
+-- Persistence, themes, configuration and binds
+-- ---------------------------------------------------------------------------------------
+
+do
+	local WHITE = Color3.new(1, 1, 1)
+	local BLACK = Color3.new(0, 0, 0)
+
+	local function blend(a, b, t)
+		t = math.clamp(t or 0, 0, 1)
+		return Color3.new(
+			a.R * (1 - t) + b.R * t,
+			a.G * (1 - t) + b.G * t,
+			a.B * (1 - t) + b.B * t
+		)
+	end
+
+	local function luminance(color)
+		return color.R * 0.2126 + color.G * 0.7152 + color.B * 0.0722
+	end
+
+	local function encodeColor(color)
+		return { R = color.R, G = color.G, B = color.B }
+	end
+
+	local function decodeColor(value)
+		if type(value) ~= "table" then
+			return nil
+		end
+		return Color3.new(
+			tonumber(value.R or value[1]) or 0,
+			tonumber(value.G or value[2]) or 0,
+			tonumber(value.B or value[3]) or 0
+		)
+	end
+
+	local function colorKey(color)
+		if typeof(color) ~= "Color3" then
+			return nil
+		end
+		return string.format("%.4f,%.4f,%.4f", color.R, color.G, color.B)
+	end
+
+	local function encodeValue(value)
+		if value == nil then
+			return { __nil = true }
+		end
+		local kind = typeof(value)
+		if kind == "Color3" then
+			return { __color = encodeColor(value) }
+		end
+		if type(value) == "boolean" or type(value) == "number" or type(value) == "string" then
+			return value
+		end
+		return tostring(value)
+	end
+
+	local function decodeValue(value)
+		if type(value) == "table" then
+			if value.__nil then
+				return nil
+			end
+			if value.__color then
+				return decodeColor(value.__color)
+			end
+		end
+		return value
+	end
+
+	local function encodePalette(palette)
+		local encoded = {}
+		for key, value in pairs(palette or {}) do
+			if typeof(value) == "Color3" then
+				encoded[key] = encodeColor(value)
+			end
+		end
+		return encoded
+	end
+
+	local function decodePalette(encoded)
+		local palette = {}
+		for key, value in pairs(encoded or {}) do
+			local color = decodeColor(value)
+			if color then
+				palette[key] = color
+			end
+		end
+		return palette
+	end
+
+	Nerx._Internal = {
+		blend = blend,
+		luminance = luminance,
+		encodeColor = encodeColor,
+		decodeColor = decodeColor,
+		colorKey = colorKey,
+		encodeValue = encodeValue,
+		decodeValue = decodeValue,
+		encodePalette = encodePalette,
+		decodePalette = decodePalette,
+		WHITE = WHITE,
+		BLACK = BLACK,
+	}
+
+	-- Executor-backed JSON storage with an in-memory fallback.
+	local fileWrite = type(writefile) == "function" and writefile or nil
+	local fileRead = type(readfile) == "function" and readfile or nil
+	local fileExists = type(isfile) == "function" and isfile or nil
+	local folderExists = type(isfolder) == "function" and isfolder or nil
+	local folderMake = type(makefolder) == "function" and makefolder or nil
+	local fileDelete = type(delfile) == "function" and delfile or nil
+	local clipboardWrite = type(setclipboard) == "function" and setclipboard or nil
+	if not clipboardWrite and type(toclipboard) == "function" then
+		clipboardWrite = toclipboard
+	end
+
+	local memoryFiles = {}
+	local Storage = {
+		Directory = "Nerx",
+		Available = fileWrite ~= nil,
+		Memory = memoryFiles,
+	}
+
+	function Storage:Path(name)
+		return self.Directory .. "/" .. tostring(name)
+	end
+
+	function Storage:Ensure()
+		if folderMake then
+			pcall(folderMake, self.Directory)
+		end
+	end
+
+	function Storage:Exists(name)
+		local path = self:Path(name)
+		if fileExists then
+			local ok, exists = pcall(fileExists, path)
+			if ok and exists then
+				return true
+			end
+		end
+		return memoryFiles[path] ~= nil
+	end
+
+	function Storage:Read(name)
+		local path = self:Path(name)
+		if fileRead then
+			local ok, body = pcall(fileRead, path)
+			if ok and type(body) == "string" then
+				return body
+			end
+		end
+		return memoryFiles[path]
+	end
+
+	function Storage:Write(name, body)
+		local path = self:Path(name)
+		self:Ensure()
+		if fileWrite then
+			local ok, result = pcall(fileWrite, path, body)
+			if ok then
+				memoryFiles[path] = body
+				return true
+			end
+			return false, result
+		end
+		memoryFiles[path] = body
+		return true
+	end
+
+	function Storage:Delete(name)
+		local path = self:Path(name)
+		pcall(function()
+			if fileDelete then
+				fileDelete(path)
+			end
+		end)
+		memoryFiles[path] = nil
+	end
+
+	function Storage:Copy(text)
+		if clipboardWrite then
+			local ok = pcall(clipboardWrite, tostring(text))
+			if ok then
+				return true
+			end
+		end
+		return false
+	end
+
+	function Storage:ReadJSON(name)
+		local raw = self:Read(name)
+		if type(raw) ~= "string" or raw == "" then
+			return nil
+		end
+		local ok, decoded = pcall(function()
+			return HttpService:JSONDecode(raw)
+		end)
+		if ok and type(decoded) == "table" then
+			return decoded
+		end
+		return nil
+	end
+
+	function Storage:WriteJSON(name, data)
+		local ok, encoded = pcall(function()
+			return HttpService:JSONEncode(data)
+		end)
+		if not ok or type(encoded) ~= "string" then
+			return false
+		end
+		return self:Write(name, encoded)
+	end
+
+	function Storage:Encode(data)
+		local ok, encoded = pcall(function()
+			return HttpService:JSONEncode(data)
+		end)
+		if ok then
+			return encoded
+		end
+		return nil
+	end
+
+	function Storage:Decode(text)
+		local ok, decoded = pcall(function()
+			return HttpService:JSONDecode(text)
+		end)
+		if ok then
+			return decoded
+		end
+		return nil
+	end
+
+	function Storage:CopyPath(name)
+		local path = self:Path(name or "")
+		return self:Copy(path), path
+	end
+
+	Nerx.Storage = Storage
+
+	-- -----------------------------------------------------------------------------------
+	-- Themes
+	-- -----------------------------------------------------------------------------------
+
+	local presets = {
+		{ Name = "Dark", Base = Color3.fromRGB(14, 14, 15), Panel = Color3.fromRGB(34, 34, 36), Accent = Color3.fromRGB(235, 235, 240) },
+		{ Name = "Light", Base = Color3.fromRGB(229, 229, 232), Panel = Color3.fromRGB(245, 245, 247), Accent = Color3.fromRGB(38, 38, 42) },
+		{ Name = "Purple", Base = Color3.fromRGB(17, 14, 26), Panel = Color3.fromRGB(43, 33, 66), Accent = Color3.fromRGB(158, 123, 255) },
+		{ Name = "Blue", Base = Color3.fromRGB(12, 18, 30), Panel = Color3.fromRGB(28, 43, 70), Accent = Color3.fromRGB(79, 140, 255) },
+		{ Name = "Green", Base = Color3.fromRGB(11, 22, 18), Panel = Color3.fromRGB(26, 50, 40), Accent = Color3.fromRGB(59, 217, 140) },
+		{ Name = "Red", Base = Color3.fromRGB(24, 13, 13), Panel = Color3.fromRGB(58, 27, 27), Accent = Color3.fromRGB(255, 92, 92) },
+		{ Name = "Cyan", Base = Color3.fromRGB(10, 21, 24), Panel = Color3.fromRGB(23, 48, 55), Accent = Color3.fromRGB(69, 214, 232) },
+		{ Name = "Orange", Base = Color3.fromRGB(24, 16, 11), Panel = Color3.fromRGB(58, 38, 24), Accent = Color3.fromRGB(255, 159, 67) },
+		{ Name = "Pink", Base = Color3.fromRGB(24, 13, 19), Panel = Color3.fromRGB(58, 27, 42), Accent = Color3.fromRGB(255, 92, 200) },
+		{ Name = "Amber", Base = Color3.fromRGB(24, 19, 10), Panel = Color3.fromRGB(58, 44, 22), Accent = Color3.fromRGB(255, 198, 92) },
+		{ Name = "Steel", Base = Color3.fromRGB(16, 21, 26), Panel = Color3.fromRGB(36, 48, 58), Accent = Color3.fromRGB(175, 195, 214) },
+		{ Name = "Glass", Base = Color3.fromRGB(20, 24, 28), Panel = Color3.fromRGB(46, 55, 63), Accent = Color3.fromRGB(199, 214, 232) },
+	}
+
+	local function buildPalette(definition)
+		local base = definition.Base or Theme.Window
+		local panel = definition.Panel or blend(base, WHITE, 0.08)
+		local accent = definition.Accent or Theme.Accent
+		local dark = luminance(base) < 0.48
+		local palette = {}
+		if dark then
+			palette.Window = base
+			palette.Sidebar = base
+			palette.Main = blend(base, WHITE, 0.03)
+			palette.Surface = blend(base, panel, 0.65)
+			palette.SurfaceRaised = panel
+			palette.SurfaceHover = blend(panel, WHITE, 0.07)
+			palette.Selected = blend(panel, WHITE, 0.1)
+			palette.ChipSelected = blend(panel, WHITE, 0.14)
+			palette.Field = panel
+			palette.FieldHover = palette.SurfaceHover
+			palette.FieldDeep = blend(base, panel, 0.45)
+			palette.FieldDisabled = blend(base, panel, 0.5)
+			palette.Stroke = blend(panel, WHITE, 0.12)
+			palette.StrokeSoft = blend(panel, WHITE, 0.04)
+			palette.Divider = blend(base, WHITE, 0.07)
+			palette.Track = blend(panel, WHITE, 0.2)
+			palette.Button = panel
+			palette.ButtonHover = palette.SurfaceHover
+			palette.Primary = palette.ChipSelected
+			palette.PrimaryHover = blend(panel, WHITE, 0.18)
+			palette.PrimaryStroke = palette.Stroke
+			palette.ToggleOff = panel
+			palette.ToggleOffKnob = WHITE
+			palette.ToggleDisabledTrack = blend(panel, WHITE, 0.35)
+			palette.ToggleDisabledKnob = blend(panel, WHITE, 0.15)
+			palette.Text = WHITE
+			palette.Muted = blend(WHITE, base, 0.4)
+			palette.Faint = blend(WHITE, base, 0.66)
+			palette.Icon = palette.Text
+			palette.Accent = accent
+			palette.AccentDeep = blend(accent, WHITE, 0.35)
+		else
+			palette.Window = base
+			palette.Sidebar = base
+			palette.Main = base
+			palette.Surface = panel
+			palette.SurfaceRaised = blend(panel, BLACK, 0.02)
+			palette.SurfaceHover = blend(panel, BLACK, 0.05)
+			palette.Selected = blend(base, accent, 0.18)
+			palette.ChipSelected = blend(base, accent, 0.24)
+			palette.Field = blend(base, BLACK, 0.05)
+			palette.FieldHover = blend(base, BLACK, 0.09)
+			palette.FieldDeep = blend(base, BLACK, 0.02)
+			palette.FieldDisabled = blend(base, BLACK, 0.04)
+			palette.Stroke = blend(base, BLACK, 0.2)
+			palette.StrokeSoft = blend(base, BLACK, 0.12)
+			palette.Divider = blend(base, BLACK, 0.1)
+			palette.Track = blend(base, BLACK, 0.22)
+			palette.Button = palette.Field
+			palette.ButtonHover = palette.FieldHover
+			palette.Primary = palette.Button
+			palette.PrimaryHover = palette.ButtonHover
+			palette.PrimaryStroke = palette.Stroke
+			palette.ToggleOff = blend(base, BLACK, 0.08)
+			palette.ToggleOffKnob = blend(BLACK, base, 0.10)
+			palette.ToggleDisabledTrack = blend(base, BLACK, 0.2)
+			palette.ToggleDisabledKnob = blend(base, BLACK, 0.35)
+			palette.Text = blend(BLACK, base, 0.1)
+			palette.Muted = blend(BLACK, base, 0.45)
+			palette.Faint = blend(BLACK, base, 0.62)
+			palette.Icon = palette.Text
+			palette.Accent = accent
+			palette.AccentDeep = blend(accent, BLACK, 0.2)
+		end
+		return palette
+	end
+
+	local paletteOrder = {
+		"Window", "Sidebar", "Main", "Surface", "SurfaceRaised", "SurfaceHover",
+		"Selected", "ChipSelected", "Field", "FieldHover", "FieldDeep", "FieldDisabled",
+		"Stroke", "StrokeSoft", "Divider", "Track", "Button", "ButtonHover",
+		"Primary", "PrimaryHover", "PrimaryStroke", "ToggleOff", "ToggleOffKnob",
+		"ToggleDisabledTrack", "ToggleDisabledKnob", "Text", "Muted", "Faint",
+		"Icon", "Accent", "AccentDeep",
+	}
+
+	local function recolorGui(oldPalette, newPalette)
+		local mapping = {}
+		for _, key in ipairs(paletteOrder) do
+			local oldColor = oldPalette[key]
+			local newColor = newPalette[key]
+			local oldKey = colorKey(oldColor)
+			if oldKey and typeof(newColor) == "Color3" and mapping[oldKey] == nil then
+				mapping[oldKey] = newColor
+			end
+		end
+		if next(mapping) == nil then
+			return
+		end
+
+		local colorProperties = {
+			"BackgroundColor3", "TextColor3", "PlaceholderColor3", "ImageColor3",
+			"ScrollBarImageColor3",
+		}
+		for _, object in ipairs(screenGui:GetDescendants()) do
+			if object:IsA("GuiObject") then
+				for _, property in ipairs(colorProperties) do
+					local ok, current = pcall(function()
+						return object[property]
+					end)
+					if ok and current then
+						local replacement = mapping[colorKey(current)]
+						if replacement then
+							pcall(function()
+								object[property] = replacement
+							end)
+						end
+					end
+				end
+			elseif object:IsA("UIStroke") then
+				local ok, current = pcall(function()
+					return object.Color
+				end)
+				if ok and current then
+					local replacement = mapping[colorKey(current)]
+					if replacement then
+						pcall(function()
+							object.Color = replacement
+						end)
+					end
+				end
+			end
+		end
+	end
+
+	Nerx._Internal.buildPalette = buildPalette
+	Nerx._Internal.recolorGui = recolorGui
+
+	local themesStore = {
+		version = 1,
+		active = nil,
+		custom = {},
+	}
+
+	local function saveThemesStore()
+		Nerx.Storage:WriteJSON("themes.json", themesStore)
+	end
+
+	local function loadThemesStore()
+		local raw = Nerx.Storage:ReadJSON("themes.json")
+		if type(raw) ~= "table" then
+			return
+		end
+		if type(raw.custom) == "table" then
+			themesStore.custom = raw.custom
+		end
+		themesStore.active = raw.active
+	end
+	loadThemesStore()
+
+	local themeListeners = {}
+
+	local Themes = {
+		Presets = presets,
+		ActiveName = themesStore.active and themesStore.active.name or "Dark",
+		OnChanged = themeListeners,
+	}
+
+	function Themes:CapturePalette()
+		local palette = {}
+		for key, value in pairs(Theme) do
+			if typeof(value) == "Color3" then
+				palette[key] = value
+			end
+		end
+		return palette
+	end
+
+	function Themes:Signature()
+		local data = self:SerializeActive()
+		return Nerx.Storage:Encode(data) or tostring(self.ActiveName)
+	end
+
+	function Themes:SerializeActive()
+		return {
+			name = self.ActiveName,
+			palette = encodePalette(self:CapturePalette()),
+		}
+	end
+
+	function Themes:ApplyPalette(palette, name, options)
+		options = options or {}
+		if type(palette) ~= "table" then
+			return false
+		end
+		local oldPalette = {}
+		for key, value in pairs(Theme) do
+			oldPalette[key] = value
+		end
+		for key, value in pairs(palette) do
+			if typeof(value) == "Color3" then
+				Theme[key] = value
+			end
+		end
+		recolorGui(oldPalette, palette)
+		for _, callback in ipairs(Nerx.AccentListeners) do
+			task.spawn(pcall, callback, Theme.Accent)
+		end
+		self.ActiveName = name or "Custom"
+		if not options.noPersist then
+			themesStore.active = {
+				name = self.ActiveName,
+				palette = encodePalette(self:CapturePalette()),
+			}
+			saveThemesStore()
+		end
+		for _, callback in ipairs(themeListeners) do
+			task.spawn(pcall, callback, self.ActiveName)
+		end
+		return true
+	end
+
+	function Themes:ApplyPreset(name, options)
+		name = tostring(name or "")
+		for _, definition in ipairs(presets) do
+			if definition.Name == name then
+				return self:ApplyPalette(buildPalette(definition), name, options)
+			end
+		end
+		local custom = themesStore.custom[name]
+		if type(custom) == "table" and custom.palette then
+			return self:ApplyPalette(decodePalette(custom.palette), name, options)
+		end
+		return false
+	end
+
+	function Themes:BuildPalette(definition)
+		return buildPalette(definition)
+	end
+
+	function Themes:ApplyColors(base, panel, accent, name, options)
+		return self:ApplyPalette(buildPalette({
+			Base = base,
+			Panel = panel,
+			Accent = accent,
+		}), name or "Custom", options)
+	end
+
+	function Themes:ApplySerialized(data, options)
+		if type(data) ~= "table" then
+			return false
+		end
+		local name = data.name or data.Name
+		if data.palette then
+			local palette = decodePalette(data.palette)
+			if next(palette) then
+				return self:ApplyPalette(palette, name, options)
+			end
+		end
+		if name then
+			return self:ApplyPreset(name, options)
+		end
+		return false
+	end
+
+	function Themes:SaveCustom(name)
+		name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", "")
+		if name == "" then
+			return false, "empty name"
+		end
+		local palette = encodePalette(self:CapturePalette())
+		themesStore.custom[name] = {
+			name = name,
+			savedAt = os.time(),
+			palette = palette,
+		}
+		themesStore.active = { name = name, palette = palette }
+		self.ActiveName = name
+		saveThemesStore()
+		for _, callback in ipairs(themeListeners) do
+			task.spawn(pcall, callback, name)
+		end
+		return true
+	end
+
+	function Themes:DeleteCustom(name)
+		if not themesStore.custom[name] then
+			return false
+		end
+		themesStore.custom[name] = nil
+		if themesStore.active and themesStore.active.name == name then
+			themesStore.active = nil
+		end
+		saveThemesStore()
+		for _, callback in ipairs(themeListeners) do
+			task.spawn(pcall, callback, self.ActiveName)
+		end
+		return true
+	end
+
+	function Themes:RenameCustom(oldName, newName)
+		newName = tostring(newName or ""):gsub("^%s+", ""):gsub("%s+$", "")
+		if newName == "" or not themesStore.custom[oldName] or themesStore.custom[newName] then
+			return false
+		end
+		local record = themesStore.custom[oldName]
+		themesStore.custom[oldName] = nil
+		record.name = newName
+		themesStore.custom[newName] = record
+		if themesStore.active and themesStore.active.name == oldName then
+			themesStore.active.name = newName
+		end
+		if self.ActiveName == oldName then
+			self.ActiveName = newName
+		end
+		saveThemesStore()
+		for _, callback in ipairs(themeListeners) do
+			task.spawn(pcall, callback, newName)
+		end
+		return true
+	end
+
+	function Themes:ListCustom(filterText)
+		local filterLower = string.lower(tostring(filterText or ""))
+		local list = {}
+		for name, record in pairs(themesStore.custom) do
+			if filterLower == "" or string.find(string.lower(name), filterLower, 1, true) then
+				list[#list + 1] = record
+			end
+		end
+		table.sort(list, function(a, b)
+			return string.lower(a.name or "") < string.lower(b.name or "")
+		end)
+		return list
+	end
+
+	function Themes:GetCustom(name)
+		return themesStore.custom[name]
+	end
+
+	function Themes:Export(name)
+		name = name or self.ActiveName
+		local custom = themesStore.custom[name]
+		if custom then
+			return Nerx.Storage:Encode(custom)
+		end
+		for _, definition in ipairs(presets) do
+			if definition.Name == name then
+				return Nerx.Storage:Encode({
+					name = definition.Name,
+					base = encodeColor(definition.Base),
+					panel = encodeColor(definition.Panel),
+					accent = encodeColor(definition.Accent),
+					palette = encodePalette(buildPalette(definition)),
+				})
+			end
+		end
+		return Nerx.Storage:Encode(self:SerializeActive())
+	end
+
+	function Themes:Import(text, nameOverride)
+		local decoded = Nerx.Storage:Decode(text)
+		if type(decoded) ~= "table" then
+			return false, "invalid JSON"
+		end
+		if type(decoded.custom) == "table" then
+			for name, record in pairs(decoded.custom) do
+				if type(record) == "table" and record.palette then
+					record.name = name
+					themesStore.custom[name] = record
+				end
+			end
+			saveThemesStore()
+			return true
+		end
+		local name = tostring(nameOverride or decoded.name or "Imported")
+		local palette = decoded.palette
+		if not palette and decoded.base and decoded.panel and decoded.accent then
+			local built = buildPalette({
+				Base = decodeColor(decoded.base),
+				Panel = decodeColor(decoded.panel),
+				Accent = decodeColor(decoded.accent),
+			})
+			palette = encodePalette(built)
+		end
+		if not palette then
+			return false, "missing palette"
+		end
+		themesStore.custom[name] = {
+			name = name,
+			savedAt = os.time(),
+			palette = palette,
+		}
+		saveThemesStore()
+		return true
+	end
+
+	function Themes:LoadActive()
+		if themesStore.active then
+			return self:ApplySerialized(themesStore.active, { noPersist = true })
+		end
+		return false
+	end
+
+	Nerx.Themes = Themes
+end
+
+do
+	local Internal = Nerx._Internal
+	local encodeValue = Internal.encodeValue
+	local decodeValue = Internal.decodeValue
+
+	local BIND_FILE = "binds.json"
+	local binds = {}
+	local actions = {}
+	local activeStates = {}
+	local listeners = {}
+	local bindCounter = 0
+	local overlayEnabled = true
+
+	local overlayRoot
+	local overlayRows = {}
+
+	local function notifyChanged()
+		for _, callback in ipairs(listeners) do
+			task.spawn(pcall, callback)
+		end
+	end
+
+	local function buildOverlay()
+		if not overlayRoot or not overlayRoot.Parent then
+			overlayRoot = U.canvas(screenGui, {
+				Name = "NerxBindOverlay",
+				AnchorPoint = Vector2.new(0, 1),
+				BackgroundColor3 = Theme.Window,
+				BackgroundTransparency = 0.12,
+				BorderSizePixel = 0,
+				Position = UDim2.new(0, 16, 1, -16),
+				Size = UDim2.fromOffset(230, 0),
+				AutomaticSize = Enum.AutomaticSize.Y,
+				GroupTransparency = 0,
+				Visible = false,
+				ZIndex = 0,
+			})
+			U.corner(overlayRoot, 8)
+			U.stroke(overlayRoot, Theme.Stroke, 0.4, 1)
+			U.list(overlayRoot, 4, Enum.HorizontalAlignment.Left, Enum.VerticalAlignment.Bottom)
+		end
+
+		for _, row in ipairs(overlayRows) do
+			if row and row.Parent then
+				row:Destroy()
+			end
+		end
+		table.clear(overlayRows)
+
+		if not overlayEnabled then
+			overlayRoot.Visible = false
+			return
+		end
+
+		local shown = 0
+		for _, bind in ipairs(binds) do
+			if bind.Enabled ~= false then
+				local mode = bind.Overlay or "Always"
+				local allowed = mode == "Always" or (mode == "While Active" and activeStates[bind.Id])
+				if allowed then
+					shown = shown + 1
+					local active = activeStates[bind.Id] == true
+					local row = U.frame(overlayRoot, {
+						BackgroundColor3 = active and Theme.ChipSelected or Theme.FieldDeep,
+						BackgroundTransparency = active and 0 or 0.25,
+						BorderSizePixel = 0,
+						Size = UDim2.new(1, 0, 0, 24),
+						ZIndex = 1,
+					})
+					U.corner(row, 5)
+
+					local keyWidth = math.max(34, U.measure(tostring(bind.Key or ""), 8.5, Fonts.Bold).X + 12)
+					local key = U.frame(row, {
+						AnchorPoint = Vector2.new(0, 0.5),
+						BackgroundColor3 = Theme.Field,
+						BorderSizePixel = 0,
+						Position = UDim2.new(0, 7, 0.5, 0),
+						Size = UDim2.fromOffset(keyWidth, 16),
+						ZIndex = 2,
+					})
+					U.corner(key, 4)
+					U.label(key, {
+						Text = tostring(bind.Key or "?"),
+						Font = Fonts.Bold,
+						TextSize = 8,
+						TextColor3 = Theme.Text,
+						TextTransparency = 0.15,
+						TextXAlignment = Enum.TextXAlignment.Center,
+						Size = UDim2.fromScale(1, 1),
+						ZIndex = 3,
+					})
+					U.label(row, {
+						Text = tostring(bind.Name or bind.Id or "Bind"),
+						TextSize = 9.5,
+						TextColor3 = active and Theme.Text or Theme.Muted,
+						TextTransparency = active and 0.05 or 0.35,
+						Position = UDim2.fromOffset(10 + keyWidth, 0),
+						Size = UDim2.new(1, -(18 + keyWidth), 1, 0),
+						TextTruncate = Enum.TextTruncate.AtEnd,
+						ZIndex = 2,
+					})
+					overlayRows[#overlayRows + 1] = row
+				end
+			end
+		end
+		overlayRoot.Visible = shown > 0
+	end
+
+	local function resolveTarget(target)
+		if type(target) ~= "table" then
+			return nil, nil
+		end
+		if target.Type == "Component" then
+			return Nerx.ComponentsById[target.Target], "component"
+		end
+		if target.Type == "Flag" then
+			return Nerx.Flags[target.Target], "flag"
+		end
+		return nil, nil
+	end
+
+	local function fireAction(target, phase, bind)
+		if type(target) ~= "table" or target.Type ~= "Action" then
+			return
+		end
+		local action = actions[target.Target]
+		if not action then
+			return
+		end
+		local callback = phase == "press" and action.Press or action.Release
+		if callback then
+			task.spawn(pcall, callback, bind)
+		end
+	end
+
+	local function applyBindActions(bind, pressed)
+		if pressed then
+			bind.__previous = {}
+			for index, target in ipairs(bind.Actions or {}) do
+				if target.Type == "Action" then
+					fireAction(target, "press", bind)
+				else
+					local api = resolveTarget(target)
+					if api and api.GetValue and api.SetValue then
+						local ok, previous = pcall(api.GetValue, api)
+						bind.__previous[index] = ok and previous or nil
+						pcall(api.SetValue, api, decodeValue(target.Value), true)
+					end
+				end
+			end
+		else
+			local previous = bind.__previous or {}
+			for index = #(bind.Actions or {}), 1, -1 do
+				local target = bind.Actions[index]
+				if target.Type == "Action" then
+					fireAction(target, "release", bind)
+				else
+					local api = resolveTarget(target)
+					if api and api.SetValue then
+						pcall(api.SetValue, api, previous[index], true)
+					end
+				end
+			end
+			bind.__previous = nil
+		end
+	end
+
+	local function isParentActive(bind)
+		local parentId = bind.ParentId
+		if not parentId or parentId == "" then
+			return true
+		end
+		return activeStates[parentId] == true
+	end
+
+	local activateBind
+	local deactivateBind
+
+	local function refreshChildren(bind, visited)
+		for _, child in ipairs(binds) do
+			if child.ParentId == bind.Id and child.Trigger == "Condition" and child.Enabled ~= false then
+				if activeStates[bind.Id] then
+					activateBind(child, visited)
+				else
+					deactivateBind(child, visited)
+				end
+			end
+		end
+	end
+
+	activateBind = function(bind, visited)
+		if not bind or activeStates[bind.Id] then
+			return
+		end
+		visited = visited or {}
+		if visited[bind.Id] then
+			return
+		end
+		visited[bind.Id] = true
+		activeStates[bind.Id] = true
+		applyBindActions(bind, true)
+		refreshChildren(bind, visited)
+		buildOverlay()
+		notifyChanged()
+	end
+
+	deactivateBind = function(bind, visited)
+		if not bind or not activeStates[bind.Id] then
+			return
+		end
+		visited = visited or {}
+		if visited[bind.Id] then
+			return
+		end
+		visited[bind.Id] = true
+		activeStates[bind.Id] = nil
+		applyBindActions(bind, false)
+		refreshChildren(bind, visited)
+		buildOverlay()
+		notifyChanged()
+	end
+
+	local function pulseBind(bind)
+		if not bind then
+			return
+		end
+		activateBind(bind)
+		local token = {}
+		bind.__pulse = token
+		task.delay(0.14, function()
+			if bind.__pulse == token then
+				bind.__pulse = nil
+				deactivateBind(bind)
+			end
+		end)
+	end
+
+	local function inputName(input)
+		if not input then
+			return nil
+		end
+		local key = input.KeyCode
+		local inputType = input.UserInputType
+		if inputType == Enum.UserInputType.MouseButton1
+			or inputType == Enum.UserInputType.MouseButton2
+			or inputType == Enum.UserInputType.MouseButton3 then
+			key = inputType
+		end
+		if not key or key == Enum.KeyCode.Unknown then
+			return nil
+		end
+		local ok, name = pcall(U.keyName, key)
+		return ok and name or nil
+	end
+
+	local function keyIsCaptured()
+		if Nerx.CapturingKeybind then
+			return true
+		end
+		if UserInputService.GetFocusedTextBox then
+			local ok, box = pcall(function()
+				return UserInputService:GetFocusedTextBox()
+			end)
+			if ok and box then
+				return true
+			end
+		end
+		return false
+	end
+
+	U.connect(UserInputService.InputBegan, function(input)
+		if input.UserInputType ~= Enum.UserInputType.Keyboard
+			and input.UserInputType ~= Enum.UserInputType.MouseButton1
+			and input.UserInputType ~= Enum.UserInputType.MouseButton2
+			and input.UserInputType ~= Enum.UserInputType.MouseButton3 then
+			return
+		end
+		if input.gameProcessedEvent or keyIsCaptured() then
+			return
+		end
+		local key = inputName(input)
+		if not key then
+			return
+		end
+
+		for _, bind in ipairs(binds) do
+			if bind.Enabled ~= false
+				and bind.Trigger == "Key"
+				and bind.Key == key
+				and isParentActive(bind) then
+				local mode = bind.Mode or "Toggle"
+				if mode == "Hold" then
+					if not activeStates[bind.Id] then
+						bind.__heldKey = key
+						activateBind(bind)
+					end
+				elseif mode == "Double Click" then
+					local now = os.clock()
+					if bind.__lastClick and now - bind.__lastClick <= 0.42 then
+						bind.__lastClick = nil
+						pulseBind(bind)
+					else
+						bind.__lastClick = now
+					end
+				else
+					if activeStates[bind.Id] then
+						deactivateBind(bind)
+					else
+						activateBind(bind)
+					end
+				end
+			end
+		end
+	end)
+
+	U.connect(UserInputService.InputEnded, function(input)
+		local key = inputName(input)
+		if not key then
+			return
+		end
+		for _, bind in ipairs(binds) do
+			if bind.Mode == "Hold" and bind.__heldKey == key then
+				bind.__heldKey = nil
+				deactivateBind(bind)
+			end
+		end
+	end)
+
+	local function serializeBind(bind)
+		local encodedActions = {}
+		for index, target in ipairs(bind.Actions or {}) do
+			encodedActions[index] = {
+				Type = target.Type,
+				Target = target.Target,
+				Value = encodeValue(target.Value),
+			}
+		end
+		return {
+			Id = bind.Id,
+			Name = bind.Name,
+			Key = bind.Key,
+			Mode = bind.Mode,
+			Trigger = bind.Trigger,
+			ParentId = bind.ParentId,
+			Overlay = bind.Overlay,
+			Enabled = bind.Enabled ~= false,
+			Actions = encodedActions,
+		}
+	end
+
+	local function decodeBind(data)
+		if type(data) ~= "table" then
+			return nil
+		end
+		local bind = {
+			Id = data.Id or data.id,
+			Name = data.Name or data.name or "Bind",
+			Key = data.Key or data.key or "F4",
+			Mode = data.Mode or data.mode or "Toggle",
+			Trigger = data.Trigger or data.trigger or "Key",
+			ParentId = data.ParentId or data.parentId,
+			Overlay = data.Overlay or data.overlay or "While Active",
+			Enabled = data.Enabled ~= false,
+			Actions = {},
+		}
+		for _, target in ipairs(data.Actions or data.actions or {}) do
+			bind.Actions[#bind.Actions + 1] = {
+				Type = target.Type or target.type or "Component",
+				Target = target.Target or target.target,
+				Value = decodeValue(target.Value or target.value),
+			}
+		end
+		return bind
+	end
+
+	local function saveBinds()
+		local data = { version = 1, binds = {} }
+		for index, bind in ipairs(binds) do
+			data.binds[index] = serializeBind(bind)
+		end
+		Nerx.Storage:WriteJSON(BIND_FILE, data)
+	end
+
+	local function loadBinds()
+		local data = Nerx.Storage:ReadJSON(BIND_FILE)
+		if type(data) ~= "table" then
+			return
+		end
+		local source = type(data.binds) == "table" and data.binds or data
+		for index, entry in ipairs(source) do
+			local bind = decodeBind(entry)
+			if bind then
+				if not bind.Id or bind.Id == "" then
+					bind.Id = "bind" .. tostring(index)
+				end
+				bindCounter = math.max(bindCounter, index)
+				binds[#binds + 1] = bind
+			end
+		end
+	end
+
+	local BindManager = {
+		Binds = binds,
+		Actions = actions,
+		OnChanged = listeners,
+	}
+
+	function BindManager:InputName(input)
+		return inputName(input)
+	end
+
+	function BindManager:RegisterAction(name, onPress, onRelease)
+		if not name or name == "" then
+			return
+		end
+		actions[name] = {
+			Name = name,
+			Press = onPress,
+			Release = onRelease,
+		}
+		notifyChanged()
+	end
+
+	function BindManager:GetActions()
+		local list = {}
+		for name in pairs(actions) do
+			list[#list + 1] = name
+		end
+		table.sort(list)
+		return list
+	end
+
+	function BindManager:GetTargets()
+		local targets = {}
+		for _, name in ipairs(self:GetActions()) do
+			targets[#targets + 1] = {
+				Type = "Action",
+				Target = name,
+				Label = "Action · " .. name,
+				Value = true,
+			}
+		end
+		for _, component in ipairs(Nerx.Components) do
+			if component.Id and component.SetValue then
+				local path = tostring(component.Path or "")
+				local name = tostring(component.Name or "Setting")
+				if component.Kind == "toggle" then
+					targets[#targets + 1] = {
+						Type = "Component",
+						Target = component.Id,
+						Label = "Toggle · " .. name,
+						Detail = path,
+						Value = true,
+					}
+				elseif component.Kind == "dropdown" then
+					for _, option in ipairs(component.Options or {}) do
+						targets[#targets + 1] = {
+							Type = "Component",
+							Target = component.Id,
+							Label = "Dropdown · " .. name .. " → " .. tostring(option),
+							Detail = path,
+							Value = option,
+						}
+					end
+				elseif component.Kind == "slider" then
+					targets[#targets + 1] = {
+						Type = "Component",
+						Target = component.Id,
+						Label = "Slider · " .. name .. " = " .. tostring(component.Default or 0),
+						Detail = path,
+						Value = component.Default,
+					}
+				end
+			end
+		end
+		return targets
+	end
+
+	function BindManager:List(filterText)
+		local filterLower = string.lower(tostring(filterText or ""))
+		local list = {}
+		for _, bind in ipairs(binds) do
+			if filterLower == "" or string.find(string.lower(tostring(bind.Name or "")), filterLower, 1, true) then
+				list[#list + 1] = bind
+			end
+		end
+		return list
+	end
+
+	function BindManager:Get(id)
+		for _, bind in ipairs(binds) do
+			if bind.Id == id then
+				return bind
+			end
+		end
+		return nil
+	end
+
+	function BindManager:Add(data)
+		bindCounter = bindCounter + 1
+		local bind = decodeBind(data or {})
+		bind.Id = tostring((data and (data.Id or data.id)) or ("bind" .. tostring(bindCounter)))
+		bindCounter = math.max(bindCounter, tonumber(string.match(bind.Id, "%d+")) or bindCounter)
+		bind.Name = bind.Name or ("Bind " .. tostring(bindCounter))
+		binds[#binds + 1] = bind
+		saveBinds()
+		buildOverlay()
+		notifyChanged()
+		return bind
+	end
+
+	function BindManager:Update(id, patch)
+		local bind = self:Get(id)
+		if not bind then
+			return nil
+		end
+		for key, value in pairs(patch or {}) do
+			if key ~= "Actions" and key ~= "Id" and key:sub(1, 2) ~= "__" then
+				bind[key] = value
+			end
+		end
+		if patch and patch.Actions then
+			bind.Actions = {}
+			for index, target in ipairs(patch.Actions) do
+				bind.Actions[index] = {
+					Type = target.Type,
+					Target = target.Target,
+					Value = target.Value,
+				}
+			end
+		end
+		if bind.Enabled == false and activeStates[bind.Id] then
+			deactivateBind(bind)
+		end
+		saveBinds()
+		buildOverlay()
+		notifyChanged()
+		return bind
+	end
+
+	function BindManager:Remove(id)
+		for index, bind in ipairs(binds) do
+			if bind.Id == id then
+				if activeStates[id] then
+					deactivateBind(bind)
+				end
+				table.remove(binds, index)
+				for _, child in ipairs(binds) do
+					if child.ParentId == id then
+						child.ParentId = nil
+					end
+				end
+				saveBinds()
+				buildOverlay()
+				notifyChanged()
+				return true
+			end
+		end
+		return false
+	end
+
+	function BindManager:IsActive(id)
+		return activeStates[id] == true
+	end
+
+	function BindManager:SetOverlayEnabled(value)
+		overlayEnabled = value == true
+		buildOverlay()
+		notifyChanged()
+	end
+
+	function BindManager:IsOverlayEnabled()
+		return overlayEnabled
+	end
+
+	function BindManager:Serialize()
+		local serialized = {}
+		for index, bind in ipairs(binds) do
+			serialized[index] = serializeBind(bind)
+		end
+		return serialized
+	end
+
+	function BindManager:Deserialize(data, options)
+		options = options or {}
+		for _, bind in ipairs(binds) do
+			if activeStates[bind.Id] then
+				deactivateBind(bind)
+			end
+		end
+		table.clear(binds)
+		table.clear(activeStates)
+		local source = type(data) == "table" and (data.binds or data) or {}
+		for index, entry in ipairs(source) do
+			local bind = decodeBind(entry)
+			if bind then
+				if not bind.Id or bind.Id == "" then
+					bind.Id = "bind" .. tostring(index)
+				end
+				bindCounter = math.max(bindCounter, tonumber(string.match(tostring(bind.Id), "%d+")) or 0)
+				binds[#binds + 1] = bind
+			end
+		end
+		if options.persist ~= false then
+			saveBinds()
+		end
+		buildOverlay()
+		notifyChanged()
+	end
+
+	function BindManager:Save()
+		saveBinds()
+	end
+
+	function BindManager:DeactivateAll()
+		for _, bind in ipairs(binds) do
+			if activeStates[bind.Id] then
+				deactivateBind(bind)
+			end
+		end
+	end
+
+	loadBinds()
+	buildOverlay()
+	Nerx.BindManager = BindManager
+end
+
+do
+	local Internal = Nerx._Internal
+	local encodeValue = Internal.encodeValue
+	local decodeValue = Internal.decodeValue
+	local encodeColor = Internal.encodeColor
+	local decodeColor = Internal.decodeColor
+	local colorKey = Internal.colorKey
+
+	local CONFIG_FILE = "configs.json"
+	local configStore = {
+		version = 1,
+		active = nil,
+		configs = {},
+	}
+	local listeners = {}
+
+	local function loadStore()
+		local raw = Nerx.Storage:ReadJSON(CONFIG_FILE)
+		if type(raw) ~= "table" then
+			return
+		end
+		if type(raw.configs) == "table" then
+			configStore.configs = raw.configs
+		end
+		configStore.active = raw.active
+	end
+
+	local function saveStore()
+		Nerx.Storage:WriteJSON(CONFIG_FILE, configStore)
+	end
+
+	local function notifyConfigChanged()
+		for _, callback in ipairs(listeners) do
+			task.spawn(function()
+				pcall(callback)
+			end)
+		end
+	end
+
+	local function trimName(name)
+		return tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", "")
+	end
+
+	local function countValues(data)
+		local count = 0
+		for _ in pairs(data and data.components or {}) do
+			count = count + 1
+		end
+		return count
+	end
+
+	local function snapshotSize(data)
+		local encoded = Nerx.Storage:Encode(data)
+		return encoded and #encoded or 0
+	end
+
+	loadStore()
+
+	function Nerx:CaptureConfig()
+		local components = {}
+		for _, component in ipairs(Nerx.Components) do
+			if component.Id and component.GetValue then
+				local ok, value = pcall(component.GetValue, component)
+				local entry = {
+					Kind = component.Kind,
+					Name = component.Name,
+					Flag = component.Flag,
+				}
+				if ok then
+					entry.Value = encodeValue(value)
+				end
+				if component.Swatch and component.Swatch.Color then
+					entry.Swatch = encodeColor(component.Swatch.Color)
+				end
+				components[component.Id] = entry
+			end
+		end
+
+		local flags = {}
+		for flag, api in pairs(Nerx.Flags) do
+			if api and api.GetValue then
+				local ok, value = pcall(api.GetValue, api)
+				if ok then
+					flags[flag] = encodeValue(value)
+				end
+			end
+		end
+
+		local window = Nerx.Windows[1]
+		local mode = window and window.Mode or nil
+		local layout = {
+			windowPosition = nil,
+			custom = Nerx.LayoutState or {},
+		}
+		if window and window.Root then
+			local position = window.Root.Position
+			layout.windowPosition = {
+				XScale = position.X.Scale,
+				XOffset = position.X.Offset,
+				YScale = position.Y.Scale,
+				YOffset = position.Y.Offset,
+			}
+		end
+
+		return {
+			version = 1,
+			capturedAt = os.time(),
+			mode = mode,
+			components = components,
+			flags = flags,
+			binds = Nerx.BindManager and Nerx.BindManager:Serialize() or {},
+			theme = Nerx.Themes and Nerx.Themes:SerializeActive() or nil,
+			layout = layout,
+		}
+	end
+
+	function Nerx:ApplyConfig(config, options)
+		options = options or {}
+		if type(config) ~= "table" then
+			return false
+		end
+
+		if config.flags then
+			for flag, value in pairs(config.flags) do
+				local api = Nerx.Flags[flag]
+				if api and api.SetValue then
+					pcall(api.SetValue, api, decodeValue(value), true)
+				end
+			end
+		end
+
+		if config.components then
+			for identifier, entry in pairs(config.components) do
+				local component = Nerx.ComponentsById[identifier]
+				if component then
+					if component.SetValue and entry.Value ~= nil then
+						pcall(component.SetValue, component, decodeValue(entry.Value), true)
+					end
+					if entry.Swatch and component.Swatch and component.Swatch.SetColor then
+						local color = decodeColor(entry.Swatch)
+						if color then
+							pcall(component.Swatch.SetColor, component.Swatch, color, true)
+						end
+					end
+				end
+			end
+		end
+
+		if config.binds and Nerx.BindManager then
+			Nerx.BindManager:Deserialize(config.binds, { persist = true })
+		end
+
+		if config.theme and Nerx.Themes then
+			Nerx.Themes:ApplySerialized(config.theme, { noPersist = false })
+		end
+
+		if config.mode then
+			for _, window in ipairs(Nerx.Windows) do
+				if window.SetMode then
+					pcall(window.SetMode, window, config.mode, true)
+				end
+			end
+		end
+
+		local window = Nerx.Windows[1]
+		local position = config.layout and config.layout.windowPosition
+		if window and window.Root and type(position) == "table" then
+			pcall(function()
+				window.Root.Position = UDim2.new(
+					tonumber(position.XScale) or 0.5,
+					tonumber(position.XOffset) or 0,
+					tonumber(position.YScale) or 0.5,
+					tonumber(position.YOffset) or 0
+				)
+			end)
+		end
+		if config.layout and type(config.layout.custom) == "table" then
+			Nerx.LayoutState = config.layout.custom
+		end
+
+		if not options.noCallbacks then
+			for _, window in ipairs(Nerx.Windows) do
+				if window.RenderTab and window.SelectedTab then
+					pcall(window.RenderTab, window, window.SelectedTab)
+				end
+			end
+		end
+		return true
+	end
+
+	local function valuesEqual(a, b)
+		if typeof(a) == "Color3" and typeof(b) == "Color3" then
+			return colorKey(a) == colorKey(b)
+		end
+		return a == b
+	end
+
+	local function deepEqual(a, b)
+		if a == b then
+			return true
+		end
+		if type(a) ~= "table" or type(b) ~= "table" then
+			return false
+		end
+		for key, value in pairs(a) do
+			if not deepEqual(value, b[key]) then
+				return false
+			end
+		end
+		for key in pairs(b) do
+			if a[key] == nil then
+				return false
+			end
+		end
+		return true
+	end
+
+	function Nerx:CountChanged(config)
+		if type(config) ~= "table" then
+			return 0
+		end
+		local changed = 0
+
+		for identifier, entry in pairs(config.components or {}) do
+			local component = Nerx.ComponentsById[identifier]
+			if component and component.GetValue then
+				local ok, current = pcall(component.GetValue, component)
+				if ok and not valuesEqual(current, decodeValue(entry.Value)) then
+					changed = changed + 1
+				end
+				if entry.Swatch and component.Swatch and component.Swatch.Color then
+					local expected = decodeColor(entry.Swatch)
+					if expected and colorKey(component.Swatch.Color) ~= colorKey(expected) then
+						changed = changed + 1
+					end
+				end
+			end
+		end
+
+		local window = Nerx.Windows[1]
+		if window and config.mode and window.Mode ~= config.mode then
+			changed = changed + 1
+		end
+		if config.binds and Nerx.BindManager then
+			if not deepEqual(Nerx.BindManager:Serialize(), config.binds) then
+				changed = changed + 1
+			end
+		end
+		if config.theme and Nerx.Themes then
+			if not deepEqual(Nerx.Themes:SerializeActive(), config.theme) then
+				changed = changed + 1
+			end
+		end
+		local position = config.layout and config.layout.windowPosition
+		if window and window.Root and type(position) == "table" then
+			local current = window.Root.Position
+			if current.X.Scale ~= (tonumber(position.XScale) or 0.5)
+				or current.X.Offset ~= (tonumber(position.XOffset) or 0)
+				or current.Y.Scale ~= (tonumber(position.YScale) or 0.5)
+				or current.Y.Offset ~= (tonumber(position.YOffset) or 0) then
+				changed = changed + 1
+			end
+		end
+		return changed
+	end
+
+	local Configs = {
+		OnChanged = listeners,
+		ActiveName = configStore.active,
+	}
+
+	function Configs:Refresh()
+		configStore = { version = 1, active = nil, configs = {} }
+		loadStore()
+		self.ActiveName = configStore.active
+		notifyConfigChanged()
+	end
+
+	function Configs:List(filterText, sortMode)
+		local filterLower = string.lower(tostring(filterText or ""))
+		local list = {}
+		for name, record in pairs(configStore.configs) do
+			if filterLower == "" or string.find(string.lower(name), filterLower, 1, true) then
+				list[#list + 1] = record
+			end
+		end
+		table.sort(list, function(a, b)
+			if sortMode == "Recent" then
+				return (a.savedAt or 0) > (b.savedAt or 0)
+			end
+			return string.lower(a.name or a.Name or "") < string.lower(b.name or b.Name or "")
+		end)
+		return list
+	end
+
+	function Configs:Get(name)
+		return configStore.configs[name]
+	end
+
+	function Configs:SaveAs(name)
+		name = trimName(name)
+		if name == "" then
+			return false, "empty name"
+		end
+		if configStore.configs[name] then
+			return false, "exists"
+		end
+		self:Save(name)
+		return true
+	end
+
+	function Configs:Save(name)
+		name = trimName(name or self.ActiveName or "Default")
+		if name == "" then
+			return false, "empty name"
+		end
+		local existing = configStore.configs[name]
+		local snapshot = Nerx:CaptureConfig()
+		local record = {
+			name = name,
+			Name = name,
+			createdAt = existing and existing.createdAt or os.time(),
+			savedAt = os.time(),
+			values = countValues(snapshot),
+			size = snapshotSize(snapshot),
+			data = snapshot,
+		}
+		configStore.configs[name] = record
+		configStore.active = name
+		self.ActiveName = name
+		saveStore()
+		notifyConfigChanged()
+		return true
+	end
+
+	function Configs:SaveActive()
+		return self:Save(self.ActiveName or "Default")
+	end
+
+	function Configs:Load(name)
+		local record = configStore.configs[name]
+		if not record then
+			return false, "missing"
+		end
+		local ok = Nerx:ApplyConfig(record.data)
+		if not ok then
+			return false, "invalid config"
+		end
+		configStore.active = name
+		self.ActiveName = name
+		saveStore()
+		notifyConfigChanged()
+		return true
+	end
+
+	function Configs:LoadActive()
+		if not configStore.active then
+			return false
+		end
+		return self:Load(configStore.active)
+	end
+
+	function Configs:Delete(name)
+		if not configStore.configs[name] then
+			return false
+		end
+		configStore.configs[name] = nil
+		if configStore.active == name then
+			configStore.active = nil
+			self.ActiveName = nil
+		end
+		saveStore()
+		notifyConfigChanged()
+		return true
+	end
+
+	function Configs:Rename(oldName, newName)
+		newName = trimName(newName)
+		if newName == "" or not configStore.configs[oldName] or configStore.configs[newName] then
+			return false
+		end
+		local record = configStore.configs[oldName]
+		configStore.configs[oldName] = nil
+		record.name = newName
+		record.Name = newName
+		configStore.configs[newName] = record
+		if configStore.active == oldName then
+			configStore.active = newName
+			self.ActiveName = newName
+		end
+		saveStore()
+		notifyConfigChanged()
+		return true
+	end
+
+	function Configs:Duplicate(oldName, newName)
+		newName = trimName(newName)
+		local record = configStore.configs[oldName]
+		if not record or newName == "" or configStore.configs[newName] then
+			return false
+		end
+		local copy = Nerx.Storage:Decode(Nerx.Storage:Encode(record.data)) or record.data
+		configStore.configs[newName] = {
+			name = newName,
+			Name = newName,
+			createdAt = os.time(),
+			savedAt = os.time(),
+			values = record.values,
+			size = record.size,
+			data = copy,
+		}
+		saveStore()
+		notifyConfigChanged()
+		return true
+	end
+
+	function Configs:CountChanged(name)
+		local record = name and configStore.configs[name] or configStore.configs[configStore.active]
+		if not record then
+			return 0
+		end
+		return Nerx:CountChanged(record.data)
+	end
+
+	function Configs:Export(name)
+		local record = name and configStore.configs[name] or configStore.configs[configStore.active]
+		if not record then
+			return nil
+		end
+		return Nerx.Storage:Encode({
+			name = record.name,
+			savedAt = record.savedAt,
+			data = record.data,
+		})
+	end
+
+	function Configs:Import(text, nameOverride)
+		local decoded = Nerx.Storage:Decode(text)
+		if type(decoded) ~= "table" then
+			return false, "invalid JSON"
+		end
+		local payload = decoded
+		local name = trimName(nameOverride or payload.name or payload.Name or "Imported")
+		if name == "" then
+			name = "Imported"
+		end
+		if configStore.configs[name] then
+			local suffix = 2
+			while configStore.configs[name .. " " .. tostring(suffix)] do
+				suffix = suffix + 1
+			end
+			name = name .. " " .. tostring(suffix)
+		end
+		local snapshot = payload.data or payload
+		if type(snapshot) ~= "table"
+			or (not snapshot.components and not snapshot.flags and not snapshot.theme and not snapshot.binds) then
+			return false, "not a Nerx config"
+		end
+		configStore.configs[name] = {
+			name = name,
+			Name = name,
+			createdAt = os.time(),
+			savedAt = os.time(),
+			values = countValues(snapshot),
+			size = snapshotSize(snapshot),
+			data = snapshot,
+		}
+		saveStore()
+		notifyConfigChanged()
+		return true, name
+	end
+
+	function Configs:EnsureDefault()
+		if next(configStore.configs) == nil then
+			self:Save("Default")
+		end
+	end
+
+	Nerx.Configs = Configs
 end
 
 -- ---------------------------------------------------------------------------------------
