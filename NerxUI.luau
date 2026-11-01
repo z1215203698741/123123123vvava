@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.0.5
+	Nerx UI Library · v1.0.6
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,21 +67,24 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.0.5"
+Nerx.Version = "1.0.6"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
+	Main = Color3.fromRGB(21, 21, 22),
 	Sidebar = Color3.fromRGB(14, 14, 15),
-	Surface = Color3.fromRGB(20, 20, 21),
-	SurfaceRaised = Color3.fromRGB(28, 28, 30),
-	SurfaceHover = Color3.fromRGB(34, 34, 37),
-	Selected = Color3.fromRGB(58, 58, 62),
-	Field = Color3.fromRGB(26, 26, 28),
-	FieldHover = Color3.fromRGB(38, 38, 41),
-	FieldDisabled = Color3.fromRGB(22, 22, 24),
+	Surface = Color3.fromRGB(27, 27, 28),
+	SurfaceRaised = Color3.fromRGB(34, 34, 36),
+	SurfaceHover = Color3.fromRGB(44, 44, 47),
+	Selected = Color3.fromRGB(50, 50, 53),
+	ChipSelected = Color3.fromRGB(56, 56, 58),
+	Field = Color3.fromRGB(34, 34, 36),
+	FieldHover = Color3.fromRGB(44, 44, 47),
+	FieldDeep = Color3.fromRGB(28, 28, 29),
+	FieldDisabled = Color3.fromRGB(27, 27, 28),
 	Stroke = Color3.fromRGB(48, 48, 52),
 	StrokeSoft = Color3.fromRGB(35, 35, 38),
-	Divider = Color3.fromRGB(28, 28, 31),
+	Divider = Color3.fromRGB(30, 30, 33),
 	Track = Color3.fromRGB(70, 70, 74),
 	Text = Color3.fromRGB(238, 238, 242),
 	Muted = Color3.fromRGB(150, 150, 158),
@@ -89,12 +92,12 @@ local Theme = {
 	Icon = Color3.fromRGB(218, 218, 226),
 	Accent = Color3.fromRGB(235, 235, 240),
 	AccentDeep = Color3.fromRGB(160, 160, 168),
-	Button = Color3.fromRGB(74, 74, 78),
-	ButtonHover = Color3.fromRGB(90, 90, 94),
-	Primary = Color3.fromRGB(78, 78, 82),
-	PrimaryHover = Color3.fromRGB(96, 96, 100),
-	PrimaryStroke = Color3.fromRGB(118, 118, 123),
-	ToggleOff = Color3.fromRGB(26, 26, 28),
+	Button = Color3.fromRGB(34, 34, 36),
+	ButtonHover = Color3.fromRGB(44, 44, 47),
+	Primary = Color3.fromRGB(56, 56, 58),
+	PrimaryHover = Color3.fromRGB(68, 68, 71),
+	PrimaryStroke = Color3.fromRGB(94, 94, 98),
+	ToggleOff = Color3.fromRGB(34, 34, 36),
 	ToggleOffKnob = Color3.fromRGB(232, 232, 238),
 	ToggleDisabledTrack = Color3.fromRGB(108, 108, 112),
 	ToggleDisabledKnob = Color3.fromRGB(84, 84, 88),
@@ -119,21 +122,32 @@ Nerx.Fonts = Fonts
 
 -- Neverlose itself draws its interface glyphs from Roblox's BuilderIcons font.
 local IconFont
+local IconFontFilled
 do
+	local path = "rbxasset://LuaPackages/Packages/_Index/BuilderIcons/BuilderIcons/BuilderIcons.json"
 	local ok, font = pcall(function()
-		return Font.new("rbxasset://LuaPackages/Packages/_Index/BuilderIcons/BuilderIcons/BuilderIcons.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+		return Font.new(path, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
 	end)
 	if ok then
 		IconFont = font
 	end
+	local filledOk, filled = pcall(function()
+		return Font.new(path, Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+	end)
+	if filledOk then
+		IconFontFilled = filled
+	end
 end
 Nerx.IconFont = IconFont
+Nerx.IconFontFilled = IconFontFilled or IconFont
 
 Nerx.Icons = {
 	Aim = "crosshairs",
 	Visuals = "eye",
 	Misc = "gear",
-	Configs = "file-box",
+	Kreedz = "person-jumping",
+	Configs = "floppy-disk",
+	Console = "rectangle-list",
 	Binds = "key-caps-lock",
 	Themes = "paint-bucket",
 	Search = "magnifying-glass",
@@ -262,14 +276,19 @@ function U.icon(parent, name, size, color, props)
 		TextYAlignment = Enum.TextYAlignment.Center,
 		TextWrapped = true,
 	}
-	if IconFont then
+	local filled = props and props.Filled == true
+	if filled and IconFontFilled then
+		defaults.FontFace = IconFontFilled
+	elseif IconFont then
 		defaults.FontFace = IconFont
 	else
 		defaults.Font = Fonts.Bold
 	end
 	if props then
 		for key, value in pairs(props) do
-			defaults[key] = value
+			if key ~= "Filled" then
+				defaults[key] = value
+			end
 		end
 	end
 	return U.new("TextLabel", defaults, parent)
@@ -1379,7 +1398,7 @@ local function swatchWidget(parent, color, callback)
 	local root = U.frame(parent, {
 		BackgroundColor3 = api.Color,
 		BorderSizePixel = 0,
-		Size = UDim2.fromOffset(14, 14),
+		Size = UDim2.fromOffset(16, 16),
 	})
 	U.corner(root, 3)
 	local stroke = U.stroke(root, Theme.White, 0.35, 1)
@@ -1631,13 +1650,13 @@ end
 
 local function primaryButton(parent, text, width, height, callback)
 	local root = U.frame(parent, {
-		BackgroundColor3 = Theme.Primary,
+		BackgroundColor3 = Theme.Button,
 		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(width or 84, height or 28),
 	})
 	U.corner(root, 6)
-	U.stroke(root, Theme.PrimaryStroke, 0.35, 1)
+	U.stroke(root, Theme.Stroke, 0.45, 1)
 	local label = U.label(root, {
 		Text = text or "Button",
 		TextSize = 11,
@@ -1648,10 +1667,10 @@ local function primaryButton(parent, text, width, height, callback)
 	})
 	local input = U.inputButton(root, callback or function() end)
 	U.connect(input.MouseEnter, function()
-		U.tween(root, TWEEN.Fast, { BackgroundColor3 = Theme.PrimaryHover })
+		U.tween(root, TWEEN.Fast, { BackgroundColor3 = Theme.ButtonHover })
 	end)
 	U.connect(input.MouseLeave, function()
-		U.tween(root, TWEEN.Fast, { BackgroundColor3 = Theme.Primary })
+		U.tween(root, TWEEN.Fast, { BackgroundColor3 = Theme.Button })
 	end)
 	return { Root = root, Label = label }
 end
@@ -1683,7 +1702,9 @@ local function createChip(parent, rawItem, options)
 	local height = options.Height or 24
 	local textSize = options.TextSize or 11
 	local dotSize = 6
-	local iconSize = 12
+	local iconSize = options.IconSize or 12
+	local iconGap = options.IconGap or 6
+	local paddingX = options.PaddingX or 10
 	local hasIcon = item.Icon and true or false
 	local hasDot = item.ShowDot == true or (item.ShowDot ~= false and item.Color ~= nil)
 	local dotSide = options.DotSide or "left"
@@ -1696,12 +1717,12 @@ local function createChip(parent, rawItem, options)
 	else
 		local content = textWidth
 		if hasIcon then
-			content = content + iconSize + 6
+			content = content + iconSize + iconGap
 		end
 		if hasDot then
 			content = content + dotSize + 6
 		end
-		width = math.max(height + 6, 20 + content)
+		width = math.max(height + 6, paddingX * 2 + content)
 	end
 
 	local root = U.frame(parent, {
@@ -1717,15 +1738,16 @@ local function createChip(parent, rawItem, options)
 	local iconLabel = nil
 	local dot = nil
 	local textLabel = nil
-	local cursor = 10
+	local cursor = paddingX
 
 	if hasIcon then
 		iconLabel = U.icon(root, item.Icon, iconSize, Theme.Muted, {
 			Position = UDim2.fromOffset(cursor, 0),
 			Size = UDim2.fromOffset(iconSize, height),
 			TextTransparency = 0.45,
+			Filled = options.IconFilled == true,
 		})
-		cursor = cursor + iconSize + 6
+		cursor = cursor + iconSize + iconGap
 	end
 
 	if hasDot and dotSide == "left" then
@@ -1757,7 +1779,7 @@ local function createChip(parent, rawItem, options)
 			AnchorPoint = Vector2.new(1, 0.5),
 			BackgroundColor3 = item.Color or Theme.Green,
 			BorderSizePixel = 0,
-			Position = UDim2.new(1, -10, 0.5, 0),
+			Position = UDim2.new(1, -paddingX, 0.5, 0),
 			Size = UDim2.fromOffset(dotSize, dotSize),
 		})
 		U.corner(dot, 3)
@@ -1773,8 +1795,8 @@ local function createChip(parent, rawItem, options)
 	local function render()
 		local selected = api.Selected
 		U.tween(root, TWEEN.Fast, {
-			BackgroundColor3 = selected and Theme.FieldHover or Theme.Field,
-			BackgroundTransparency = selected and 0 or 0.2,
+			BackgroundColor3 = selected and Theme.ChipSelected or Theme.Window,
+			BackgroundTransparency = selected and 0 or 0.25,
 		})
 		U.tween(stroke, TWEEN.Fast, {
 			Transparency = selected and 0.3 or 0.55,
@@ -1904,7 +1926,7 @@ local function segmentedWidget(parent, config)
 	local width = config.Width or 0
 	local height = config.Height or 24
 	local container = config.Container ~= false
-	local selectedColor = config.Primary and Theme.Primary or Theme.Selected
+	local selectedColor = config.Primary and Theme.Primary or Theme.ChipSelected
 	local selectedText = config.Primary and Theme.Window or Theme.Text
 
 	local root = U.frame(parent, {
@@ -3432,6 +3454,10 @@ local function createPage(window, host, tab, config)
 			local chip = createChip(chipHolder, item, {
 				Height = 26,
 				TextSize = 11.5,
+				IconSize = 14,
+				IconGap = 7,
+				IconFilled = true,
+				PaddingX = 12,
 				Radio = true,
 				DotSide = "right",
 				OnSelect = function(selectedChip)
@@ -3480,30 +3506,74 @@ local function createPage(window, host, tab, config)
 		return api
 	end
 
+	function page:SetHeaderButton(buttonConfig)
+		buttonConfig = buttonConfig or {}
+		local text = buttonConfig.Text or "Action"
+		local iconName = buttonConfig.Icon or "three-bars-horizontal-narrowing"
+		local textWidth = U.measure(text, 11, Fonts.Regular).X
+		local width = 12 + 14 + 8 + textWidth + 12
+		local root = U.frame(headerControls, {
+			BackgroundColor3 = Theme.FieldDeep,
+			BackgroundTransparency = 0,
+			BorderSizePixel = 0,
+			Size = UDim2.fromOffset(width, 26),
+		})
+		U.corner(root, 13)
+		U.stroke(root, Theme.Stroke, 0.45, 1)
+		root.LayoutOrder = 0
+		U.icon(root, iconName, 13, Theme.Muted, {
+			Position = UDim2.fromOffset(12, 0),
+			Size = UDim2.fromOffset(14, 26),
+			TextTransparency = 0.3,
+		})
+		U.label(root, {
+			Text = text,
+			TextSize = 11,
+			TextColor3 = Theme.Text,
+			TextTransparency = 0.1,
+			Position = UDim2.fromOffset(34, 0),
+			Size = UDim2.fromOffset(textWidth + 2, 26),
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		})
+		local input = U.inputButton(root, buttonConfig.Callback or function() end)
+		U.connect(input.MouseEnter, function()
+			U.tween(root, TWEEN.Fast, { BackgroundColor3 = Theme.Field })
+		end)
+		U.connect(input.MouseLeave, function()
+			U.tween(root, TWEEN.Fast, { BackgroundColor3 = Theme.FieldDeep })
+		end)
+		self.HeaderButton = root
+		return root
+	end
+
 	function page:SetHeaderSwitch(switchConfig)
 		local textWidth = U.measure(switchConfig.Text or "", 11, Fonts.Regular).X
 		local root = U.frame(headerControls, {
-			BackgroundTransparency = 1,
+			BackgroundColor3 = Theme.FieldDeep,
+			BackgroundTransparency = 0,
 			BorderSizePixel = 0,
-			Size = UDim2.fromOffset(textWidth + 38, 22),
+			Size = UDim2.fromOffset(12 + 32 + 8 + textWidth + 12, 26),
 		})
+		U.corner(root, 13)
+		U.stroke(root, Theme.Stroke, 0.45, 1)
 		root.LayoutOrder = 1
 
-		local label = U.label(root, {
-			Text = switchConfig.Text or "",
-			TextSize = 11,
-			TextColor3 = Theme.Text,
-			TextTransparency = 0.2,
-			Position = UDim2.fromOffset(0, 0),
-			Size = UDim2.fromOffset(textWidth + 2, 22),
-		})
 		local toggle = toggleWidget(root, switchConfig.Default, function(value)
 			if switchConfig.Callback then
 				switchConfig.Callback(value)
 			end
 		end)
-		toggle.Root.AnchorPoint = Vector2.new(1, 0.5)
-		toggle.Root.Position = UDim2.new(1, 0, 0.5, 0)
+		toggle.Root.AnchorPoint = Vector2.new(0, 0.5)
+		toggle.Root.Position = UDim2.new(0, 12, 0.5, 0)
+
+		local label = U.label(root, {
+			Text = switchConfig.Text or "",
+			TextSize = 11,
+			TextColor3 = Theme.Text,
+			TextTransparency = 0.1,
+			Position = UDim2.fromOffset(12 + 32 + 8, 0),
+			Size = UDim2.fromOffset(textWidth + 2, 26),
+		})
 
 		local api = {
 			Root = root,
@@ -3524,12 +3594,13 @@ local function createPage(window, host, tab, config)
 		local root = U.frame(headerControls, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Size = UDim2.fromOffset(22, 22),
+			Size = UDim2.fromOffset(24, 24),
 		})
 		root.LayoutOrder = 2
-		local iconLabel = U.icon(root, icon or "gear", 15, Theme.Muted, {
-			TextTransparency = 0.45,
+		local iconLabel = U.icon(root, icon or "gear", 16, Theme.Muted, {
+			TextTransparency = 0.35,
 			Size = UDim2.fromScale(1, 1),
+			Filled = true,
 		})
 		local input = U.inputButton(root, callback or function() end)
 		U.connect(input.MouseEnter, function()
@@ -3689,12 +3760,12 @@ function Nerx:CreateWindow(config)
 	local root = U.canvas(screenGui, {
 		Name = "NerxWindow",
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		BackgroundColor3 = Theme.Window,
+		BackgroundColor3 = Theme.Main,
 		BackgroundTransparency = 0.02,
 		BorderSizePixel = 0,
 		Position = config.Position or UDim2.fromScale(0.5, 0.5),
 		Size = size,
-		ClipsDescendants = false,
+		ClipsDescendants = true,
 		Visible = true,
 	})
 	U.corner(root, 12)
@@ -3734,7 +3805,8 @@ function Nerx:CreateWindow(config)
 
 	local sidebar = U.frame(root, {
 		Name = "Sidebar",
-		BackgroundTransparency = 1,
+		BackgroundColor3 = Theme.Sidebar,
+		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		Size = UDim2.new(0, 200, 1, 0),
 	})
@@ -3987,23 +4059,41 @@ function Nerx:CreateWindow(config)
 	})
 	window.Breadcrumb = breadcrumb
 
-	local modeChip = U.frame(topBar, {
+	local SAVE_WIDTH = 61
+	local MODE_SAVE_HEIGHT = 30
+	local SAVE_GROUP_RIGHT = 292
+
+	local function measureModeWidth(mode)
+		local width = U.measure(tostring(mode or ""), 11, Fonts.Regular).X
+		return math.clamp(width + 60, 84, 132)
+	end
+
+	local modeWidth = measureModeWidth(window.Mode)
+	local modeSaveGroup = U.frame(topBar, {
 		AnchorPoint = Vector2.new(1, 0.5),
-		BackgroundColor3 = Theme.Field,
-		BackgroundTransparency = 0.05,
+		BackgroundColor3 = Theme.FieldDeep,
+		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
-		Position = UDim2.new(1, -321, 0.5, 0),
-		Size = UDim2.fromOffset(84, 28),
+		Position = UDim2.new(1, -SAVE_GROUP_RIGHT, 0.5, 0),
+		Size = UDim2.fromOffset(modeWidth + SAVE_WIDTH, MODE_SAVE_HEIGHT),
+		ClipsDescendants = true,
 		ZIndex = 4,
 	})
-	U.corner(modeChip, 6)
-	U.stroke(modeChip, Theme.Stroke, 0.6, 1)
+	U.corner(modeSaveGroup, 7)
+	U.stroke(modeSaveGroup, Theme.Muted, 0.55, 1)
+
+	local modeChip = U.frame(modeSaveGroup, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.fromOffset(modeWidth, MODE_SAVE_HEIGHT),
+		ZIndex = 5,
+	})
 	local modeDot = U.frame(modeChip, {
 		AnchorPoint = Vector2.new(0, 0.5),
 		BackgroundColor3 = Theme.Amber,
 		BorderSizePixel = 0,
 		Position = UDim2.new(0, 10, 0.5, 0),
-		Size = UDim2.fromOffset(5, 5),
+		Size = UDim2.fromOffset(6, 6),
 	})
 	U.corner(modeDot, 3)
 	local modeLabel = U.label(modeChip, {
@@ -4011,8 +4101,9 @@ function Nerx:CreateWindow(config)
 		TextSize = 11,
 		TextColor3 = Theme.Text,
 		TextTransparency = 0.15,
-		Position = UDim2.fromOffset(21, 0),
+		Position = UDim2.fromOffset(22, 0),
 		Size = UDim2.new(1, -40, 1, 0),
+		TextTruncate = Enum.TextTruncate.AtEnd,
 	})
 	local modeChevron = U.icon(modeChip, "chevron-large-down", 10, Theme.Muted, {
 		AnchorPoint = Vector2.new(1, 0.5),
@@ -4020,20 +4111,14 @@ function Nerx:CreateWindow(config)
 		Size = UDim2.fromOffset(11, 11),
 		TextTransparency = 0.4,
 	})
-	window.ModeChip = modeChip
-	window.ModeLabel = modeLabel
-	window.ModeDot = modeDot
 
-	local saveButton = U.frame(topBar, {
-		AnchorPoint = Vector2.new(1, 0.5),
+	local saveButton = U.frame(modeSaveGroup, {
 		BackgroundColor3 = Theme.Primary,
 		BorderSizePixel = 0,
-		Position = UDim2.new(1, -253, 0.5, 0),
-		Size = UDim2.fromOffset(61, 28),
-		ZIndex = 4,
+		Position = UDim2.fromOffset(modeWidth, 0),
+		Size = UDim2.fromOffset(SAVE_WIDTH, MODE_SAVE_HEIGHT),
+		ZIndex = 5,
 	})
-	U.corner(saveButton, 5)
-	U.stroke(saveButton, Theme.PrimaryStroke, 0.35, 1)
 	local saveLabel = U.label(saveButton, {
 		Text = "Save",
 		TextSize = 11.5,
@@ -4041,17 +4126,22 @@ function Nerx:CreateWindow(config)
 		TextTransparency = 0.02,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		Size = UDim2.fromScale(1, 1),
+		ZIndex = 6,
 	})
+	window.ModeChip = modeChip
+	window.ModeLabel = modeLabel
+	window.ModeDot = modeDot
+	window.ModeSaveGroup = modeSaveGroup
 	window.SaveButton = saveButton
 	window.SaveLabel = saveLabel
 
 	local search = U.frame(topBar, {
 		AnchorPoint = Vector2.new(1, 0.5),
-		BackgroundColor3 = Theme.Field,
+		BackgroundColor3 = Theme.FieldDeep,
 		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
-		Position = UDim2.new(1, -13, 0.5, 0),
-		Size = UDim2.fromOffset(228, 30),
+		Position = UDim2.new(1, -54, 0.5, 0),
+		Size = UDim2.fromOffset(226, 30),
 		ZIndex = 4,
 	})
 	U.corner(search, 8)
@@ -4112,6 +4202,35 @@ function Nerx:CreateWindow(config)
 	U.corner(fHint, 4)
 	U.stroke(fHint, Theme.Stroke, 0.4, 1)
 
+	local shieldButton = U.frame(topBar, {
+		AnchorPoint = Vector2.new(1, 0.5),
+		BackgroundColor3 = Theme.FieldDeep,
+		BorderSizePixel = 0,
+		Position = UDim2.new(1, -16, 0.5, 0),
+		Size = UDim2.fromOffset(28, 28),
+		ZIndex = 4,
+	})
+	U.corner(shieldButton, 7)
+	local shieldStroke = U.stroke(shieldButton, Theme.Stroke, 0.7, 1)
+	local shieldIcon = U.icon(shieldButton, "shield-check", 14, Theme.Muted, {
+		TextTransparency = 0.3,
+		Size = UDim2.fromScale(1, 1),
+		ZIndex = 5,
+		Filled = true,
+	})
+	local shieldInput = U.inputButton(shieldButton, function()
+		window:OpenQuickMenu(shieldButton)
+	end)
+	U.connect(shieldInput.MouseEnter, function()
+		U.tween(shieldButton, TWEEN.Fast, { BackgroundColor3 = Theme.FieldHover })
+		U.tween(shieldIcon, TWEEN.Fast, { TextTransparency = 0.05 })
+	end)
+	U.connect(shieldInput.MouseLeave, function()
+		U.tween(shieldButton, TWEEN.Fast, { BackgroundColor3 = Theme.FieldDeep })
+		U.tween(shieldIcon, TWEEN.Fast, { TextTransparency = 0.3 })
+	end)
+	window.ShieldButton = shieldButton
+
 	local pageHost = U.frame(main, {
 		Name = "Pages",
 		BackgroundTransparency = 1,
@@ -4130,7 +4249,7 @@ function Nerx:CreateWindow(config)
 	end)
 	U.connect(search.MouseLeave, function()
 		if not searchBox:IsFocused() then
-			U.tween(search, TWEEN.Fast, { BackgroundColor3 = Theme.Field })
+			U.tween(search, TWEEN.Fast, { BackgroundColor3 = Theme.FieldDeep })
 			searchIcon.TextTransparency = 0.3
 		end
 	end)
@@ -4140,7 +4259,7 @@ function Nerx:CreateWindow(config)
 		searchIcon.TextTransparency = 0.05
 	end)
 	U.connect(searchBox.FocusLost, function(enterPressed)
-		U.tween(search, TWEEN.Fast, { BackgroundColor3 = Theme.Field })
+		U.tween(search, TWEEN.Fast, { BackgroundColor3 = Theme.FieldDeep })
 		searchStroke.Transparency = 1
 		searchIcon.TextTransparency = 0.3
 	end)
@@ -4164,10 +4283,10 @@ function Nerx:CreateWindow(config)
 		end)
 	end)
 	U.connect(modeInput.MouseEnter, function()
-		U.tween(modeChip, TWEEN.Fast, { BackgroundTransparency = 0 })
+		U.tween(modeSaveGroup, TWEEN.Fast, { BackgroundColor3 = Theme.FieldHover })
 	end)
 	U.connect(modeInput.MouseLeave, function()
-		U.tween(modeChip, TWEEN.Fast, { BackgroundTransparency = 0.05 })
+		U.tween(modeSaveGroup, TWEEN.Fast, { BackgroundColor3 = Theme.FieldDeep })
 	end)
 
 	-- ---------------------------------------------------------------------------------
@@ -4190,8 +4309,8 @@ function Nerx:CreateWindow(config)
 			if tab.Indicator then
 				tab.Indicator.BackgroundTransparency = 1
 			end
-			U.tween(tab.Icon, TWEEN.Default, { TextColor3 = Theme.Muted, TextTransparency = 0.4 })
-			U.tween(tab.Label, TWEEN.Default, { TextColor3 = Theme.Muted, TextTransparency = 0.45 })
+			U.tween(tab.Icon, TWEEN.Default, { TextColor3 = Theme.Text, TextTransparency = 0.3 })
+			U.tween(tab.Label, TWEEN.Default, { TextColor3 = Theme.Text, TextTransparency = 0.32 })
 		end
 
 		local sub = tab.SubContainer
@@ -4231,8 +4350,8 @@ function Nerx:CreateWindow(config)
 		for _, sub in ipairs(tab.SubTabs) do
 			local selected = tab.CurrentPage == sub.Page
 			U.tween(sub.Label, TWEEN.Default, {
-				TextColor3 = selected and Theme.Text or Theme.Muted,
-				TextTransparency = selected and 0.05 or 0.5,
+				TextColor3 = Theme.Text,
+				TextTransparency = selected and 0.03 or 0.42,
 			})
 			U.tween(sub.Tick, TWEEN.Fast, {
 				BackgroundTransparency = selected and 0 or 1,
@@ -4323,6 +4442,10 @@ function Nerx:CreateWindow(config)
 	function window:SetMode(mode, silent)
 		self.Mode = mode
 		modeLabel.Text = tostring(mode)
+		local width = measureModeWidth(mode)
+		U.tween(modeChip, TWEEN.Fast, { Size = UDim2.fromOffset(width, MODE_SAVE_HEIGHT) })
+		U.tween(saveButton, TWEEN.Fast, { Position = UDim2.fromOffset(width, 0) })
+		U.tween(modeSaveGroup, TWEEN.Fast, { Size = UDim2.fromOffset(width + SAVE_WIDTH, MODE_SAVE_HEIGHT) })
 		if string.lower(tostring(mode)) == "rage" then
 			modeDot.BackgroundColor3 = Theme.Red
 		elseif string.lower(tostring(mode)) == "hw" then
@@ -4540,18 +4663,19 @@ function Nerx:CreateWindow(config)
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			Position = UDim2.new(0, 1, 0.5, 0),
-			Size = UDim2.fromOffset(3, 16),
+			Size = UDim2.fromOffset(3, 18),
 			ZIndex = 3,
 		})
 		U.corner(tabIndicator, 2)
 		tab.Indicator = tabIndicator
 		tab.SubHeight = 0
 
-		tab.Icon = U.icon(button, tab.Icon, 15, Theme.Muted, {
+		tab.Icon = U.icon(button, tab.Icon, 17, Theme.Muted, {
 			AnchorPoint = Vector2.new(0, 0.5),
 			Position = UDim2.new(0, 10, 0.5, 0),
-			Size = UDim2.fromOffset(20, 20),
+			Size = UDim2.fromOffset(24, 24),
 			TextTransparency = 0.4,
+			Filled = true,
 		})
 		tab.Label = U.label(button, {
 			Text = tab.Name,
@@ -5015,7 +5139,7 @@ function U.preview(page, config)
 		AutomaticSize = Enum.AutomaticSize.Y,
 		ZIndex = 5,
 	})
-	U.list(tags, 3, Enum.HorizontalAlignment.Right, Enum.VerticalAlignment.Top)
+	U.list(tags, 2, Enum.HorizontalAlignment.Right, Enum.VerticalAlignment.Top)
 	preview.TagsRoot = tags
 
 	local stage = U.frame(card, {
@@ -5123,7 +5247,7 @@ function U.preview(page, config)
 				TextColor3 = tag.Color or Theme.Text,
 				TextTransparency = 0.05,
 				TextXAlignment = Enum.TextXAlignment.Right,
-				Size = UDim2.new(1, 0, 0, 16),
+				Size = UDim2.new(1, 0, 0, 15),
 				ZIndex = 6,
 			})
 			label.LayoutOrder = index
