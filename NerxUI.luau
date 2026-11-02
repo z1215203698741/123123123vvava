@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.2.4
+	Nerx UI Library · v1.2.6
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.2.4"
+Nerx.Version = "1.2.6"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -1089,7 +1089,65 @@ end
 Nerx.Assets = {
 	Neverlose = "https://raw.githubusercontent.com/tickcount/.p2c-icons/main/neverlose2.png",
 	NeverloseAlt = "https://raw.githubusercontent.com/tickcount/.p2c-icons/main/neverlose.png",
+	BrandN = "https://raw.githubusercontent.com/z1215203698741/123123123vvava/main/assets/nerx-n-mask.png",
 }
+
+-- Transparent white mask of the brand N (128x109), extracted from the supplied
+-- identity artwork. It is written to NerxAssets on first use when the executor
+-- exposes writefile/getcustomasset; UIGradient supplies the animated colours.
+local BRAND_N_MASK_BASE64 = [[
+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
+AAAAAElFTkSuQmCC
+]]
 
 function Nerx:LoadAsset(url, fileName)
 	if not (writefile and getcustomasset and isfolder and makefolder) then
@@ -1115,6 +1173,68 @@ function Nerx:LoadAsset(url, fileName)
 		end
 	end
 	return nil
+end
+
+local function decodeEmbeddedBase64(text)
+	local cleaned = tostring(text or ""):gsub("%s+", "")
+	if cleaned == "" then
+		return nil
+	end
+	local syn = rawget(_G, "syn")
+	local crypt = rawget(_G, "crypt")
+	local decoders = {
+		rawget(_G, "base64decode"),
+		rawget(_G, "base64_decode"),
+		syn and syn.base64decode,
+		syn and syn.base64_decode,
+		syn and syn.crypt and syn.crypt.base64 and syn.crypt.base64.decode,
+		crypt and crypt.base64decode,
+	}
+	for _, decoder in ipairs(decoders) do
+		if type(decoder) == "function" then
+			local ok, bytes = pcall(decoder, cleaned)
+			if ok and type(bytes) == "string" and #bytes > 0 then
+				return bytes
+			end
+		end
+	end
+	return nil
+end
+
+function Nerx:GetBrandMask()
+	if Nerx._BrandMaskUri ~= nil then
+		return Nerx._BrandMaskUri or nil
+	end
+	Nerx._BrandMaskUri = false
+	local assetGetter = getcustomasset or getsynasset
+	if writefile and assetGetter and isfolder and makefolder and isfile then
+		pcall(function()
+			local folder = "NerxAssets"
+			if not isfolder(folder) then
+				makefolder(folder)
+			end
+			local path = folder .. "/nerx-n-mask-v1.png"
+			if not isfile(path) then
+				local bytes = decodeEmbeddedBase64(BRAND_N_MASK_BASE64)
+				if bytes then
+					writefile(path, bytes)
+				end
+			end
+			if isfile(path) then
+				local ok, uri = pcall(assetGetter, path)
+				if ok and type(uri) == "string" and uri ~= "" then
+					Nerx._BrandMaskUri = uri
+				end
+			end
+		end)
+	end
+	if not Nerx._BrandMaskUri then
+		local downloaded = self:LoadAsset(self.Assets.BrandN, "nerx-n-mask.png")
+		if downloaded then
+			Nerx._BrandMaskUri = downloaded
+		end
+	end
+	return Nerx._BrandMaskUri or nil
 end
 
 function Nerx:GetNeverloseLogo()
@@ -4313,7 +4433,7 @@ function Nerx:CreateWindow(config)
 		Size = UDim2.fromOffset(34, 34),
 	})
 	U.corner(logoBox, 8)
-	U.stroke(logoBox, Theme.Stroke, 0.4, 1)
+	local logoStroke = U.stroke(logoBox, Theme.Stroke, 0.4, 1)
 
 	if config.Logo then
 		local image = U.new("ImageLabel", {
@@ -4325,47 +4445,164 @@ function Nerx:CreateWindow(config)
 		}, logoBox)
 		U.corner(image, 8)
 	else
-		-- Abstract white N mark, matching the reference brand tile.
-		local leftBar = U.frame(logoBox, {
-			BackgroundColor3 = Theme.Text,
+		-- Brand mark: the gradient N from the supplied identity tile. The
+		-- light plate keeps the slate-to-lime gradient readable in dark menus.
+		local BRAND_TILE = Color3.fromRGB(246, 248, 250)
+		local BRAND_SLATE = Color3.fromRGB(43, 57, 62)
+		local BRAND_DEEP = Color3.fromRGB(64, 93, 55)
+		local BRAND_GREEN = Color3.fromRGB(105, 160, 54)
+		local BRAND_LIME = Color3.fromRGB(158, 214, 52)
+		logoBox.BackgroundColor3 = BRAND_TILE
+		logoBox.BackgroundTransparency = 0
+		logoStroke.Color = Color3.fromRGB(16, 20, 22)
+		logoStroke.Transparency = 0.82
+
+		local brandMask = Nerx:GetBrandMask()
+		if brandMask then
+			-- Exact N silhouette from the identity artwork. The PNG is a white
+			-- alpha mask, so one diagonal UIGradient colours the whole mark and
+			-- the transparent scratch cuts stay part of the tile.
+			local image = U.new("ImageLabel", {
+				Name = "NerxBrandMark",
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Image = brandMask,
+				ImageColor3 = Color3.new(1, 1, 1),
+				ImageTransparency = 0,
+				Position = UDim2.fromOffset(4, 6),
+				Size = UDim2.fromOffset(26, 22),
+				ScaleType = Enum.ScaleType.Fit,
+			}, logoBox)
+			local brandSequence = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, BRAND_SLATE),
+				ColorSequenceKeypoint.new(0.3, BRAND_DEEP),
+				ColorSequenceKeypoint.new(0.64, BRAND_GREEN),
+				ColorSequenceKeypoint.new(1, BRAND_LIME),
+			})
+			local brandGradient = U.new("UIGradient", {
+				Color = brandSequence,
+				Rotation = 42,
+				Offset = Vector2.new(0, 0),
+			}, image)
+			local brandClock = 0
+			U.connect(RunService.Heartbeat, function(delta)
+				if not logoBox.Parent then
+					return
+				end
+				brandClock = brandClock + (tonumber(delta) or 0.016)
+				brandGradient.Offset = Vector2.new(math.sin(brandClock * 1.7) * 0.55, 0)
+			end)
+		else
+			local mark = U.frame(logoBox, {
+			Name = "NerxBrandMark",
+			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(10, 7),
-			Size = UDim2.fromOffset(3, 20),
+			Position = UDim2.fromOffset(4, 7),
+			Size = UDim2.fromOffset(26, 20),
+			ClipsDescendants = false,
 		})
-		U.corner(leftBar, 1)
-		local rightBar = U.frame(logoBox, {
-			BackgroundColor3 = Theme.Text,
+
+		local leftSequence = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, BRAND_SLATE),
+			ColorSequenceKeypoint.new(0.55, Color3.fromRGB(58, 82, 55)),
+			ColorSequenceKeypoint.new(1, BRAND_GREEN),
+		})
+		local diagonalSequence = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, BRAND_SLATE),
+			ColorSequenceKeypoint.new(0.3, BRAND_DEEP),
+			ColorSequenceKeypoint.new(0.64, BRAND_GREEN),
+			ColorSequenceKeypoint.new(1, BRAND_LIME),
+		})
+		local rightSequence = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, BRAND_GREEN),
+			ColorSequenceKeypoint.new(0.52, BRAND_LIME),
+			ColorSequenceKeypoint.new(1, BRAND_GREEN),
+		})
+
+		local leftBar = U.frame(mark, {
+			Name = "BrandLeft",
+			BackgroundColor3 = BRAND_SLATE,
 			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(21, 7),
-			Size = UDim2.fromOffset(3, 20),
+			Position = UDim2.fromOffset(0, 0),
+			Size = UDim2.fromOffset(5, 18),
+			ZIndex = 1,
 		})
-		U.corner(rightBar, 1)
-		local slash = U.frame(logoBox, {
-			AnchorPoint = Vector2.new(0.5, 0),
-			BackgroundColor3 = Theme.Text,
+		U.corner(leftBar, 2.5)
+		local leftGradient = U.new("UIGradient", {
+			Color = leftSequence,
+			Rotation = 90,
+			Offset = Vector2.new(0, 0),
+		}, leftBar)
+
+		local diagonal = U.frame(mark, {
+			Name = "BrandDiagonal",
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundColor3 = BRAND_GREEN,
 			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(17, 6),
-			Rotation = 22,
-			Size = UDim2.fromOffset(3, 23),
+			Position = UDim2.fromOffset(13, 10),
+			Rotation = -42,
+			Size = UDim2.fromOffset(6, 24),
+			ZIndex = 2,
 		})
-		U.corner(slash, 1)
-		U.frame(logoBox, {
-			AnchorPoint = Vector2.new(1, 1),
-			BackgroundColor3 = Theme.Accent,
+		U.corner(diagonal, 3)
+		local diagonalGradient = U.new("UIGradient", {
+			Color = diagonalSequence,
+			Rotation = 90,
+			Offset = Vector2.new(0, 0),
+		}, diagonal)
+
+		local rightBar = U.frame(mark, {
+			Name = "BrandRight",
+			BackgroundColor3 = BRAND_LIME,
 			BorderSizePixel = 0,
-			Position = UDim2.new(1, -6, 1, -6),
-			Size = UDim2.fromOffset(5, 5),
+			Position = UDim2.fromOffset(21, 0),
+			Size = UDim2.fromOffset(5, 17),
+			ZIndex = 3,
 		})
-		local logoDot = logoBox:FindFirstChildWhichIsA("Frame")
-		for _, child in ipairs(logoBox:GetChildren()) do
-			if child:IsA("Frame") and child.Size.X.Offset == 5 and child.Size.Y.Offset == 5 then
-				logoDot = child
-			end
+		U.corner(rightBar, 2.5)
+		local rightGradient = U.new("UIGradient", {
+			Color = rightSequence,
+			Rotation = 90,
+			Offset = Vector2.new(0, 0),
+		}, rightBar)
+
+		-- Deliberate scratched cuts mirror the loose white slashes in the
+		-- identity artwork; one lime hairline keeps the edge from looking clean.
+		local function brandCut(x, y, width, height, rotation, color, transparency, zIndex)
+			local cut = U.frame(mark, {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				BackgroundColor3 = color,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset(x, y),
+				Rotation = rotation,
+				Size = UDim2.fromOffset(width, height),
+				BackgroundTransparency = transparency,
+				ZIndex = zIndex,
+			})
+			U.corner(cut, width * 0.5)
+			return cut
 		end
-		U.corner(logoDot, 3)
-		U.onAccent(function(color)
-			logoDot.BackgroundColor3 = color
+		brandCut(14.6, 9.4, 0.9, 5, -42, BRAND_LIME, 0.35, 5)
+
+		-- Sweep the gradient along each stroke, with a small delay per segment,
+		-- so the highlight travels down the N and reverses without a hard loop.
+		local logoGradients = {
+			{ Gradient = leftGradient, Delay = 0.0 },
+			{ Gradient = diagonalGradient, Delay = 0.65 },
+			{ Gradient = rightGradient, Delay = 1.3 },
+		}
+		local logoClock = 0
+		U.connect(RunService.Heartbeat, function(delta)
+			if not logoBox.Parent then
+				return
+			end
+			logoClock = logoClock + (tonumber(delta) or 0.016)
+			for _, entry in ipairs(logoGradients) do
+				local phase = math.sin(logoClock * 1.7 - entry.Delay)
+				entry.Gradient.Offset = Vector2.new(0, phase * 0.55)
+			end
 		end)
+		end
 	end
 
 	local brandTitle = U.label(brand, {
