@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.2.7
+	Nerx UI Library · v1.2.8
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.2.7"
+Nerx.Version = "1.2.8"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -4363,7 +4363,7 @@ function Nerx:CreateWindow(config)
 			BorderSizePixel = 0,
 			Position = UDim2.fromOffset(17, 16.5),
 			Rotation = -42,
-			Size = UDim2.fromOffset(7.5, 30),
+			Size = UDim2.fromOffset(7.5, 28),
 			ZIndex = 3,
 		})
 		U.corner(diagonal, 3.75)
@@ -4387,25 +4387,6 @@ function Nerx:CreateWindow(config)
 			Rotation = 90,
 			Offset = Vector2.new(0, 0),
 		}, rightBar)
-
-		-- Short scratches only; they add the loose artwork texture without
-		-- splitting the N into separate pills.
-		local function brandCut(x, y, width, height, rotation, color, transparency, zIndex)
-			local cut = U.frame(mark, {
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				BackgroundColor3 = color,
-				BorderSizePixel = 0,
-				Position = UDim2.fromOffset(x, y),
-				Rotation = rotation,
-				Size = UDim2.fromOffset(width, height),
-				BackgroundTransparency = transparency,
-				ZIndex = zIndex,
-			})
-			U.corner(cut, width * 0.5)
-			return cut
-		end
-		brandCut(7.6, 8.6, 1.0, 6, -42, BRAND_TILE, 0.25, 6)
-		brandCut(18, 13, 0.9, 5, -42, BRAND_LIME, 0.35, 6)
 
 		local logoGradients = {
 			{ Gradient = leftGradient, Delay = 0.0 },
