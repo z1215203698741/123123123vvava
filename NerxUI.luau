@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.0.8
+	Nerx UI Library · v1.0.9
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.0.8"
+Nerx.Version = "1.0.9"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -6116,6 +6116,23 @@ do
 
 	local overlayRoot
 	local overlayRows = {}
+	local overlayShown = false
+	local overlayToken = 0
+	local overlayDragActive = false
+	local overlayDragStart
+	local overlayStartPosition
+	local overlayIconImage
+	local overlayIconFallback
+	local hotkeyAssetLoaded = nil
+	local hotkeyAssetProbeStarted = false
+
+	local HOTKEY_ICON = "rbxassetid://121978468376124"
+	local HOTKEY_ACCENT = Color3.fromRGB(78, 127, 252)
+	local HOTKEY_CARD = Color3.fromRGB(8, 8, 13)
+	local HOTKEY_TUMBLER_CARD = Color3.fromRGB(20, 22, 27)
+	local HOTKEY_TRACK = Color3.fromRGB(10, 13, 21)
+	local HOTKEY_STROKE = Color3.fromRGB(45, 48, 58)
+	local HOTKEY_TEXT = Color3.fromRGB(255, 255, 255)
 
 	local function notifyChanged()
 		for _, callback in ipairs(listeners) do
@@ -6123,25 +6140,201 @@ do
 		end
 	end
 
-	local function buildOverlay()
+	local function applyOverlayPosition()
 		if not overlayRoot or not overlayRoot.Parent then
-			overlayRoot = U.canvas(screenGui, {
-				Name = "NerxBindOverlay",
-				AnchorPoint = Vector2.new(0, 1),
-				BackgroundColor3 = Theme.Window,
-				BackgroundTransparency = 0.12,
-				BorderSizePixel = 0,
-				Position = UDim2.new(0, 16, 1, -16),
-				Size = UDim2.fromOffset(230, 0),
-				AutomaticSize = Enum.AutomaticSize.Y,
-				GroupTransparency = 0,
-				Visible = false,
-				ZIndex = 0,
-			})
-			U.corner(overlayRoot, 8)
-			U.stroke(overlayRoot, Theme.Stroke, 0.4, 1)
-			U.list(overlayRoot, 4, Enum.HorizontalAlignment.Left, Enum.VerticalAlignment.Bottom)
+			return
 		end
+		local saved = Nerx.LayoutState and Nerx.LayoutState.hotkeysPanel
+		if type(saved) == "table" then
+			overlayRoot.Position = UDim2.new(
+				tonumber(saved.XScale) or 0,
+				tonumber(saved.XOffset) or 16,
+				tonumber(saved.YScale) or 0.5,
+				tonumber(saved.YOffset) or 0
+			)
+		end
+	end
+
+	local function saveOverlayPosition()
+		if not overlayRoot then
+			return
+		end
+		Nerx.LayoutState = Nerx.LayoutState or {}
+		local position = overlayRoot.Position
+		Nerx.LayoutState.hotkeysPanel = {
+			XScale = position.X.Scale,
+			XOffset = position.X.Offset,
+			YScale = position.Y.Scale,
+			YOffset = position.Y.Offset,
+		}
+	end
+
+	local function refreshHotkeyIconState()
+		if not overlayIconImage or not overlayIconImage.Parent then
+			return
+		end
+		local loaded = hotkeyAssetLoaded == true
+		overlayIconImage.Visible = loaded
+		if overlayIconFallback and overlayIconFallback.Parent then
+			overlayIconFallback.Visible = not loaded
+		end
+	end
+
+	local function probeHotkeyAsset()
+		if hotkeyAssetLoaded ~= nil or hotkeyAssetProbeStarted then
+			return
+		end
+		hotkeyAssetProbeStarted = true
+		task.spawn(function()
+			local loaded = false
+			local probe = Instance.new("ImageLabel")
+			probe.Name = "NerxHotkeyIconProbe"
+			probe.BackgroundTransparency = 1
+			probe.Visible = false
+			probe.Size = UDim2.fromOffset(15, 15)
+			probe.Image = HOTKEY_ICON
+			probe.Parent = screenGui
+			pcall(function()
+				local provider = game:GetService("ContentProvider")
+				provider:PreloadAsync({ probe })
+				loaded = probe.IsLoaded == true
+			end)
+			probe:Destroy()
+			hotkeyAssetLoaded = loaded
+			hotkeyAssetProbeStarted = false
+			refreshHotkeyIconState()
+		end)
+	end
+	local function ensureOverlayRoot()
+		if overlayRoot and overlayRoot.Parent then
+			return
+		end
+		overlayRoot = U.canvas(screenGui, {
+			Name = "NerxBindOverlay",
+			AnchorPoint = Vector2.new(0, 0.5),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			ClipsDescendants = false,
+			Position = UDim2.new(0, 16, 0.5, 0),
+			Size = UDim2.fromOffset(0, 0),
+			GroupTransparency = 0,
+			Visible = false,
+			ZIndex = 800,
+		})
+		overlayShown = false
+		overlayToken = 0
+		overlayDragActive = false
+		applyOverlayPosition()
+
+		U.connect(UserInputService.InputChanged, function(input)
+			if not overlayDragActive or not overlayRoot or not overlayRoot.Parent then
+				return
+			end
+			if input.UserInputType ~= Enum.UserInputType.MouseMovement
+				and input.UserInputType ~= Enum.UserInputType.Touch then
+				return
+			end
+			local delta = input.Position - overlayDragStart
+			overlayRoot.Position = UDim2.new(
+				overlayStartPosition.X.Scale,
+				overlayStartPosition.X.Offset + delta.X,
+				overlayStartPosition.Y.Scale,
+				overlayStartPosition.Y.Offset + delta.Y
+			)
+		end)
+		U.connect(UserInputService.InputEnded, function(input)
+			if not overlayDragActive then
+				return
+			end
+			if input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch then
+				overlayDragActive = false
+				saveOverlayPosition()
+			end
+		end)
+	end
+
+	local function cardBackground(parent, width, height, color)
+		local card = U.frame(parent, {
+			BackgroundColor3 = color or HOTKEY_CARD,
+			BackgroundTransparency = 0.2,
+			BorderSizePixel = 0,
+			Size = UDim2.fromOffset(width, height),
+			ZIndex = 2,
+		})
+		U.corner(card, 6)
+		U.stroke(card, HOTKEY_STROKE, 0.65, 1)
+		U.shadow(card, "soft")
+		return card
+	end
+
+	local function setTumbler(track, knob, on)
+		if on then
+			U.tween(track, TWEEN.Fast, { BackgroundColor3 = HOTKEY_ACCENT })
+			U.tween(knob, TWEEN.Fast, {
+				Position = UDim2.new(0.7, 0, 0.5, 0),
+				BackgroundTransparency = 0,
+			})
+		else
+			U.tween(track, TWEEN.Fast, { BackgroundColor3 = HOTKEY_TRACK })
+			U.tween(knob, TWEEN.Fast, {
+				Position = UDim2.new(0.3, 0, 0.5, 0),
+				BackgroundTransparency = 0.5,
+			})
+		end
+	end
+
+	local function makeTumbler(parent)
+		local card = cardBackground(parent, 34, 28, HOTKEY_TUMBLER_CARD)
+		local track = U.frame(card, {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundColor3 = HOTKEY_TRACK,
+			BorderSizePixel = 0,
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromOffset(26, 14),
+			ZIndex = 3,
+		})
+		U.corner(track, 7)
+		local knob = U.frame(track, {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundColor3 = HOTKEY_TEXT,
+			BackgroundTransparency = 0.5,
+			BorderSizePixel = 0,
+			Position = UDim2.new(0.3, 0, 0.5, 0),
+			Size = UDim2.fromOffset(10, 10),
+			ZIndex = 4,
+		})
+		U.corner(knob, 5)
+		return card, track, knob
+	end
+
+	local function labelWidth(text, maxWidth)
+		return math.min(U.measure(tostring(text or ""), 12, Fonts.Bold).X, maxWidth or 200)
+	end
+
+	local function bindTumblerState(bind)
+		local hasComponent = false
+		local on = activeStates[bind.Id] == true
+		for _, target in ipairs(bind.Actions or {}) do
+			if target.Type == "Component" then
+				local component = Nerx.ComponentsById[target.Target]
+				if component and (component.Kind == "toggle" or component.Kind == "slider") then
+					hasComponent = true
+					if component.Kind == "toggle" and component.GetValue then
+						local ok, value = pcall(component.GetValue, component)
+						if ok then
+							on = value == true
+						end
+					end
+					break
+				end
+			end
+		end
+		return hasComponent, on
+	end
+
+	local function buildOverlay()
+		ensureOverlayRoot()
 
 		for _, row in ipairs(overlayRows) do
 			if row and row.Parent then
@@ -6149,64 +6342,204 @@ do
 			end
 		end
 		table.clear(overlayRows)
+		overlayIconImage = nil
+		overlayIconFallback = nil
 
-		if not overlayEnabled then
-			overlayRoot.Visible = false
-			return
-		end
-
-		local shown = 0
-		for _, bind in ipairs(binds) do
-			if bind.Enabled ~= false then
-				local mode = bind.Overlay or "Always"
-				local allowed = mode == "Always" or (mode == "While Active" and activeStates[bind.Id])
-				if allowed then
-					shown = shown + 1
-					local active = activeStates[bind.Id] == true
-					local row = U.frame(overlayRoot, {
-						BackgroundColor3 = active and Theme.ChipSelected or Theme.FieldDeep,
-						BackgroundTransparency = active and 0 or 0.25,
-						BorderSizePixel = 0,
-						Size = UDim2.new(1, 0, 0, 24),
-						ZIndex = 1,
-					})
-					U.corner(row, 5)
-
-					local keyWidth = math.max(34, U.measure(tostring(bind.Key or ""), 8.5, Fonts.Bold).X + 12)
-					local key = U.frame(row, {
-						AnchorPoint = Vector2.new(0, 0.5),
-						BackgroundColor3 = Theme.Field,
-						BorderSizePixel = 0,
-						Position = UDim2.new(0, 7, 0.5, 0),
-						Size = UDim2.fromOffset(keyWidth, 16),
-						ZIndex = 2,
-					})
-					U.corner(key, 4)
-					U.label(key, {
-						Text = tostring(bind.Key or "?"),
-						Font = Fonts.Bold,
-						TextSize = 8,
-						TextColor3 = Theme.Text,
-						TextTransparency = 0.15,
-						TextXAlignment = Enum.TextXAlignment.Center,
-						Size = UDim2.fromScale(1, 1),
-						ZIndex = 3,
-					})
-					U.label(row, {
-						Text = tostring(bind.Name or bind.Id or "Bind"),
-						TextSize = 9.5,
-						TextColor3 = active and Theme.Text or Theme.Muted,
-						TextTransparency = active and 0.05 or 0.35,
-						Position = UDim2.fromOffset(10 + keyWidth, 0),
-						Size = UDim2.new(1, -(18 + keyWidth), 1, 0),
-						TextTruncate = Enum.TextTruncate.AtEnd,
-						ZIndex = 2,
-					})
-					overlayRows[#overlayRows + 1] = row
+		local visibleBinds = {}
+		if overlayEnabled then
+			for _, bind in ipairs(binds) do
+				if bind.Enabled ~= false
+					and bind.Trigger ~= "Condition"
+					and bind.Key
+					and bind.Key ~= "" then
+					local mode = bind.Overlay or "Always"
+					if mode == "Always" or (mode == "While Active" and activeStates[bind.Id]) then
+						visibleBinds[#visibleBinds + 1] = bind
+					end
 				end
 			end
 		end
-		overlayRoot.Visible = shown > 0
+
+		if #visibleBinds == 0 then
+			if overlayShown then
+				overlayShown = false
+				overlayToken = overlayToken + 1
+				local token = overlayToken
+				U.tween(overlayRoot, TWEEN.Popup, { GroupTransparency = 1 })
+				task.delay(0.18, function()
+					if token == overlayToken and not overlayShown
+						and overlayRoot and overlayRoot.Parent then
+						overlayRoot.Visible = false
+					end
+				end)
+			end
+			return
+		end
+
+		local headerText = "Hotkeys"
+		local headerTextWidth = U.measure(headerText, 13, Fonts.Bold).X
+		local maxWidth = 49 + headerTextWidth
+
+		local header = U.frame(overlayRoot, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(0, 0),
+			Size = UDim2.fromOffset(maxWidth, 30),
+			ZIndex = 2,
+		})
+		local headerCard = cardBackground(header, maxWidth, 30)
+		U.padding(headerCard, 0, 0, 0, 0)
+
+		local iconHolder = U.frame(headerCard, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(12, 7),
+			Size = UDim2.fromOffset(15, 15),
+			ZIndex = 4,
+		})
+		overlayIconFallback = U.icon(iconHolder, "rectangle-list", 13, HOTKEY_ACCENT, {
+			Size = UDim2.fromScale(1, 1),
+			TextTransparency = hotkeyAssetLoaded == true and 1 or 0,
+			ZIndex = 4,
+		})
+		overlayIconImage = U.new("ImageLabel", {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.fromScale(1, 1),
+			Image = HOTKEY_ICON,
+			ImageColor3 = HOTKEY_ACCENT,
+			Visible = hotkeyAssetLoaded == true,
+			ZIndex = 5,
+		}, iconHolder)
+		if hotkeyAssetLoaded == nil then
+			probeHotkeyAsset()
+		end
+		U.label(headerCard, {
+			Text = headerText,
+			Font = Fonts.Bold,
+			TextSize = 13,
+			TextColor3 = HOTKEY_TEXT,
+			TextTransparency = 0,
+			Position = UDim2.fromOffset(35, 0),
+			Size = UDim2.new(1, -49, 1, 0),
+			ZIndex = 4,
+		})
+		local dragInput = U.inputButton(headerCard)
+		U.connect(dragInput.InputBegan, function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch then
+				overlayDragActive = true
+				overlayDragStart = input.Position
+				overlayStartPosition = overlayRoot.Position
+			end
+		end)
+		overlayRows[#overlayRows + 1] = header
+
+		local y = 30
+		for _, bind in ipairs(visibleBinds) do
+			local hasTumbler, tumblerOn = bindTumblerState(bind)
+			local nameText = tostring(bind.Name or "Bind")
+			local keyText = tostring(bind.Key or "")
+			local valueText
+			for _, target in ipairs(bind.Actions or {}) do
+				if target.Type == "Component" then
+					local component = Nerx.ComponentsById[target.Target]
+					if component and component.Kind == "slider" and component.GetValue then
+						local ok, value = pcall(component.GetValue, component)
+						if ok and value ~= nil then
+							valueText = tostring(value)
+						end
+						break
+					end
+				end
+			end
+
+			local nameWidth = labelWidth(nameText, 190)
+			local valueWidth = valueText and labelWidth(valueText, 70) or 0
+			local keyWidth = labelWidth(keyText, 90)
+			local labelCount = 2 + (valueText and 1 or 0)
+			local infoWidth = 20 + nameWidth + keyWidth + (valueText and valueWidth or 0)
+				+ (labelCount - 1) * 10
+
+			local row = U.frame(overlayRoot, {
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset(0, y + 10),
+				Size = UDim2.fromOffset((hasTumbler and 39 or 0) + infoWidth, 28),
+				ZIndex = 1,
+			})
+			local x = 0
+			if hasTumbler then
+				local tumblerCard, track, knob = makeTumbler(row)
+				tumblerCard.Position = UDim2.fromOffset(0, 0)
+				setTumbler(track, knob, tumblerOn)
+				x = 39
+			end
+
+			local infoCard = cardBackground(row, infoWidth, 28)
+			infoCard.Position = UDim2.fromOffset(x, 0)
+			U.label(infoCard, {
+				Text = nameText,
+				Font = Fonts.Bold,
+				TextSize = 12,
+				TextColor3 = HOTKEY_TEXT,
+				TextTransparency = 0.1,
+				Position = UDim2.fromOffset(10, 0),
+				Size = UDim2.fromOffset(nameWidth, 28),
+				TextTruncate = Enum.TextTruncate.AtEnd,
+				ZIndex = 4,
+			})
+			local cursor = 10 + nameWidth + 10
+			if valueText then
+				U.label(infoCard, {
+					Text = valueText,
+					Font = Fonts.Bold,
+					TextSize = 12,
+					TextColor3 = Color3.fromRGB(235, 235, 235),
+					TextTransparency = 0.15,
+					Position = UDim2.fromOffset(cursor, 0),
+					Size = UDim2.fromOffset(valueWidth, 28),
+					TextTruncate = Enum.TextTruncate.AtEnd,
+					ZIndex = 4,
+				})
+				cursor = cursor + valueWidth + 10
+			end
+			U.label(infoCard, {
+				Text = keyText,
+				Font = Fonts.Bold,
+				TextSize = 12,
+				TextColor3 = HOTKEY_ACCENT,
+				TextTransparency = 0.15,
+				Position = UDim2.fromOffset(cursor, 0),
+				Size = UDim2.fromOffset(keyWidth, 28),
+				TextTruncate = Enum.TextTruncate.AtEnd,
+				ZIndex = 4,
+			})
+
+			local rowWidth = (hasTumbler and 39 or 0) + infoWidth
+			if rowWidth > maxWidth then
+				maxWidth = rowWidth
+			end
+			overlayRows[#overlayRows + 1] = row
+			y = y + 38
+		end
+
+		overlayRoot.Size = UDim2.fromOffset(maxWidth, 30 + #visibleBinds * 38)
+		header.Size = UDim2.fromOffset(maxWidth, 30)
+		headerCard.Size = UDim2.fromOffset(maxWidth, 30)
+		applyOverlayPosition()
+
+		if not overlayShown then
+			overlayShown = true
+			overlayToken = overlayToken + 1
+			overlayRoot.Visible = true
+			U.setGroupTransparency(overlayRoot, 1)
+			U.tween(overlayRoot, TWEEN.Popup, { GroupTransparency = 0 })
+		else
+			overlayToken = overlayToken + 1
+			overlayRoot.Visible = true
+			U.setGroupTransparency(overlayRoot, 0)
+		end
 	end
 
 	local function resolveTarget(target)
@@ -6672,6 +7005,10 @@ do
 		notifyChanged()
 	end
 
+	function BindManager:RefreshOverlay()
+		buildOverlay()
+	end
+
 	function BindManager:IsOverlayEnabled()
 		return overlayEnabled
 	end
@@ -6726,6 +7063,8 @@ do
 	loadBinds()
 	buildOverlay()
 	Nerx.BindManager = BindManager
+	Nerx.HotkeyIcon = HOTKEY_ICON
+	Nerx.HotkeyAccent = HOTKEY_ACCENT
 end
 
 do
@@ -6786,6 +7125,17 @@ do
 
 	loadStore()
 
+	local function copyTable(value)
+		if type(value) ~= "table" then
+			return value
+		end
+		local copy = {}
+		for key, item in pairs(value) do
+			copy[key] = copyTable(item)
+		end
+		return copy
+	end
+
 	function Nerx:CaptureConfig()
 		local components = {}
 		for _, component in ipairs(Nerx.Components) do
@@ -6820,7 +7170,7 @@ do
 		local mode = window and window.Mode or nil
 		local layout = {
 			windowPosition = nil,
-			custom = Nerx.LayoutState or {},
+			custom = copyTable(Nerx.LayoutState or {}),
 		}
 		if window and window.Root then
 			local position = window.Root.Position
@@ -6905,7 +7255,10 @@ do
 			end)
 		end
 		if config.layout and type(config.layout.custom) == "table" then
-			Nerx.LayoutState = config.layout.custom
+			Nerx.LayoutState = copyTable(config.layout.custom)
+		end
+		if Nerx.BindManager and Nerx.BindManager.RefreshOverlay then
+			pcall(Nerx.BindManager.RefreshOverlay, Nerx.BindManager)
 		end
 
 		if not options.noCallbacks then
@@ -6990,6 +7343,10 @@ do
 				or current.Y.Offset ~= (tonumber(position.YOffset) or 0) then
 				changed = changed + 1
 			end
+		end
+		local savedLayout = config.layout and config.layout.custom
+		if type(savedLayout) == "table" and not deepEqual(Nerx.LayoutState or {}, savedLayout) then
+			changed = changed + 1
 		end
 		return changed
 	end
@@ -7502,5 +7859,6 @@ function Nerx:Unload()
 end
 
 return Nerx
+
 
 
