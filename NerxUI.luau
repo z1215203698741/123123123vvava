@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.2.3
+	Nerx UI Library · v1.2.4
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.2.3"
+Nerx.Version = "1.2.4"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -500,14 +500,40 @@ function U.onAccent(callback)
 end
 
 function U.shadow(parent, strength)
-	local layers = { 3, 5, 8, 11 }
-	for index, thickness in ipairs(layers) do
-		local stroke = U.stroke(parent, Theme.Black, 1, thickness)
-		stroke.Transparency = 0.66 + index * 0.075
-		if strength == "soft" then
-			stroke.Transparency = stroke.Transparency + 0.12
+	-- Thick stacked UIStrokes looked like a solid black ring around small
+	-- popups on bright scenes. Use Roblox's blurred UIShadow when available
+	-- and fall back to one faint 1 px outline on older clients.
+	local ok, shadow = pcall(function()
+		return Instance.new("UIShadow")
+	end)
+	if ok and shadow then
+		local soft = strength == "soft"
+		local configured = pcall(function()
+			shadow.Name = "NerxShadow"
+			shadow.BlurRadius = UDim.new(0, soft and 10 or 6)
+			shadow.Color = Theme.Black
+			shadow.Offset = UDim2.fromOffset(0, soft and 3 or 2)
+			shadow.Spread = UDim2.fromOffset(0, 0)
+			shadow.Transparency = soft and 0.62 or 0.68
+			shadow.Inset = false
+			shadow.Mode = Enum.ApplyShadowMode.Shape
+			shadow.ShowBehindParent = true
+		end)
+		if configured then
+			shadow.Parent = parent
+		else
+			pcall(function()
+				shadow:Destroy()
+			end)
+			shadow = nil
 		end
 	end
+	if shadow then
+		return shadow
+	end
+	local stroke = U.stroke(parent, Theme.Black, 0.8, 1)
+	stroke.Name = "NerxShadowFallback"
+	return stroke
 end
 
 function U.drag(inputFrame, moveFrame, speed)
