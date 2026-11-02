@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.2.0
+	Nerx UI Library · v1.2.1
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.2.0"
+Nerx.Version = "1.2.1"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -284,9 +284,15 @@ function U.icon(parent, name, size, color, props)
 		TextSize = size or 14,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		TextYAlignment = Enum.TextYAlignment.Center,
-		TextWrapped = true,
+		-- BuilderIcons glyphs are single characters; wrapping can push them
+		-- outside a tight holder and make small selector icons look blank.
+		TextWrapped = false,
 	}
-	local filled = props and props.Filled == true
+	-- Roblox does not expose every BuilderIcons weight in every client
+	-- build. The bold/filled face is the one that reliably contains the
+	-- glyphs, so it is the default; Filled = false opts into the regular
+	-- face only when a caller knows it exists.
+	local filled = not (props and props.Filled == false)
 	if filled and IconFontFilled then
 		defaults.FontFace = IconFontFilled
 	elseif IconFont then
@@ -393,6 +399,23 @@ function U.measureWrap(text, size, font, width)
 		return value
 	end
 	return Vector2.new(width, (size or 12) * 2)
+end
+
+function U.parentScale(object)
+	local scale = 1
+	local node = object and object.Parent
+	while node do
+		for _, child in ipairs(node:GetChildren()) do
+			if child.ClassName == "UIScale" then
+				scale = scale * (tonumber(child.Scale) or 1)
+			end
+		end
+		if node.ClassName == "UIScale" then
+			scale = scale * (tonumber(node.Scale) or 1)
+		end
+		node = node.Parent
+	end
+	return math.max(0.01, scale)
 end
 
 function U.round(value, decimals)
@@ -1787,7 +1810,7 @@ local function createChip(parent, rawItem, options)
 			Position = UDim2.fromOffset(cursor, 0),
 			Size = UDim2.fromOffset(iconSize, height),
 			TextTransparency = 0.45,
-			Filled = options.IconFilled == true,
+			Filled = options.IconFilled ~= false,
 		})
 		cursor = cursor + iconSize + iconGap
 	end
@@ -2430,7 +2453,7 @@ local function createSection(page, config)
 		U.corner(fill, 2)
 
 		local knob = U.frame(track, {
-			AnchorPoint = Vector2.new(0.5, 0.5),
+			AnchorPoint = Vector2.new(0, 0.5),
 			BackgroundColor3 = Theme.White,
 			BorderSizePixel = 0,
 			Position = UDim2.new(0, 0, 0.5, 0),
@@ -2484,21 +2507,31 @@ local function createSection(page, config)
 		local function render()
 			local scale = ratio()
 			U.tween(fill, TWEEN.Fast, { Size = UDim2.new(scale, 0, 1, 0) })
-			U.tween(knob, TWEEN.Fast, { Position = UDim2.new(scale, 0, 0.5, 0) })
+			-- Keep the 10 px knob fully inside the rail at both ends instead of
+			-- letting half of it stick out past the value pill.
+			U.tween(knob, TWEEN.Fast, {
+				Position = UDim2.new(scale, 5 * (1 - 2 * scale), 0.5, 0),
+			})
 			valueBox.Text = formatValue()
 		end
 
 		local function layout()
-			local width = row.AbsoluteSize.X
+			-- AbsoluteSize includes the ancestor UIScale chain. Divide by
+			-- that local scale (not a global window scale) so the rail and
+			-- knob stay inside the value pill at 75-150% sizes.
+			local uiScale = U.parentScale(row)
+			local width = row.AbsoluteSize.X / uiScale
 			if width <= 0 then
 				return
 			end
-			local left = math.clamp(math.floor(width * 0.48), 118, 210)
-			label.Size = UDim2.new(0, left - inset - 14, 1, 0)
+			local reserve = inset + 62 -- 10 px gutter + 52 px value pill
+			local measured = U.measure(sliderConfig.Name or "", 12.5, Fonts.Regular).X
+			local maxLeft = math.max(78, width - reserve - 56)
+			local left = math.clamp(math.floor(measured + inset + 20), 78, maxLeft)
+			label.Size = UDim2.new(0, math.max(24, left - inset - 10), 1, 0)
 			track.Position = UDim2.new(0, left, 0.5, 0)
-			track.Size = UDim2.new(0, math.max(56, width - left - inset - 62), 0, 18)
+			track.Size = UDim2.new(0, math.max(40, width - left - reserve), 0, 18)
 		end
-
 		local api = attachOptions({
 			Root = row,
 			Default = sliderConfig.Default,
@@ -3531,7 +3564,6 @@ local function createPage(window, host, tab, config)
 				TextSize = 11.5,
 				IconSize = 15,
 				IconGap = 7,
-				IconFilled = false,
 				PaddingX = 12,
 				Radio = true,
 				DotSide = "right",
@@ -4261,7 +4293,7 @@ function Nerx:CreateWindow(config)
 		ClipsDescendants = true,
 	})
 	U.corner(avatar, 15)
-	local avatarIcon = U.icon(avatar, "person", 15, Theme.Muted, {
+	local avatarIcon = U.icon(avatar, "person-standing", 15, Theme.Muted, {
 		TextTransparency = 0.35,
 		Size = UDim2.fromScale(1, 1),
 	})
@@ -4392,6 +4424,8 @@ function Nerx:CreateWindow(config)
 		BorderSizePixel = 0,
 		Position = UDim2.new(1, -SAVE_GROUP_RIGHT, 0.5, 0),
 		Size = UDim2.fromOffset(modeWidth + SAVE_WIDTH, MODE_SAVE_HEIGHT),
+		-- The Save block is intentionally square; clipping it to this rounded
+		-- group is what gives the merged pill a clean right edge.
 		ClipsDescendants = true,
 		ZIndex = 4,
 	})
@@ -4435,6 +4469,17 @@ function Nerx:CreateWindow(config)
 		Size = UDim2.fromOffset(SAVE_WIDTH, MODE_SAVE_HEIGHT),
 		ZIndex = 5,
 	})
+	-- Round the right side into the group outline; the narrow connector
+	-- squares the left side so the mode and Save areas share one straight seam.
+	U.corner(saveButton, 7)
+	local saveConnector = U.frame(saveButton, {
+		BackgroundColor3 = Theme.Primary,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.fromOffset(7, MODE_SAVE_HEIGHT),
+		ZIndex = 5,
+	})
+
 	local saveLabel = U.label(saveButton, {
 		Text = "Save",
 		TextSize = 11.5,
@@ -4588,9 +4633,11 @@ function Nerx:CreateWindow(config)
 	end)
 	U.connect(saveInput.MouseEnter, function()
 		U.tween(saveButton, TWEEN.Fast, { BackgroundColor3 = Theme.PrimaryHover })
+		U.tween(saveConnector, TWEEN.Fast, { BackgroundColor3 = Theme.PrimaryHover })
 	end)
 	U.connect(saveInput.MouseLeave, function()
 		U.tween(saveButton, TWEEN.Fast, { BackgroundColor3 = Theme.Primary })
+		U.tween(saveConnector, TWEEN.Fast, { BackgroundColor3 = Theme.Primary })
 	end)
 
 	local modeInput = U.inputButton(modeChip, function()
@@ -6436,11 +6483,46 @@ do
 	local overlayIconFallback
 	local hotkeyAssetLoaded = nil
 	local hotkeyAssetProbeStarted = false
+	local overlayUIScale
+	local overlayScale = 100
+	local hotkeyStyle = "default"
+	local overlayRightAligned = false
+	local hotkeyDynamicTitle = false
+	local lastTriggeredName = nil
+	local hotkeySettingsRoot
+	local hotkeySettingsOpen = false
+	local hotkeySettingsIgnoreClick = false
+	local hotkeySettingsToken = 0
+	local hotkeyDotsButton
+	local hotkeySettingsStyleValue
+	local hotkeySettingsScale
+	local hotkeySettingsScaleValue
+	local hotkeySettingsScaleTrack
+	local hotkeySettingsScaleFill
+	local hotkeySettingsScaleKnob
+	local hotkeySettingsScaleDragging = false
+	local hotkeySettingsSwitches = {}
+	local positionHotkeySettings
+	local closeHotkeySettings
+	local toggleHotkeySettings
 
 	local HOTKEY_ICON = "rbxassetid://121978468376124"
-	local HOTKEY_ACCENT = Color3.fromRGB(78, 127, 252)
-	local HOTKEY_CARD = Color3.fromRGB(8, 8, 13)
-	local HOTKEY_TEXT = Color3.fromRGB(255, 255, 255)
+	local HOTKEY_ACCENT = Color3.fromRGB(96, 139, 255)
+	local HOTKEY_CARD = Color3.fromRGB(23, 27, 40)
+	local HOTKEY_KEY_CARD = Color3.fromRGB(43, 48, 64)
+	local HOTKEY_NAME_CARD = Color3.fromRGB(78, 92, 125)
+	local HOTKEY_TEXT = Color3.fromRGB(247, 248, 252)
+	local HOTKEY_MUTED = Color3.fromRGB(186, 191, 207)
+
+	do
+		local saved = Nerx.LayoutState and Nerx.LayoutState.hotkeysPanel
+		if type(saved) == "table" then
+			overlayScale = math.clamp(tonumber(saved.Scale) or 100, 75, 150)
+			hotkeyStyle = saved.Style == "keys" and "keys" or "default"
+			overlayRightAligned = saved.RightAligned == true
+			hotkeyDynamicTitle = saved.DynamicTitle == true
+		end
+	end
 
 	local function notifyChanged()
 		for _, callback in ipairs(listeners) do
@@ -6452,14 +6534,19 @@ do
 		if not overlayRoot or not overlayRoot.Parent then
 			return
 		end
+		overlayRoot.AnchorPoint = overlayRightAligned and Vector2.new(1, 0.5) or Vector2.new(0, 0.5)
 		local saved = Nerx.LayoutState and Nerx.LayoutState.hotkeysPanel
-		if type(saved) == "table" then
+		if type(saved) == "table" and saved.XScale ~= nil then
 			overlayRoot.Position = UDim2.new(
 				tonumber(saved.XScale) or 0,
 				tonumber(saved.XOffset) or 16,
 				tonumber(saved.YScale) or 0.5,
 				tonumber(saved.YOffset) or 0
 			)
+		elseif overlayRightAligned then
+			overlayRoot.Position = UDim2.new(1, -16, 0.5, 0)
+		else
+			overlayRoot.Position = UDim2.new(0, 16, 0.5, 0)
 		end
 	end
 
@@ -6468,13 +6555,20 @@ do
 			return
 		end
 		Nerx.LayoutState = Nerx.LayoutState or {}
+		local state = Nerx.LayoutState.hotkeysPanel
+		if type(state) ~= "table" then
+			state = {}
+		end
 		local position = overlayRoot.Position
-		Nerx.LayoutState.hotkeysPanel = {
-			XScale = position.X.Scale,
-			XOffset = position.X.Offset,
-			YScale = position.Y.Scale,
-			YOffset = position.Y.Offset,
-		}
+		state.XScale = position.X.Scale
+		state.XOffset = position.X.Offset
+		state.YScale = position.Y.Scale
+		state.YOffset = position.Y.Offset
+		state.Style = hotkeyStyle
+		state.RightAligned = overlayRightAligned
+		state.DynamicTitle = hotkeyDynamicTitle
+		state.Scale = overlayScale
+		Nerx.LayoutState.hotkeysPanel = state
 	end
 
 	local function refreshHotkeyIconState()
@@ -6519,16 +6613,19 @@ do
 		end
 		overlayRoot = U.canvas(screenGui, {
 			Name = "NerxBindOverlay",
-			AnchorPoint = Vector2.new(0, 0.5),
+			AnchorPoint = overlayRightAligned and Vector2.new(1, 0.5) or Vector2.new(0, 0.5),
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			ClipsDescendants = false,
-			Position = UDim2.new(0, 16, 0.5, 0),
+			Position = overlayRightAligned and UDim2.new(1, -16, 0.5, 0) or UDim2.new(0, 16, 0.5, 0),
 			Size = UDim2.fromOffset(0, 0),
 			GroupTransparency = 0,
 			Visible = false,
 			ZIndex = 800,
 		})
+		overlayUIScale = U.new("UIScale", {
+			Scale = overlayScale / 100,
+		}, overlayRoot)
 		overlayShown = false
 		overlayToken = 0
 		overlayDragActive = false
@@ -6558,24 +6655,35 @@ do
 				or input.UserInputType == Enum.UserInputType.Touch then
 				overlayDragActive = false
 				saveOverlayPosition()
+				if hotkeySettingsOpen and positionHotkeySettings then
+					positionHotkeySettings()
+				end
 			end
 		end)
 	end
 
-	local HOTKEY_ROW_HEIGHT = 24
-	local HOTKEY_ROW_GAP = 3
-	local HOTKEY_HEADER_HEIGHT = 28
-	local HOTKEY_CARD_TRANSPARENCY = 0.28
+	local HOTKEY_ROW_HEIGHT = 22
+	local HOTKEY_ROW_GAP = 4
+	local HOTKEY_HEADER_HEIGHT = 26
+	local HOTKEY_DOTS_SIZE = 16
+	local HOTKEY_HEADER_TEXT_SIZE = 12.5
+	local HOTKEY_NAME_TEXT_SIZE = 10.5
+	local HOTKEY_KEY_TEXT_SIZE = 9.5
+	local HOTKEY_CARD_TRANSPARENCY = 0.12
+	local HOTKEY_KEY_TRANSPARENCY = 0.18
+	local HOTKEY_NAME_TRANSPARENCY = 0.2
 
-	local function hotkeyPill(parent, width, height)
+	local renderHotkeyScale
+
+	local function hotkeyPill(parent, width, height, background, transparency)
 		local card = U.frame(parent, {
-			BackgroundColor3 = HOTKEY_CARD,
-			BackgroundTransparency = HOTKEY_CARD_TRANSPARENCY,
+			BackgroundColor3 = background or HOTKEY_CARD,
+			BackgroundTransparency = transparency or HOTKEY_CARD_TRANSPARENCY,
 			BorderSizePixel = 0,
 			Size = UDim2.fromOffset(width, height),
 			ZIndex = 2,
 		})
-		U.corner(card, 5)
+		U.corner(card, 6)
 		return card
 	end
 
@@ -6587,7 +6695,7 @@ do
 			TextColor3 = HOTKEY_TEXT,
 			TextTransparency = transparency or 0.05,
 			TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
-			TextStrokeTransparency = 0.72,
+			TextStrokeTransparency = 0.78,
 			TextXAlignment = Enum.TextXAlignment.Left,
 			TextYAlignment = Enum.TextYAlignment.Center,
 			Size = UDim2.fromOffset(width, height),
@@ -6616,10 +6724,27 @@ do
 		return hasComponent, on
 	end
 
-	-- Mirrors Margele/OpenZen KeyBindsHud: a compact black header, then one
-	-- rounded key/toggle pill followed by a separate name pill for every bind.
+	local function syncHotkeySettings()
+		local saved = Nerx.LayoutState and Nerx.LayoutState.hotkeysPanel
+		if type(saved) ~= "table" then
+			return
+		end
+		overlayScale = math.clamp(tonumber(saved.Scale) or 100, 75, 150)
+		hotkeyStyle = saved.Style == "keys" and "keys" or "default"
+		overlayRightAligned = saved.RightAligned == true
+		hotkeyDynamicTitle = saved.DynamicTitle == true
+		if overlayUIScale then
+			overlayUIScale.Scale = overlayScale / 100
+		end
+	end
+
+	-- Mirrors Margele/OpenZen KeyBindsHud: one compact slate header followed by
+	-- equally-sized key/toggle pills and name pills. The name pill width is
+	-- shared by every row so the stack reads as one aligned block instead of a
+	-- ragged set of different widths.
 	local function buildOverlay()
 		ensureOverlayRoot()
+		syncHotkeySettings()
 
 		for _, row in ipairs(overlayRows) do
 			if row and row.Parent then
@@ -6629,6 +6754,7 @@ do
 		table.clear(overlayRows)
 		overlayIconImage = nil
 		overlayIconFallback = nil
+		hotkeyDotsButton = nil
 
 		local visibleBinds = {}
 		if overlayEnabled then
@@ -6646,6 +6772,9 @@ do
 		end
 
 		if #visibleBinds == 0 then
+			if closeHotkeySettings then
+				closeHotkeySettings()
+			end
 			if overlayShown then
 				overlayShown = false
 				overlayToken = overlayToken + 1
@@ -6662,47 +6791,64 @@ do
 		end
 
 		local headerText = "Hotkeys"
-		local headerTextWidth = U.measure(headerText, 12.5, Fonts.Bold).X
-		local headerContentWidth = 10 + 15 + 8 + headerTextWidth + 10
+		if hotkeyDynamicTitle and lastTriggeredName and lastTriggeredName ~= "" then
+			headerText = "Hotkeys · " .. tostring(lastTriggeredName)
+		end
 
 		local rowData = {}
-		local maxRowWidth = 0
+		local maxNameWidth = 0
+		local maxKeyWidth = 0
+		local hasAnyTumbler = false
 		for _, bind in ipairs(visibleBinds) do
 			local hasTumbler, tumblerOn = bindTumblerState(bind)
 			local nameText = tostring(bind.Name or "Bind")
 			local keyText = tostring(bind.Key or "")
-			local nameWidth = math.clamp(U.measure(nameText, 11.5, Fonts.Bold).X, 0, 200)
-			local nameBoxWidth = math.max(40, nameWidth + 12)
-			local keyBoxWidth
-			if hasTumbler then
-				keyBoxWidth = 26
-			else
-				local keyWidth = math.clamp(U.measure(keyText, 10, Fonts.Bold).X, 0, 100)
-				keyBoxWidth = math.max(26, keyWidth + 12)
-			end
-			local rowWidth = keyBoxWidth + HOTKEY_ROW_GAP + nameBoxWidth
-			maxRowWidth = math.max(maxRowWidth, rowWidth)
+			local nameWidth = U.measure(nameText, HOTKEY_NAME_TEXT_SIZE, Fonts.Bold).X
+			local keyWidth = U.measure(keyText, HOTKEY_KEY_TEXT_SIZE, Fonts.Bold).X
+			maxNameWidth = math.max(maxNameWidth, math.clamp(nameWidth, 0, 200))
+			maxKeyWidth = math.max(maxKeyWidth, math.clamp(keyWidth, 0, 100))
+			hasAnyTumbler = hasAnyTumbler or hasTumbler
 			rowData[#rowData + 1] = {
 				Bind = bind,
 				Name = nameText,
 				Key = keyText,
-				HasTumbler = hasTumbler,
+				UseToggle = hotkeyStyle == "default" and hasTumbler,
 				TumblerOn = tumblerOn,
-				NameBoxWidth = nameBoxWidth,
-				KeyBoxWidth = keyBoxWidth,
-				RowWidth = rowWidth,
 			}
 		end
 
-		local panelWidth = math.max(headerContentWidth, maxRowWidth)
+		local keyBoxWidth = math.clamp(maxKeyWidth + 14, 30, 56)
+		if hotkeyStyle == "default" and hasAnyTumbler then
+			keyBoxWidth = math.max(keyBoxWidth, 28)
+		end
+		local nameBoxWidth = math.max(44, maxNameWidth + 14)
+		local rowWidth = keyBoxWidth + HOTKEY_ROW_GAP + nameBoxWidth
+
+		local measuredTitle = U.measure(headerText, HOTKEY_HEADER_TEXT_SIZE, Fonts.Bold).X
+		local titleTextWidth = math.clamp(measuredTitle, 24, 210)
+		local panelWidth = math.max(rowWidth, 10 + 15 + 8 + titleTextWidth + 6 + HOTKEY_DOTS_SIZE + 10)
 		local totalHeight = HOTKEY_HEADER_HEIGHT + #visibleBinds * (HOTKEY_ROW_HEIGHT + HOTKEY_ROW_GAP)
 
 		local headerCard = hotkeyPill(overlayRoot, panelWidth, HOTKEY_HEADER_HEIGHT)
 		headerCard.Position = UDim2.fromOffset(0, 0)
+
+		local iconX
+		local titleX
+		local dotsX
+		if overlayRightAligned then
+			iconX = panelWidth - 10 - 15
+			titleX = iconX - 8 - titleTextWidth
+			dotsX = titleX - 6 - HOTKEY_DOTS_SIZE
+		else
+			iconX = 10
+			titleX = 10 + 15 + 8
+			dotsX = titleX + titleTextWidth + 6
+		end
+
 		local iconHolder = U.frame(headerCard, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(10, 6),
+			Position = UDim2.fromOffset(iconX, math.floor((HOTKEY_HEADER_HEIGHT - 15) * 0.5)),
 			Size = UDim2.fromOffset(15, 15),
 			ZIndex = 4,
 		})
@@ -6723,9 +6869,16 @@ do
 		if hotkeyAssetLoaded == nil then
 			probeHotkeyAsset()
 		end
-		hotkeyText(headerCard, headerText, 12.5, panelWidth - 43, HOTKEY_HEADER_HEIGHT, 0.02).Position =
-			UDim2.fromOffset(33, 0)
+
+		local headerLabel = hotkeyText(headerCard, headerText, HOTKEY_HEADER_TEXT_SIZE, titleTextWidth, HOTKEY_HEADER_HEIGHT, 0.02)
+		headerLabel.Position = UDim2.fromOffset(titleX, 0)
+		headerLabel.TextXAlignment = overlayRightAligned and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left
+		headerLabel.TextTruncate = Enum.TextTruncate.AtEnd
+
+		-- Drag hitbox first; the dots button is created after it so the dots'
+		-- ImageButton stays on top and remains clickable.
 		local dragInput = U.inputButton(headerCard)
+		dragInput.ZIndex = 3
 		U.connect(dragInput.InputBegan, function(input)
 			if input.UserInputType == Enum.UserInputType.MouseButton1
 				or input.UserInputType == Enum.UserInputType.Touch then
@@ -6734,6 +6887,33 @@ do
 				overlayStartPosition = overlayRoot.Position
 			end
 		end)
+
+		local dots = U.frame(headerCard, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(dotsX, math.floor((HOTKEY_HEADER_HEIGHT - HOTKEY_DOTS_SIZE) * 0.5)),
+			Size = UDim2.fromOffset(HOTKEY_DOTS_SIZE, HOTKEY_DOTS_SIZE),
+			ZIndex = 6,
+		})
+		hotkeyDotsButton = dots
+		local dotsIcon = U.icon(dots, "three-dots-horizontal", 12, HOTKEY_MUTED, {
+			Size = UDim2.fromScale(1, 1),
+			TextTransparency = 0.25,
+			ZIndex = 6,
+		})
+		local dotsInput = U.inputButton(dots, function()
+			if toggleHotkeySettings then
+				toggleHotkeySettings()
+			end
+		end)
+		dotsInput.ZIndex = 10
+		U.connect(dotsInput.MouseEnter, function()
+			U.tween(dotsIcon, TWEEN.Fast, { TextTransparency = 0.02 })
+		end)
+		U.connect(dotsInput.MouseLeave, function()
+			U.tween(dotsIcon, TWEEN.Fast, { TextTransparency = 0.25 })
+		end)
+
 		overlayRows[#overlayRows + 1] = headerCard
 
 		local y = HOTKEY_HEADER_HEIGHT + HOTKEY_ROW_GAP
@@ -6742,41 +6922,48 @@ do
 				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
 				Position = UDim2.fromOffset(0, y),
-				Size = UDim2.fromOffset(data.RowWidth, HOTKEY_ROW_HEIGHT),
+				Size = UDim2.fromOffset(panelWidth, HOTKEY_ROW_HEIGHT),
 				GroupTransparency = overlayShown and 0 or 1,
 				ZIndex = 1,
 			})
 			if not overlayShown then
-				row.Position = UDim2.fromOffset(-14, y)
+				local slide = overlayRightAligned and 14 or -14
+				row.Position = UDim2.fromOffset(slide, y)
 				U.tween(row, TWEEN.Popup, {
 					Position = UDim2.fromOffset(0, y),
 					GroupTransparency = 0,
 				})
 			end
 
-			local keyCard = hotkeyPill(row, data.KeyBoxWidth, HOTKEY_ROW_HEIGHT)
-			keyCard.Position = UDim2.fromOffset(0, 0)
-			if data.HasTumbler then
+			local keyX = overlayRightAligned and (panelWidth - keyBoxWidth) or 0
+			local nameX = overlayRightAligned
+				and (keyX - HOTKEY_ROW_GAP - nameBoxWidth)
+				or (keyBoxWidth + HOTKEY_ROW_GAP)
+
+			local keyCard = hotkeyPill(row, keyBoxWidth, HOTKEY_ROW_HEIGHT, HOTKEY_KEY_CARD, HOTKEY_KEY_TRANSPARENCY)
+			keyCard.Position = UDim2.fromOffset(keyX, 0)
+			if data.UseToggle then
 				local glyph = data.TumblerOn and "toggle-right" or "toggle-left"
-				U.icon(keyCard, glyph, 14, HOTKEY_TEXT, {
-					Position = UDim2.fromOffset((data.KeyBoxWidth - 14) * 0.5, 3),
-					Size = UDim2.fromOffset(14, 18),
-					TextTransparency = data.TumblerOn and 0.05 or 0.4,
+				U.icon(keyCard, glyph, 13, HOTKEY_TEXT, {
+					Position = UDim2.fromOffset(math.floor((keyBoxWidth - 13) * 0.5), math.floor((HOTKEY_ROW_HEIGHT - 13) * 0.5)),
+					Size = UDim2.fromOffset(13, 13),
+					TextTransparency = data.TumblerOn and 0.02 or 0.35,
 					TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
-					TextStrokeTransparency = 0.72,
+					TextStrokeTransparency = 0.78,
 					ZIndex = 4,
 				})
 			else
-				local keyLabel = hotkeyText(keyCard, data.Key, 10, data.KeyBoxWidth - 6, HOTKEY_ROW_HEIGHT, 0.16)
-				keyLabel.Position = UDim2.fromOffset(3, 0)
+				local keyLabel = hotkeyText(keyCard, data.Key, HOTKEY_KEY_TEXT_SIZE, keyBoxWidth - 4, HOTKEY_ROW_HEIGHT, 0.12)
+				keyLabel.Position = UDim2.fromOffset(2, 0)
 				keyLabel.TextXAlignment = Enum.TextXAlignment.Center
 				keyLabel.TextTruncate = Enum.TextTruncate.AtEnd
 			end
 
-			local nameCard = hotkeyPill(row, data.NameBoxWidth, HOTKEY_ROW_HEIGHT)
-			nameCard.Position = UDim2.fromOffset(data.KeyBoxWidth + HOTKEY_ROW_GAP, 0)
-			local nameLabel = hotkeyText(nameCard, data.Name, 11.5, data.NameBoxWidth - 10, HOTKEY_ROW_HEIGHT, 0.03)
-			nameLabel.Position = UDim2.fromOffset(5, 0)
+			local nameCard = hotkeyPill(row, nameBoxWidth, HOTKEY_ROW_HEIGHT, HOTKEY_NAME_CARD, HOTKEY_NAME_TRANSPARENCY)
+			nameCard.Position = UDim2.fromOffset(nameX, 0)
+			local nameLabel = hotkeyText(nameCard, data.Name, HOTKEY_NAME_TEXT_SIZE, nameBoxWidth - 12, HOTKEY_ROW_HEIGHT, 0.02)
+			nameLabel.Position = UDim2.fromOffset(6, 0)
+			nameLabel.TextXAlignment = overlayRightAligned and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left
 			nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
 
 			overlayRows[#overlayRows + 1] = row
@@ -6786,6 +6973,10 @@ do
 		overlayRoot.Size = UDim2.fromOffset(panelWidth, totalHeight)
 		headerCard.Size = UDim2.fromOffset(panelWidth, HOTKEY_HEADER_HEIGHT)
 		applyOverlayPosition()
+
+		if hotkeySettingsOpen and positionHotkeySettings then
+			task.defer(positionHotkeySettings)
+		end
 
 		if not overlayShown then
 			overlayShown = true
@@ -6798,6 +6989,377 @@ do
 			overlayRoot.Visible = true
 			U.setGroupTransparency(overlayRoot, 0)
 		end
+	end
+
+	local function setHotkeyStyle(value)
+		hotkeyStyle = value == "keys" and "keys" or "default"
+		saveOverlayPosition()
+		buildOverlay()
+		if hotkeySettingsStyleValue then
+			hotkeySettingsStyleValue.Text = hotkeyStyle == "keys" and "Keys" or "Default"
+		end
+		if hotkeySettingsOpen and positionHotkeySettings then
+			task.defer(positionHotkeySettings)
+		end
+	end
+
+	local function setHotkeyRightAligned(value)
+		overlayRightAligned = value == true
+		if overlayRoot then
+			local previous = overlayRoot.Position
+			if overlayRightAligned then
+				overlayRoot.AnchorPoint = Vector2.new(1, 0.5)
+				overlayRoot.Position = UDim2.new(1, -16, previous.Y.Scale, previous.Y.Offset)
+			else
+				overlayRoot.AnchorPoint = Vector2.new(0, 0.5)
+				overlayRoot.Position = UDim2.new(0, 16, previous.Y.Scale, previous.Y.Offset)
+			end
+		end
+		saveOverlayPosition()
+		buildOverlay()
+		if hotkeySettingsOpen and positionHotkeySettings then
+			task.defer(positionHotkeySettings)
+		end
+	end
+
+	local function setHotkeyDynamicTitle(value)
+		hotkeyDynamicTitle = value == true
+		saveOverlayPosition()
+		buildOverlay()
+		if hotkeySettingsOpen and positionHotkeySettings then
+			task.defer(positionHotkeySettings)
+		end
+	end
+
+	renderHotkeyScale = function()
+		if hotkeySettingsScaleValue then
+			hotkeySettingsScaleValue.Text = tostring(math.floor(overlayScale)) .. "%"
+		end
+		if hotkeySettingsScaleFill and hotkeySettingsScaleKnob then
+			local ratio = math.clamp((overlayScale - 75) / 75, 0, 1)
+			hotkeySettingsScaleFill.Size = UDim2.new(ratio, 0, 1, 0)
+			hotkeySettingsScaleKnob.Position = UDim2.new(ratio, 5 * (1 - 2 * ratio), 0.5, 0)
+		end
+	end
+
+	local function setHotkeyScale(value)
+		overlayScale = math.clamp(tonumber(value) or 100, 75, 150)
+		if overlayUIScale then
+			overlayUIScale.Scale = overlayScale / 100
+		end
+		saveOverlayPosition()
+		renderHotkeyScale()
+		if hotkeySettingsOpen and positionHotkeySettings then
+			task.defer(positionHotkeySettings)
+		end
+	end
+
+	local function ensureHotkeySettings()
+		if hotkeySettingsRoot and hotkeySettingsRoot.Parent then
+			return
+		end
+		hotkeySettingsRoot = U.canvas(screenGui, {
+			Name = "NerxHotkeySettings",
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.fromOffset(224, 188),
+			Visible = false,
+			ZIndex = 1000,
+			GroupTransparency = 0,
+		})
+		hotkeySettingsScale = U.new("UIScale", {
+			Scale = 1,
+		}, hotkeySettingsRoot)
+
+		local card = U.frame(hotkeySettingsRoot, {
+			BackgroundColor3 = HOTKEY_CARD,
+			BackgroundTransparency = 0.04,
+			BorderSizePixel = 0,
+			Size = UDim2.fromScale(1, 1),
+			ZIndex = 1001,
+		})
+		U.corner(card, 8)
+		U.stroke(card, Color3.fromRGB(45, 48, 58), 0.5, 1)
+		U.shadow(card, "soft")
+
+		hotkeyText(card, "Hotkeys", 12, 180, 20, 0.05).Position = UDim2.fromOffset(14, 10)
+
+		for _, dividerY in ipairs({ 31, 63, 112, 148 }) do
+			U.frame(card, {
+				BackgroundColor3 = Color3.fromRGB(47, 51, 67),
+				BackgroundTransparency = 0.55,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset(14, dividerY),
+				Size = UDim2.new(1, -28, 0, 1),
+				ZIndex = 1002,
+			})
+		end
+
+		local styleRow = U.frame(card, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(14, 34),
+			Size = UDim2.new(1, -28, 0, 28),
+			ZIndex = 1002,
+		})
+		hotkeyText(styleRow, "Style", 11, 100, 28, 0.15).Position = UDim2.fromOffset(0, 0)
+		hotkeySettingsStyleValue = hotkeyText(styleRow, "Default", 10.5, 90, 28, 0.2)
+		hotkeySettingsStyleValue.Position = UDim2.new(1, -24, 0, 0)
+		hotkeySettingsStyleValue.Size = UDim2.fromOffset(90, 28)
+		hotkeySettingsStyleValue.TextXAlignment = Enum.TextXAlignment.Right
+		U.icon(styleRow, "chevron-large-right", 9, HOTKEY_TEXT, {
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, -4, 0.5, 0),
+			Size = UDim2.fromOffset(10, 10),
+			TextTransparency = 0.45,
+			ZIndex = 1003,
+		})
+		U.inputButton(styleRow, function()
+			setHotkeyStyle(hotkeyStyle == "keys" and "default" or "keys")
+		end)
+
+		local sizeRow = U.frame(card, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(14, 66),
+			Size = UDim2.new(1, -28, 0, 44),
+			ZIndex = 1002,
+		})
+		hotkeyText(sizeRow, "Size", 11, 100, 20, 0.15).Position = UDim2.fromOffset(0, 0)
+		hotkeySettingsScaleValue = hotkeyText(sizeRow, "100%", 10, 80, 20, 0.25)
+		hotkeySettingsScaleValue.Position = UDim2.new(1, 0, 0, 0)
+		hotkeySettingsScaleValue.Size = UDim2.fromOffset(80, 20)
+		hotkeySettingsScaleValue.TextXAlignment = Enum.TextXAlignment.Right
+
+		local rail = U.frame(sizeRow, {
+			BackgroundColor3 = Color3.fromRGB(35, 37, 46),
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(0, 27),
+			Size = UDim2.new(1, 0, 0, 3),
+			ZIndex = 1003,
+		})
+		U.corner(rail, 2)
+		hotkeySettingsScaleFill = U.frame(rail, {
+			BackgroundColor3 = HOTKEY_ACCENT,
+			BorderSizePixel = 0,
+			Size = UDim2.new(0, 0, 1, 0),
+			ZIndex = 1004,
+		})
+		U.corner(hotkeySettingsScaleFill, 2)
+		hotkeySettingsScaleKnob = U.frame(rail, {
+			AnchorPoint = Vector2.new(0, 0.5),
+			BackgroundColor3 = HOTKEY_TEXT,
+			BorderSizePixel = 0,
+			Position = UDim2.new(0, 0, 0.5, 0),
+			Size = UDim2.fromOffset(10, 10),
+			ZIndex = 1005,
+		})
+		U.corner(hotkeySettingsScaleKnob, 5)
+		local scaleTrack = U.frame(sizeRow, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(0, 17),
+			Size = UDim2.new(1, 0, 0, 20),
+			ZIndex = 1006,
+		})
+		hotkeySettingsScaleTrack = scaleTrack
+		local scaleInput = U.inputButton(scaleTrack, nil)
+		local function updateScaleFromInput(input)
+			local position = scaleTrack.AbsolutePosition
+			local size = scaleTrack.AbsoluteSize
+			if size.X <= 0 then
+				return
+			end
+			local ratio = math.clamp((input.Position.X - position.X) / size.X, 0, 1)
+			setHotkeyScale(75 + ratio * 75)
+		end
+		U.connect(scaleInput.InputBegan, function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch then
+				hotkeySettingsScaleDragging = true
+				updateScaleFromInput(input)
+			end
+		end)
+		U.connect(UserInputService.InputChanged, function(input)
+			if not hotkeySettingsScaleDragging then
+				return
+			end
+			if input.UserInputType == Enum.UserInputType.MouseMovement
+				or input.UserInputType == Enum.UserInputType.Touch then
+				updateScaleFromInput(input)
+			end
+		end)
+		U.connect(UserInputService.InputEnded, function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch then
+				hotkeySettingsScaleDragging = false
+			end
+		end)
+
+		local function makeSwitchRow(y, key, labelText, getValue, setValue)
+			local row = U.frame(card, {
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset(14, y),
+				Size = UDim2.new(1, -28, 0, 28),
+				ZIndex = 1002,
+			})
+			hotkeyText(row, labelText, 11, 150, 28, 0.15).Position = UDim2.fromOffset(0, 0)
+			local track = U.frame(row, {
+				AnchorPoint = Vector2.new(1, 0.5),
+				BackgroundColor3 = Color3.fromRGB(45, 47, 58),
+				BorderSizePixel = 0,
+				Position = UDim2.new(1, 0, 0.5, 0),
+				Size = UDim2.fromOffset(30, 16),
+				ZIndex = 1003,
+			})
+			U.corner(track, 8)
+			local knob = U.frame(track, {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+				BorderSizePixel = 0,
+				Position = UDim2.new(0.28, 0, 0.5, 0),
+				Size = UDim2.fromOffset(12, 12),
+				ZIndex = 1004,
+			})
+			U.corner(knob, 6)
+			local current = getValue() == true
+			local function setVisual(value, animated)
+				current = value == true
+				if animated then
+					U.tween(track, TWEEN.Fast, {
+						BackgroundColor3 = current and Color3.fromRGB(205, 208, 218) or Color3.fromRGB(45, 47, 58),
+					})
+					U.tween(knob, TWEEN.Fast, {
+						Position = UDim2.new(current and 0.72 or 0.28, 0, 0.5, 0),
+						BackgroundTransparency = current and 0 or 0.25,
+					})
+				else
+					track.BackgroundColor3 = current and Color3.fromRGB(205, 208, 218) or Color3.fromRGB(45, 47, 58)
+					knob.Position = UDim2.new(current and 0.72 or 0.28, 0, 0.5, 0)
+					knob.BackgroundTransparency = current and 0 or 0.25
+				end
+			end
+			setVisual(current, false)
+			hotkeySettingsSwitches[key] = { Set = setVisual, Get = getValue }
+			U.inputButton(row, function()
+				setVisual(not current, true)
+				setValue(current)
+			end)
+		end
+
+		makeSwitchRow(118, "RightAligned", "Right Align", function()
+			return overlayRightAligned
+		end, function(value)
+			setHotkeyRightAligned(value)
+		end)
+		makeSwitchRow(150, "DynamicTitle", "Dynamic Title", function()
+			return hotkeyDynamicTitle
+		end, function(value)
+			setHotkeyDynamicTitle(value)
+		end)
+
+		U.connect(UserInputService.InputBegan, function(input)
+			if not hotkeySettingsOpen or hotkeySettingsIgnoreClick or not hotkeySettingsRoot then
+				return
+			end
+			if input.UserInputType ~= Enum.UserInputType.MouseButton1
+				and input.UserInputType ~= Enum.UserInputType.Touch then
+				return
+			end
+			local position = input.Position
+			local absolute = hotkeySettingsRoot.AbsolutePosition
+			local size = hotkeySettingsRoot.AbsoluteSize
+			if position.X >= absolute.X and position.X <= absolute.X + size.X
+				and position.Y >= absolute.Y and position.Y <= absolute.Y + size.Y then
+				return
+			end
+			if hotkeyDotsButton and hotkeyDotsButton.Parent then
+				local dotsAbsolute = hotkeyDotsButton.AbsolutePosition
+				local dotsSize = hotkeyDotsButton.AbsoluteSize
+				if position.X >= dotsAbsolute.X - 4 and position.X <= dotsAbsolute.X + dotsSize.X + 4
+					and position.Y >= dotsAbsolute.Y - 4 and position.Y <= dotsAbsolute.Y + dotsSize.Y + 4 then
+					return
+				end
+			end
+			closeHotkeySettings()
+		end)
+	end
+
+	positionHotkeySettings = function()
+		if not hotkeySettingsRoot or not hotkeySettingsOpen or not overlayRoot then
+			return
+		end
+		local viewport = U.viewport()
+		local absolute = overlayRoot.AbsolutePosition
+		local size = overlayRoot.AbsoluteSize
+		local cardWidth = hotkeySettingsRoot.Size.X.Offset
+		local cardHeight = hotkeySettingsRoot.Size.Y.Offset
+		local x = absolute.X + size.X + 8
+		if x + cardWidth > viewport.X - 8 then
+			x = absolute.X - cardWidth - 8
+		end
+		x = math.clamp(x, 8, math.max(8, viewport.X - cardWidth - 8))
+		local y = absolute.Y
+		if y + cardHeight > viewport.Y - 8 then
+			y = viewport.Y - cardHeight - 8
+		end
+		y = math.clamp(y, 8, math.max(8, viewport.Y - cardHeight - 8))
+		hotkeySettingsRoot.Position = UDim2.fromOffset(x, y)
+	end
+
+	closeHotkeySettings = function()
+		if not hotkeySettingsRoot or not hotkeySettingsOpen then
+			return
+		end
+		hotkeySettingsOpen = false
+		hotkeySettingsToken = hotkeySettingsToken + 1
+		local token = hotkeySettingsToken
+		U.tween(hotkeySettingsRoot, TWEEN.Fast, { GroupTransparency = 1 })
+		if hotkeySettingsScale then
+			U.tween(hotkeySettingsScale, TWEEN.Fast, { Scale = 0.96 })
+		end
+		task.delay(0.16, function()
+			if token == hotkeySettingsToken and not hotkeySettingsOpen and hotkeySettingsRoot then
+				hotkeySettingsRoot.Visible = false
+			end
+		end)
+	end
+
+	toggleHotkeySettings = function()
+		if hotkeySettingsOpen then
+			if closeHotkeySettings then
+				closeHotkeySettings()
+			end
+			return
+		end
+		ensureHotkeySettings()
+		if not hotkeySettingsRoot then
+			return
+		end
+		hotkeySettingsOpen = true
+		hotkeySettingsIgnoreClick = true
+		hotkeySettingsToken = hotkeySettingsToken + 1
+		if hotkeySettingsStyleValue then
+			hotkeySettingsStyleValue.Text = hotkeyStyle == "keys" and "Keys" or "Default"
+		end
+		renderHotkeyScale()
+		for _, entry in pairs(hotkeySettingsSwitches) do
+			if entry.Get and entry.Set then
+				entry.Set(entry.Get(), false)
+			end
+		end
+		positionHotkeySettings()
+		hotkeySettingsRoot.Visible = true
+		U.setGroupTransparency(hotkeySettingsRoot, 1)
+		if hotkeySettingsScale then
+			hotkeySettingsScale.Scale = 0.96
+			U.tween(hotkeySettingsScale, TWEEN.Popup, { Scale = 1 })
+		end
+		U.tween(hotkeySettingsRoot, TWEEN.Popup, { GroupTransparency = 0 })
+		task.delay(0.12, function()
+			hotkeySettingsIgnoreClick = false
+		end)
 	end
 
 	local function resolveTarget(target)
@@ -6892,6 +7454,7 @@ do
 		end
 		visited[bind.Id] = true
 		activeStates[bind.Id] = true
+		lastTriggeredName = tostring(bind.Name or "Bind")
 		applyBindActions(bind, true)
 		refreshChildren(bind, visited)
 		buildOverlay()
@@ -7269,6 +7832,31 @@ do
 
 	function BindManager:IsOverlayEnabled()
 		return overlayEnabled
+	end
+
+	function BindManager:SetHotkeyStyle(value)
+		setHotkeyStyle(value)
+	end
+
+	function BindManager:SetHotkeyRightAligned(value)
+		setHotkeyRightAligned(value == true)
+	end
+
+	function BindManager:SetHotkeyDynamicTitle(value)
+		setHotkeyDynamicTitle(value == true)
+	end
+
+	function BindManager:SetHotkeyScale(value)
+		setHotkeyScale(value)
+	end
+
+	function BindManager:GetHotkeySettings()
+		return {
+			Style = hotkeyStyle,
+			RightAligned = overlayRightAligned,
+			DynamicTitle = hotkeyDynamicTitle,
+			Scale = overlayScale,
+		}
 	end
 
 	function BindManager:Serialize()
