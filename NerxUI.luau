@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.0.9
+	Nerx UI Library · v1.1.0
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.0.9"
+Nerx.Version = "1.1.0"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -809,7 +809,7 @@ function Nerx:ClosePopup(instant)
 	end)
 end
 
-function U.popup(anchor, width, height, builder, alignRight)
+function U.popup(anchor, width, height, builder, alignRight, placement)
 	Nerx:ClosePopup(true)
 
 	-- Popups live inside the window's scaled layer. Parenting them to the raw
@@ -900,11 +900,25 @@ function U.popup(anchor, width, height, builder, alignRight)
 	local below = anchorY + anchorHeight + 6
 	local above = anchorY - height - 6
 	local y = below
-	if below + height > boundsY - 8 then
-		y = above
-	end
-	if y < 8 then
-		y = math.max(8, boundsY - height - 8)
+	if placement == "right" then
+		x = anchorX + anchorWidth + 6
+		if x + width > boundsX - 8 then
+			x = anchorX - width - 6
+		end
+		if x < 8 then
+			x = math.max(8, boundsX - width - 8)
+		end
+		y = anchorY + (anchorHeight - height) * 0.5
+		if y + height > boundsY - 8 then
+			y = math.max(8, boundsY - height - 8)
+		end
+	else
+		if below + height > boundsY - 8 then
+			y = above
+		end
+		if y < 8 then
+			y = math.max(8, boundsY - height - 8)
+		end
 	end
 
 	card.Position = UDim2.fromOffset(x, y - 4)
@@ -3783,6 +3797,9 @@ function Nerx:CreateWindow(config)
 		SearchQuery = "",
 		OnSave = config.OnSave,
 		OnModeChange = config.OnModeChange,
+		OnAccountClick = config.OnAccountClick,
+		OnRenew = config.OnRenew,
+		AccountExpiry = config.AccountExpiry or "Subscription active",
 	}
 	window.Signal = nil
 	local root = U.canvas(screenGui, {
@@ -3802,6 +3819,15 @@ function Nerx:CreateWindow(config)
 	window.Root = root
 	window.Content = root
 
+	window.BaseSize = size
+	window.MenuScale = 100
+	window.MenuScaleFactor = 1
+	window.WindowScale = 100
+	window.WindowScaleFactor = 1
+	window.ThreeDEnabled = false
+	window.ThreeD = nil
+	window.ThreeDDistance = 18
+
 	local uiScale = U.new("UIScale", {
 		Scale = 1,
 	}, root)
@@ -3809,10 +3835,189 @@ function Nerx:CreateWindow(config)
 
 	local function updateScale()
 		local viewport = U.viewport()
-		local raw = math.min(1, (viewport.X - 16) / size.X.Offset, (viewport.Y - 16) / size.Y.Offset)
-		uiScale.Scale = math.max(0.55, raw)
+		local windowScale = window.WindowScaleFactor or 1
+		local width = size.X.Offset * windowScale
+		local height = size.Y.Offset * windowScale
+		local raw = math.min(1, (viewport.X - 16) / width, (viewport.Y - 16) / height)
+		local fit = math.max(0.55, raw)
+		local menuScale = window.MenuScaleFactor or 1
+		uiScale.Scale = fit * menuScale
+		root.Size = UDim2.fromOffset(width, height)
 		Nerx.Scale = uiScale.Scale
 	end
+	window.UpdateScale = updateScale
+
+	function window:SetMenuScale(value)
+		local percent = 100
+		if type(value) == "number" then
+			percent = value
+		elseif type(value) == "string" and string.lower(value) ~= "auto" then
+			percent = tonumber(string.match(value, "%d+")) or 100
+		end
+		self.MenuScale = percent
+		self.MenuScaleFactor = math.clamp(percent / 100, 0.4, 3)
+		updateScale()
+	end
+
+	function window:SetWindowScale(value)
+		local percent = 100
+		if type(value) == "number" then
+			percent = value
+		elseif type(value) == "string" and string.lower(value) ~= "auto" then
+			percent = tonumber(string.match(value, "%d+")) or 100
+		end
+		self.WindowScale = percent
+		self.WindowScaleFactor = math.clamp(percent / 100, 0.4, 2.5)
+		updateScale()
+	end
+
+	-- The Roblox Neverlose library renders its window through a SurfaceGui part
+	-- in front of the camera (Window:Set3DRender). This is the same technique:
+	-- the part exactly fills the viewport, so layout pixels map 1:1 to the screen
+	-- while the menu lives inside the 3D scene.
+	function window:Set3DRender(enabled)
+		enabled = enabled == true
+		if enabled == (self.ThreeDEnabled == true) then
+			return true
+		end
+
+		if enabled then
+			local camera = workspace.CurrentCamera
+			if not camera then
+				return false
+			end
+
+			local created = nil
+			local ok = pcall(function()
+				local part = Instance.new("Part")
+				part.Name = "Nerx3DMenu"
+				part.Anchored = true
+				part.CanCollide = false
+				part.CanTouch = false
+				part.Transparency = 1
+				part.Size = Vector3.new(1, 1, 0.01)
+				part.Parent = workspace
+
+				local surface = Instance.new("SurfaceGui")
+				surface.Name = "Nerx3DSurface"
+				surface.Adornee = part
+				surface.Face = Enum.NormalId.Front
+				surface.AlwaysOnTop = true
+				surface.LightInfluence = 0
+				surface.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
+				surface.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+				surface.CanvasSize = Vector2.new(800, 600)
+				surface.PixelsPerStud = 40
+				surface.Parent = screenGui
+				protect(surface)
+
+				created = { Part = part, SurfaceGui = surface }
+			end)
+
+			if not ok or not created then
+				if created then
+					pcall(function()
+						created.SurfaceGui:Destroy()
+					end)
+					pcall(function()
+						created.Part:Destroy()
+					end)
+				end
+				return false
+			end
+
+			self.ThreeD = created
+			self.ThreeDEnabled = true
+			self.Root.Parent = created.SurfaceGui
+
+			local function refresh()
+				local state = self.ThreeD
+				local currentCamera = workspace.CurrentCamera
+				if not state or not currentCamera or not state.Part.Parent then
+					return
+				end
+				local viewport = currentCamera.ViewportSize
+				if viewport.X < 2 or viewport.Y < 2 then
+					return
+				end
+				local fov = math.clamp(tonumber(currentCamera.FieldOfView) or 70, 1, 120)
+				local distance = math.max(4, tonumber(self.ThreeDDistance) or 18)
+				local height = 2 * distance * math.tan(math.rad(fov * 0.5))
+				local width = height * (viewport.X / viewport.Y)
+				state.Part.Size = Vector3.new(width, height, 0.01)
+				-- FixedSize ignores PixelsPerStud, so the canvas must be set explicitly.
+				-- Matching the viewport keeps the GUI canvas 1:1 with screen pixels.
+				-- Only rewrite it when the viewport changes so UI layout is not
+				-- recalculated every frame.
+				local viewportKey = tostring(math.floor(viewport.X)) .. "x" .. tostring(math.floor(viewport.Y))
+				if self.ThreeDViewportKey ~= viewportKey then
+					self.ThreeDViewportKey = viewportKey
+					state.SurfaceGui.CanvasSize = Vector2.new(math.floor(viewport.X), math.floor(viewport.Y))
+				end
+				state.Part.CFrame = currentCamera.CFrame * CFrame.new(0, 0, -distance) * CFrame.Angles(0, math.pi, 0)
+			end
+
+			self.ThreeDRefresh = refresh
+			refresh()
+			if self.ThreeDConnection then
+				pcall(function()
+					self.ThreeDConnection:Disconnect()
+				end)
+			end
+			self.ThreeDConnection = RunService.RenderStepped:Connect(function()
+				if self.ThreeDEnabled then
+					refresh()
+				end
+			end)
+			self.UpdateScale()
+			return true
+		end
+
+		self.ThreeDEnabled = false
+		if self.ThreeDConnection then
+			pcall(function()
+				self.ThreeDConnection:Disconnect()
+			end)
+			self.ThreeDConnection = nil
+		end
+		self.ThreeDRefresh = nil
+
+		local state = self.ThreeD
+		self.ThreeD = nil
+		self.ThreeDViewportKey = nil
+		-- Reparent before destroying the SurfaceGui, otherwise the window dies with it.
+		self.Root.Parent = screenGui
+		if state then
+			pcall(function()
+				if state.SurfaceGui then
+					state.SurfaceGui:Destroy()
+				end
+			end)
+			pcall(function()
+				if state.Part then
+					state.Part:Destroy()
+				end
+			end)
+		end
+		self.UpdateScale()
+		return true
+	end
+
+	function window:Get3DRender()
+		return self.ThreeDEnabled == true
+	end
+
+	Nerx.Set3DRender = function(_, enabled)
+		if enabled == nil and type(_) == "boolean" then
+			enabled = _
+		end
+		return window:Set3DRender(enabled)
+	end
+
+	Nerx.Get3DRender = function()
+		return window:Get3DRender()
+	end
+
 	updateScale()
 	local camera = workspace.CurrentCamera
 	if camera then
@@ -3958,31 +4163,26 @@ function Nerx:CreateWindow(config)
 
 	local account = U.frame(sidebar, {
 		AnchorPoint = Vector2.new(0, 1),
-		BackgroundTransparency = 1,
+		BackgroundColor3 = Theme.Surface,
+		BackgroundTransparency = 0.08,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0, 0, 1, 0),
-		Size = UDim2.new(1, 0, 0, 66),
+		Position = UDim2.new(0, 8, 1, -8),
+		Size = UDim2.new(1, -16, 0, 46),
 		Active = true,
 	})
+	U.corner(account, 8)
+	U.stroke(account, Theme.Stroke, 0.65, 1)
 	window.Account = account
-
-	U.frame(account, {
-		BackgroundColor3 = Theme.Divider,
-		BackgroundTransparency = 0.35,
-		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(14, 0),
-		Size = UDim2.new(1, -28, 0, 1),
-	})
 
 	local avatar = U.frame(account, {
 		AnchorPoint = Vector2.new(0, 0.5),
 		BackgroundColor3 = Theme.Field,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0, 14, 0.5, 0),
-		Size = UDim2.fromOffset(32, 32),
+		Position = UDim2.new(0, 8, 0.5, 0),
+		Size = UDim2.fromOffset(30, 30),
 		ClipsDescendants = true,
 	})
-	U.corner(avatar, 16)
+	U.corner(avatar, 15)
 	local avatarIcon = U.icon(avatar, "person", 15, Theme.Muted, {
 		TextTransparency = 0.35,
 		Size = UDim2.fromScale(1, 1),
@@ -3998,24 +4198,27 @@ function Nerx:CreateWindow(config)
 
 	window.AccountName = U.label(account, {
 		Text = config.AccountName or LocalPlayer.DisplayName or LocalPlayer.Name,
-		TextSize = 11.5,
+		TextSize = 11,
 		TextColor3 = Theme.Text,
-		Position = UDim2.fromOffset(54, 14),
-		Size = UDim2.fromOffset(110, 18),
+		Position = UDim2.fromOffset(46, 8),
+		Size = UDim2.new(1, -76, 0, 16),
 		TextTruncate = Enum.TextTruncate.AtEnd,
 	})
 	window.AccountTag = U.label(account, {
 		Text = config.AccountTag or "Attached",
-		TextSize = 9.5,
+		TextSize = 8.5,
 		TextColor3 = Theme.Muted,
 		TextTransparency = 0.45,
-		Position = UDim2.fromOffset(54, 32),
-		Size = UDim2.fromOffset(110, 14),
+		Position = UDim2.fromOffset(46, 24),
+		Size = UDim2.new(1, -76, 0, 12),
+		TextTruncate = Enum.TextTruncate.AtEnd,
 	})
-	local accountChevron = U.icon(account, "chevron-large-up", 13, Theme.Muted, {
+	window.AccountAvatarImage = avatarImage
+	window.AccountAvatarIcon = avatarIcon
+	local accountChevron = U.icon(account, "chevron-large-right", 11, Theme.Muted, {
 		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -14, 0.5, 0),
-		Size = UDim2.fromOffset(12, 12),
+		Position = UDim2.new(1, -9, 0.5, 0),
+		Size = UDim2.fromOffset(10, 10),
 		TextTransparency = 0.45,
 	})
 	window.AccountChevron = accountChevron
@@ -4031,7 +4234,14 @@ function Nerx:CreateWindow(config)
 	end)
 
 	local accountInputMenu = U.inputButton(account, function()
-		window:OpenQuickMenu(account)
+		if window.OnAccountClick then
+			local ok, result = pcall(window.OnAccountClick, window, account)
+			if not ok then
+				warn("[NerxUI] OnAccountClick failed: " .. tostring(result))
+			end
+		else
+			window:OpenQuickMenu(account)
+		end
 	end)
 	local main = U.frame(root, {
 		BackgroundTransparency = 1,
@@ -4516,6 +4726,9 @@ function Nerx:CreateWindow(config)
 		end
 		if accountConfig.Tag then
 			window.AccountTag.Text = accountConfig.Tag
+		end
+		if accountConfig.Expiry then
+			window.AccountExpiry = accountConfig.Expiry
 		end
 	end
 
@@ -7851,6 +8064,29 @@ function Nerx:Unload()
 	end
 	self.Connections = {}
 	table.clear(self.Flags)
+
+	for _, currentWindow in ipairs(self.Windows) do
+		if currentWindow.ThreeDConnection then
+			pcall(function()
+				currentWindow.ThreeDConnection:Disconnect()
+			end)
+			currentWindow.ThreeDConnection = nil
+		end
+		local threeD = currentWindow.ThreeD
+		currentWindow.ThreeD = nil
+		if threeD then
+			pcall(function()
+				if threeD.SurfaceGui then
+					threeD.SurfaceGui:Destroy()
+				end
+			end)
+			pcall(function()
+				if threeD.Part then
+					threeD.Part:Destroy()
+				end
+			end)
+		end
+	end
 
 	pcall(function()
 		screenGui:Destroy()
