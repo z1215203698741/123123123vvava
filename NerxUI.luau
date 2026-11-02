@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.1.0
+	Nerx UI Library · v1.2.0
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.1.0"
+Nerx.Version = "1.2.0"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -227,6 +227,9 @@ U.Tween = TWEEN
 
 function U.new(class, props, parent)
 	local object = Instance.new(class)
+	if class == "ScrollingFrame" then
+		object.ClipsDescendants = true
+	end
 	if props then
 		for key, value in pairs(props) do
 			object[key] = value
@@ -266,6 +269,9 @@ function U.label(parent, props)
 			merged[key] = value
 		end
 	end
+	if merged.TextWrapped ~= true and merged.TextTruncate == nil then
+		merged.TextTruncate = Enum.TextTruncate.AtEnd
+	end
 	return U.new("TextLabel", merged, parent)
 end
 
@@ -303,6 +309,14 @@ function U.stroke(parent, color, transparency, thickness)
 	stroke.Color = color or Theme.Stroke
 	stroke.Transparency = transparency == nil and 0.4 or transparency
 	stroke.Thickness = thickness or 1
+	-- Miter joins produce spikes on small rounded controls at fractional UI
+	-- scales; rounded joins keep every pill/card edge smooth.
+	pcall(function()
+		stroke.LineJoinMode = Enum.LineJoinMode.Round
+	end)
+	pcall(function()
+		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	end)
 	stroke.Parent = parent
 	return stroke
 end
@@ -1630,12 +1644,14 @@ local function smallButton(parent, text, callback, disabled)
 		Size = UDim2.fromOffset(74, 24),
 	})
 	U.corner(root, 5)
+	U.padding(root, 0, 6, 0, 6)
 	local label = U.label(root, {
 		Text = text or "Button",
 		TextSize = 10.5,
 		TextColor3 = api.Disabled and Theme.Faint or Theme.Text,
 		TextTransparency = api.Disabled and 0.55 or 0.05,
 		TextXAlignment = Enum.TextXAlignment.Center,
+		TextTruncate = Enum.TextTruncate.AtEnd,
 		Size = UDim2.fromScale(1, 1),
 	})
 
@@ -1675,12 +1691,20 @@ local function primaryButton(parent, text, width, height, callback)
 	})
 	U.corner(root, 6)
 	U.stroke(root, Theme.Stroke, 0.45, 1)
+	U.padding(root, 0, 7, 0, 7)
+	local fitSize = 11
+	local innerWidth = math.max(1, (width or 84) - 14)
+	local measuredWidth = U.measure(text or "Button", fitSize, Fonts.Regular).X
+	if measuredWidth > innerWidth then
+		fitSize = math.max(7, fitSize * innerWidth / measuredWidth)
+	end
 	local label = U.label(root, {
 		Text = text or "Button",
-		TextSize = 11,
+		TextSize = fitSize,
 		TextColor3 = Theme.Text,
 		TextTransparency = 0.05,
 		TextXAlignment = Enum.TextXAlignment.Center,
+		TextTruncate = Enum.TextTruncate.AtEnd,
 		Size = UDim2.fromScale(1, 1),
 	})
 	local input = U.inputButton(root, callback or function() end)
@@ -1984,12 +2008,19 @@ local function segmentedWidget(parent, config)
 			Size = UDim2.fromOffset(segmentWidth, height),
 		})
 		U.corner(button, 5)
+		local labelSize = config.TextSize or 10
+		local labelSpace = math.max(1, segmentWidth - 6)
+		local measured = U.measure(name, labelSize, Fonts.Regular).X
+		if measured > labelSpace then
+			labelSize = math.max(7, labelSize * labelSpace / measured)
+		end
 		local label = U.label(button, {
 			Text = name,
-			TextSize = config.TextSize or 10,
+			TextSize = labelSize,
 			TextColor3 = Theme.Muted,
 			TextTransparency = 0.35,
 			TextXAlignment = Enum.TextXAlignment.Center,
+			TextTruncate = Enum.TextTruncate.AtEnd,
 			Size = UDim2.fromScale(1, 1),
 		})
 		buttons[index] = { Root = button, Label = label, Name = name }
@@ -3284,6 +3315,7 @@ local function createPage(window, host, tab, config)
 	local leftScroll = U.new("ScrollingFrame", {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
+		ClipsDescendants = true,
 		Position = UDim2.fromOffset(20, 56),
 		Size = UDim2.new(1, -40, 1, -74),
 		ScrollBarThickness = 2,
@@ -3309,6 +3341,7 @@ local function createPage(window, host, tab, config)
 	local rightScroll = U.new("ScrollingFrame", {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
+		ClipsDescendants = true,
 		Size = UDim2.fromScale(1, 1),
 		ScrollBarThickness = 2,
 		ScrollBarImageColor3 = Theme.Stroke,
@@ -3815,9 +3848,9 @@ function Nerx:CreateWindow(config)
 	})
 	U.corner(root, 12)
 	U.stroke(root, Theme.Stroke, 0.55, 1)
-	U.shadow(root)
 	window.Root = root
 	window.Content = root
+	window.Library = Nerx
 
 	window.BaseSize = size
 	window.MenuScale = 100
@@ -3827,6 +3860,9 @@ function Nerx:CreateWindow(config)
 	window.ThreeDEnabled = false
 	window.ThreeD = nil
 	window.ThreeDDistance = 18
+	window.ThreeDScale = 0.82
+	window.ThreeDTilt = 6
+	window.ThreeDStartedAt = 0
 
 	local uiScale = U.new("UIScale", {
 		Scale = 1,
@@ -3835,14 +3871,16 @@ function Nerx:CreateWindow(config)
 
 	local function updateScale()
 		local viewport = U.viewport()
-		local windowScale = window.WindowScaleFactor or 1
-		local width = size.X.Offset * windowScale
-		local height = size.Y.Offset * windowScale
-		local raw = math.min(1, (viewport.X - 16) / width, (viewport.Y - 16) / height)
+		local raw = math.min(1, (viewport.X - 16) / size.X.Offset, (viewport.Y - 16) / size.Y.Offset)
 		local fit = math.max(0.55, raw)
 		local menuScale = window.MenuScaleFactor or 1
-		uiScale.Scale = fit * menuScale
-		root.Size = UDim2.fromOffset(width, height)
+		local windowScale = window.WindowScaleFactor or 1
+		local threeDScale = window.ThreeDEnabled and (window.ThreeDScale or 0.82) or 1
+		-- Window and menu scale are visual multipliers. The logical root keeps its
+		-- designed size, which keeps fixed-offset cards from overlapping when the
+		-- user selects 75% or smaller.
+		uiScale.Scale = fit * menuScale * windowScale * threeDScale
+		root.Size = size
 		Nerx.Scale = uiScale.Scale
 	end
 	window.UpdateScale = updateScale
@@ -3888,7 +3926,7 @@ function Nerx:CreateWindow(config)
 			end
 
 			local created = nil
-			local ok = pcall(function()
+			local createOk, createErr = pcall(function()
 				local part = Instance.new("Part")
 				part.Name = "Nerx3DMenu"
 				part.Anchored = true
@@ -3908,13 +3946,15 @@ function Nerx:CreateWindow(config)
 				surface.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 				surface.CanvasSize = Vector2.new(800, 600)
 				surface.PixelsPerStud = 40
-				surface.Parent = screenGui
-				protect(surface)
+				-- A SurfaceGui parented to its adornee part is the canonical,
+				-- reliably-rendering form. Some executors skip SurfaceGuis nested
+				-- inside a protected ScreenGui/CoreGui container.
+				surface.Parent = part
 
 				created = { Part = part, SurfaceGui = surface }
 			end)
 
-			if not ok or not created then
+			if not createOk or not created then
 				if created then
 					pcall(function()
 						created.SurfaceGui:Destroy()
@@ -3923,12 +3963,12 @@ function Nerx:CreateWindow(config)
 						created.Part:Destroy()
 					end)
 				end
+				warn("[NerxUI] 3D create failed: " .. tostring(createErr))
 				return false
 			end
 
 			self.ThreeD = created
-			self.ThreeDEnabled = true
-			self.Root.Parent = created.SurfaceGui
+			self.ThreeDStartedAt = os.clock()
 
 			local function refresh()
 				local state = self.ThreeD
@@ -3945,35 +3985,72 @@ function Nerx:CreateWindow(config)
 				local height = 2 * distance * math.tan(math.rad(fov * 0.5))
 				local width = height * (viewport.X / viewport.Y)
 				state.Part.Size = Vector3.new(width, height, 0.01)
-				-- FixedSize ignores PixelsPerStud, so the canvas must be set explicitly.
-				-- Matching the viewport keeps the GUI canvas 1:1 with screen pixels.
-				-- Only rewrite it when the viewport changes so UI layout is not
-				-- recalculated every frame.
 				local viewportKey = tostring(math.floor(viewport.X)) .. "x" .. tostring(math.floor(viewport.Y))
 				if self.ThreeDViewportKey ~= viewportKey then
 					self.ThreeDViewportKey = viewportKey
 					state.SurfaceGui.CanvasSize = Vector2.new(math.floor(viewport.X), math.floor(viewport.Y))
 				end
-				state.Part.CFrame = currentCamera.CFrame * CFrame.new(0, 0, -distance) * CFrame.Angles(0, math.pi, 0)
+				local progress = math.clamp((os.clock() - (self.ThreeDStartedAt or 0)) / 0.28, 0, 1)
+				local tilt = math.rad((tonumber(self.ThreeDTilt) or 6) * progress)
+				local position = currentCamera.CFrame.Position + currentCamera.CFrame.LookVector * distance
+				local facing = CFrame.lookAt(position, currentCamera.CFrame.Position)
+				state.Part.CFrame = facing * CFrame.Angles(math.rad(-1.5) * progress, tilt, 0)
 			end
 
-			self.ThreeDRefresh = refresh
-			refresh()
-			if self.ThreeDConnection then
-				pcall(function()
-					self.ThreeDConnection:Disconnect()
-				end)
-			end
-			self.ThreeDConnection = RunService.RenderStepped:Connect(function()
-				if self.ThreeDEnabled then
-					refresh()
+			local ok, err = pcall(function()
+				self.Root.Parent = created.SurfaceGui
+				self.ThreeDRefresh = refresh
+				refresh()
+				if self.ThreeDConnection then
+					pcall(function()
+						self.ThreeDConnection:Disconnect()
+					end)
+					self.ThreeDConnection = nil
 				end
+				self.ThreeDConnection = RunService.RenderStepped:Connect(function()
+					if self.ThreeDEnabled then
+						refresh()
+					end
+				end)
+				self.ThreeDEnabled = true
+				Nerx.ThreeDEnabled = true
+				self.UpdateScale()
 			end)
-			self.UpdateScale()
+
+			if not ok then
+				self.ThreeDEnabled = false
+				Nerx.ThreeDEnabled = false
+				self.ThreeDRefresh = nil
+				self.ThreeDStartedAt = 0
+				self.ThreeDViewportKey = nil
+				if self.ThreeDConnection then
+					pcall(function()
+						self.ThreeDConnection:Disconnect()
+					end)
+					self.ThreeDConnection = nil
+				end
+				self.ThreeD = nil
+				pcall(function()
+					self.Root.Parent = screenGui
+				end)
+				pcall(function()
+					created.SurfaceGui:Destroy()
+				end)
+				pcall(function()
+					created.Part:Destroy()
+				end)
+				pcall(function()
+					self.UpdateScale()
+				end)
+				warn("[NerxUI] 3D setup failed: " .. tostring(err))
+				return false
+			end
+
 			return true
 		end
 
 		self.ThreeDEnabled = false
+		Nerx.ThreeDEnabled = false
 		if self.ThreeDConnection then
 			pcall(function()
 				self.ThreeDConnection:Disconnect()
@@ -3981,6 +4058,7 @@ function Nerx:CreateWindow(config)
 			self.ThreeDConnection = nil
 		end
 		self.ThreeDRefresh = nil
+		self.ThreeDStartedAt = 0
 
 		local state = self.ThreeD
 		self.ThreeD = nil
@@ -6011,7 +6089,7 @@ do
 			"BackgroundColor3", "TextColor3", "PlaceholderColor3", "ImageColor3",
 			"ScrollBarImageColor3",
 		}
-		for _, object in ipairs(screenGui:GetDescendants()) do
+		local function recolorObject(object)
 			if object:IsA("GuiObject") then
 				for _, property in ipairs(colorProperties) do
 					local ok, current = pcall(function()
@@ -6038,6 +6116,26 @@ do
 						end)
 					end
 				end
+			end
+		end
+
+		local roots = { screenGui }
+		for _, currentWindow in ipairs(Nerx.Windows) do
+			local windowRoot = currentWindow.Root
+			if windowRoot and windowRoot.Parent then
+				local underScreen = false
+				pcall(function()
+					underScreen = windowRoot:IsDescendantOf(screenGui)
+				end)
+				if not underScreen then
+					roots[#roots + 1] = windowRoot
+				end
+			end
+		end
+		for _, root in ipairs(roots) do
+			recolorObject(root)
+			for _, object in ipairs(root:GetDescendants()) do
+				recolorObject(object)
 			end
 		end
 	end
@@ -6342,9 +6440,6 @@ do
 	local HOTKEY_ICON = "rbxassetid://121978468376124"
 	local HOTKEY_ACCENT = Color3.fromRGB(78, 127, 252)
 	local HOTKEY_CARD = Color3.fromRGB(8, 8, 13)
-	local HOTKEY_TUMBLER_CARD = Color3.fromRGB(20, 22, 27)
-	local HOTKEY_TRACK = Color3.fromRGB(10, 13, 21)
-	local HOTKEY_STROKE = Color3.fromRGB(45, 48, 58)
 	local HOTKEY_TEXT = Color3.fromRGB(255, 255, 255)
 
 	local function notifyChanged()
@@ -6467,62 +6562,37 @@ do
 		end)
 	end
 
-	local function cardBackground(parent, width, height, color)
+	local HOTKEY_ROW_HEIGHT = 24
+	local HOTKEY_ROW_GAP = 3
+	local HOTKEY_HEADER_HEIGHT = 28
+	local HOTKEY_CARD_TRANSPARENCY = 0.28
+
+	local function hotkeyPill(parent, width, height)
 		local card = U.frame(parent, {
-			BackgroundColor3 = color or HOTKEY_CARD,
-			BackgroundTransparency = 0.2,
+			BackgroundColor3 = HOTKEY_CARD,
+			BackgroundTransparency = HOTKEY_CARD_TRANSPARENCY,
 			BorderSizePixel = 0,
 			Size = UDim2.fromOffset(width, height),
 			ZIndex = 2,
 		})
-		U.corner(card, 6)
-		U.stroke(card, HOTKEY_STROKE, 0.65, 1)
-		U.shadow(card, "soft")
+		U.corner(card, 5)
 		return card
 	end
 
-	local function setTumbler(track, knob, on)
-		if on then
-			U.tween(track, TWEEN.Fast, { BackgroundColor3 = HOTKEY_ACCENT })
-			U.tween(knob, TWEEN.Fast, {
-				Position = UDim2.new(0.7, 0, 0.5, 0),
-				BackgroundTransparency = 0,
-			})
-		else
-			U.tween(track, TWEEN.Fast, { BackgroundColor3 = HOTKEY_TRACK })
-			U.tween(knob, TWEEN.Fast, {
-				Position = UDim2.new(0.3, 0, 0.5, 0),
-				BackgroundTransparency = 0.5,
-			})
-		end
-	end
-
-	local function makeTumbler(parent)
-		local card = cardBackground(parent, 34, 28, HOTKEY_TUMBLER_CARD)
-		local track = U.frame(card, {
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			BackgroundColor3 = HOTKEY_TRACK,
-			BorderSizePixel = 0,
-			Position = UDim2.fromScale(0.5, 0.5),
-			Size = UDim2.fromOffset(26, 14),
-			ZIndex = 3,
-		})
-		U.corner(track, 7)
-		local knob = U.frame(track, {
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			BackgroundColor3 = HOTKEY_TEXT,
-			BackgroundTransparency = 0.5,
-			BorderSizePixel = 0,
-			Position = UDim2.new(0.3, 0, 0.5, 0),
-			Size = UDim2.fromOffset(10, 10),
+	local function hotkeyText(parent, text, size, width, height, transparency)
+		return U.label(parent, {
+			Text = text,
+			Font = Fonts.Bold,
+			TextSize = size,
+			TextColor3 = HOTKEY_TEXT,
+			TextTransparency = transparency or 0.05,
+			TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+			TextStrokeTransparency = 0.72,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Center,
+			Size = UDim2.fromOffset(width, height),
 			ZIndex = 4,
 		})
-		U.corner(knob, 5)
-		return card, track, knob
-	end
-
-	local function labelWidth(text, maxWidth)
-		return math.min(U.measure(tostring(text or ""), 12, Fonts.Bold).X, maxWidth or 200)
 	end
 
 	local function bindTumblerState(bind)
@@ -6546,6 +6616,8 @@ do
 		return hasComponent, on
 	end
 
+	-- Mirrors Margele/OpenZen KeyBindsHud: a compact black header, then one
+	-- rounded key/toggle pill followed by a separate name pill for every bind.
 	local function buildOverlay()
 		ensureOverlayRoot()
 
@@ -6590,23 +6662,47 @@ do
 		end
 
 		local headerText = "Hotkeys"
-		local headerTextWidth = U.measure(headerText, 13, Fonts.Bold).X
-		local maxWidth = 49 + headerTextWidth
+		local headerTextWidth = U.measure(headerText, 12.5, Fonts.Bold).X
+		local headerContentWidth = 10 + 15 + 8 + headerTextWidth + 10
 
-		local header = U.frame(overlayRoot, {
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(0, 0),
-			Size = UDim2.fromOffset(maxWidth, 30),
-			ZIndex = 2,
-		})
-		local headerCard = cardBackground(header, maxWidth, 30)
-		U.padding(headerCard, 0, 0, 0, 0)
+		local rowData = {}
+		local maxRowWidth = 0
+		for _, bind in ipairs(visibleBinds) do
+			local hasTumbler, tumblerOn = bindTumblerState(bind)
+			local nameText = tostring(bind.Name or "Bind")
+			local keyText = tostring(bind.Key or "")
+			local nameWidth = math.clamp(U.measure(nameText, 11.5, Fonts.Bold).X, 0, 200)
+			local nameBoxWidth = math.max(40, nameWidth + 12)
+			local keyBoxWidth
+			if hasTumbler then
+				keyBoxWidth = 26
+			else
+				local keyWidth = math.clamp(U.measure(keyText, 10, Fonts.Bold).X, 0, 100)
+				keyBoxWidth = math.max(26, keyWidth + 12)
+			end
+			local rowWidth = keyBoxWidth + HOTKEY_ROW_GAP + nameBoxWidth
+			maxRowWidth = math.max(maxRowWidth, rowWidth)
+			rowData[#rowData + 1] = {
+				Bind = bind,
+				Name = nameText,
+				Key = keyText,
+				HasTumbler = hasTumbler,
+				TumblerOn = tumblerOn,
+				NameBoxWidth = nameBoxWidth,
+				KeyBoxWidth = keyBoxWidth,
+				RowWidth = rowWidth,
+			}
+		end
 
+		local panelWidth = math.max(headerContentWidth, maxRowWidth)
+		local totalHeight = HOTKEY_HEADER_HEIGHT + #visibleBinds * (HOTKEY_ROW_HEIGHT + HOTKEY_ROW_GAP)
+
+		local headerCard = hotkeyPill(overlayRoot, panelWidth, HOTKEY_HEADER_HEIGHT)
+		headerCard.Position = UDim2.fromOffset(0, 0)
 		local iconHolder = U.frame(headerCard, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(12, 7),
+			Position = UDim2.fromOffset(10, 6),
 			Size = UDim2.fromOffset(15, 15),
 			ZIndex = 4,
 		})
@@ -6627,16 +6723,8 @@ do
 		if hotkeyAssetLoaded == nil then
 			probeHotkeyAsset()
 		end
-		U.label(headerCard, {
-			Text = headerText,
-			Font = Fonts.Bold,
-			TextSize = 13,
-			TextColor3 = HOTKEY_TEXT,
-			TextTransparency = 0,
-			Position = UDim2.fromOffset(35, 0),
-			Size = UDim2.new(1, -49, 1, 0),
-			ZIndex = 4,
-		})
+		hotkeyText(headerCard, headerText, 12.5, panelWidth - 43, HOTKEY_HEADER_HEIGHT, 0.02).Position =
+			UDim2.fromOffset(33, 0)
 		local dragInput = U.inputButton(headerCard)
 		U.connect(dragInput.InputBegan, function(input)
 			if input.UserInputType == Enum.UserInputType.MouseButton1
@@ -6646,100 +6734,57 @@ do
 				overlayStartPosition = overlayRoot.Position
 			end
 		end)
-		overlayRows[#overlayRows + 1] = header
+		overlayRows[#overlayRows + 1] = headerCard
 
-		local y = 30
-		for _, bind in ipairs(visibleBinds) do
-			local hasTumbler, tumblerOn = bindTumblerState(bind)
-			local nameText = tostring(bind.Name or "Bind")
-			local keyText = tostring(bind.Key or "")
-			local valueText
-			for _, target in ipairs(bind.Actions or {}) do
-				if target.Type == "Component" then
-					local component = Nerx.ComponentsById[target.Target]
-					if component and component.Kind == "slider" and component.GetValue then
-						local ok, value = pcall(component.GetValue, component)
-						if ok and value ~= nil then
-							valueText = tostring(value)
-						end
-						break
-					end
-				end
-			end
-
-			local nameWidth = labelWidth(nameText, 190)
-			local valueWidth = valueText and labelWidth(valueText, 70) or 0
-			local keyWidth = labelWidth(keyText, 90)
-			local labelCount = 2 + (valueText and 1 or 0)
-			local infoWidth = 20 + nameWidth + keyWidth + (valueText and valueWidth or 0)
-				+ (labelCount - 1) * 10
-
-			local row = U.frame(overlayRoot, {
+		local y = HOTKEY_HEADER_HEIGHT + HOTKEY_ROW_GAP
+		for index, data in ipairs(rowData) do
+			local row = U.canvas(overlayRoot, {
 				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
-				Position = UDim2.fromOffset(0, y + 10),
-				Size = UDim2.fromOffset((hasTumbler and 39 or 0) + infoWidth, 28),
+				Position = UDim2.fromOffset(0, y),
+				Size = UDim2.fromOffset(data.RowWidth, HOTKEY_ROW_HEIGHT),
+				GroupTransparency = overlayShown and 0 or 1,
 				ZIndex = 1,
 			})
-			local x = 0
-			if hasTumbler then
-				local tumblerCard, track, knob = makeTumbler(row)
-				tumblerCard.Position = UDim2.fromOffset(0, 0)
-				setTumbler(track, knob, tumblerOn)
-				x = 39
+			if not overlayShown then
+				row.Position = UDim2.fromOffset(-14, y)
+				U.tween(row, TWEEN.Popup, {
+					Position = UDim2.fromOffset(0, y),
+					GroupTransparency = 0,
+				})
 			end
 
-			local infoCard = cardBackground(row, infoWidth, 28)
-			infoCard.Position = UDim2.fromOffset(x, 0)
-			U.label(infoCard, {
-				Text = nameText,
-				Font = Fonts.Bold,
-				TextSize = 12,
-				TextColor3 = HOTKEY_TEXT,
-				TextTransparency = 0.1,
-				Position = UDim2.fromOffset(10, 0),
-				Size = UDim2.fromOffset(nameWidth, 28),
-				TextTruncate = Enum.TextTruncate.AtEnd,
-				ZIndex = 4,
-			})
-			local cursor = 10 + nameWidth + 10
-			if valueText then
-				U.label(infoCard, {
-					Text = valueText,
-					Font = Fonts.Bold,
-					TextSize = 12,
-					TextColor3 = Color3.fromRGB(235, 235, 235),
-					TextTransparency = 0.15,
-					Position = UDim2.fromOffset(cursor, 0),
-					Size = UDim2.fromOffset(valueWidth, 28),
-					TextTruncate = Enum.TextTruncate.AtEnd,
+			local keyCard = hotkeyPill(row, data.KeyBoxWidth, HOTKEY_ROW_HEIGHT)
+			keyCard.Position = UDim2.fromOffset(0, 0)
+			if data.HasTumbler then
+				local glyph = data.TumblerOn and "toggle-right" or "toggle-left"
+				U.icon(keyCard, glyph, 14, HOTKEY_TEXT, {
+					Position = UDim2.fromOffset((data.KeyBoxWidth - 14) * 0.5, 3),
+					Size = UDim2.fromOffset(14, 18),
+					TextTransparency = data.TumblerOn and 0.05 or 0.4,
+					TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+					TextStrokeTransparency = 0.72,
 					ZIndex = 4,
 				})
-				cursor = cursor + valueWidth + 10
+			else
+				local keyLabel = hotkeyText(keyCard, data.Key, 10, data.KeyBoxWidth - 6, HOTKEY_ROW_HEIGHT, 0.16)
+				keyLabel.Position = UDim2.fromOffset(3, 0)
+				keyLabel.TextXAlignment = Enum.TextXAlignment.Center
+				keyLabel.TextTruncate = Enum.TextTruncate.AtEnd
 			end
-			U.label(infoCard, {
-				Text = keyText,
-				Font = Fonts.Bold,
-				TextSize = 12,
-				TextColor3 = HOTKEY_ACCENT,
-				TextTransparency = 0.15,
-				Position = UDim2.fromOffset(cursor, 0),
-				Size = UDim2.fromOffset(keyWidth, 28),
-				TextTruncate = Enum.TextTruncate.AtEnd,
-				ZIndex = 4,
-			})
 
-			local rowWidth = (hasTumbler and 39 or 0) + infoWidth
-			if rowWidth > maxWidth then
-				maxWidth = rowWidth
-			end
+			local nameCard = hotkeyPill(row, data.NameBoxWidth, HOTKEY_ROW_HEIGHT)
+			nameCard.Position = UDim2.fromOffset(data.KeyBoxWidth + HOTKEY_ROW_GAP, 0)
+			local nameLabel = hotkeyText(nameCard, data.Name, 11.5, data.NameBoxWidth - 10, HOTKEY_ROW_HEIGHT, 0.03)
+			nameLabel.Position = UDim2.fromOffset(5, 0)
+			nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+
 			overlayRows[#overlayRows + 1] = row
-			y = y + 38
+			y = y + HOTKEY_ROW_HEIGHT + HOTKEY_ROW_GAP
 		end
 
-		overlayRoot.Size = UDim2.fromOffset(maxWidth, 30 + #visibleBinds * 38)
-		header.Size = UDim2.fromOffset(maxWidth, 30)
-		headerCard.Size = UDim2.fromOffset(maxWidth, 30)
+		overlayRoot.Size = UDim2.fromOffset(panelWidth, totalHeight)
+		headerCard.Size = UDim2.fromOffset(panelWidth, HOTKEY_HEADER_HEIGHT)
 		applyOverlayPosition()
 
 		if not overlayShown then
