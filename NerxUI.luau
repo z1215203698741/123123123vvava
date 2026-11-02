@@ -4449,7 +4449,7 @@ end
 		end)
 		-- If the Roblox image never loads on this client, keep a visible mark
 		-- instead of leaving the tile blank.
-		task.delay(1.5, function()
+		task.delay(3, function()
 			if not image.Parent then
 				return
 			end
