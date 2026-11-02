@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.2.8
+	Nerx UI Library · v1.2.9
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.2.8"
+Nerx.Version = "1.2.9"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -4290,16 +4290,7 @@ function Nerx:CreateWindow(config)
 	U.corner(logoBox, 8)
 	local logoStroke = U.stroke(logoBox, Theme.Stroke, 0.4, 1)
 
-	if config.Logo then
-		local image = U.new("ImageLabel", {
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			Image = config.Logo,
-			ScaleType = Enum.ScaleType.Fit,
-			Size = UDim2.fromScale(1, 1),
-		}, logoBox)
-		U.corner(image, 8)
-	else
+local function drawRibbonBrand()
 		-- Brand mark: the gradient N from the supplied identity tile. The
 		-- light plate keeps the slate-to-lime gradient readable in dark menus.
 		local BRAND_TILE = Color3.fromRGB(246, 248, 250)
@@ -4404,6 +4395,74 @@ function Nerx:CreateWindow(config)
 				entry.Gradient.Offset = Vector2.new(0, phase * 0.45)
 			end
 		end)
+end
+
+	if config.Logo then
+		local image = U.new("ImageLabel", {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Image = config.Logo,
+			ScaleType = Enum.ScaleType.Fit,
+			Size = UDim2.fromScale(1, 1),
+		}, logoBox)
+		U.corner(image, 8)
+	elseif config.BrandMask then
+		local BRAND_TILE = Color3.fromRGB(246, 248, 250)
+		logoBox.BackgroundColor3 = BRAND_TILE
+		logoBox.BackgroundTransparency = 0
+		logoStroke.Color = Color3.fromRGB(16, 20, 22)
+		logoStroke.Transparency = 0.82
+		local maskAsset = tostring(config.BrandMask)
+		if maskAsset ~= "" and not maskAsset:find("://") then
+			maskAsset = "rbxassetid://" .. maskAsset
+		end
+		-- Roblox-hosted white N mask. One diagonal UIGradient colours the
+		-- exact brand silhouette and sweeps back and forth.
+		local image = U.new("ImageLabel", {
+			Name = "NerxBrandMark",
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Image = maskAsset,
+			ImageColor3 = Color3.new(1, 1, 1),
+			Position = UDim2.fromOffset(4, 6),
+			Size = UDim2.fromOffset(26, 22),
+			ScaleType = Enum.ScaleType.Fit,
+		}, logoBox)
+		local maskSequence = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(43, 57, 62)),
+			ColorSequenceKeypoint.new(0.3, Color3.fromRGB(64, 93, 55)),
+			ColorSequenceKeypoint.new(0.64, Color3.fromRGB(105, 160, 54)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(158, 214, 52)),
+		})
+		local maskGradient = U.new("UIGradient", {
+			Color = maskSequence,
+			Rotation = 42,
+			Offset = Vector2.new(0, 0),
+		}, image)
+		local maskClock = 0
+		U.connect(RunService.Heartbeat, function(delta)
+			if not logoBox.Parent then
+				return
+			end
+			maskClock = maskClock + (tonumber(delta) or 0.016)
+			maskGradient.Offset = Vector2.new(math.sin(maskClock * 1.7) * 0.55, 0)
+		end)
+		-- If the Roblox image never loads on this client, keep a visible mark
+		-- instead of leaving the tile blank.
+		task.delay(1.5, function()
+			if not image.Parent then
+				return
+			end
+			if image.IsLoaded == false then
+				pcall(function()
+					maskGradient:Destroy()
+				end)
+				image:Destroy()
+				drawRibbonBrand()
+			end
+		end)
+	else
+		drawRibbonBrand()
 	end
 
 	local brandTitle = U.label(brand, {
