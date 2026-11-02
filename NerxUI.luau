@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.2.2
+	Nerx UI Library · v1.2.3
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.2.2"
+Nerx.Version = "1.2.3"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -6586,6 +6586,7 @@ do
 	local overlayHeaderLabel
 	local overlayHeaderIconHolder
 	local overlayHeaderDots
+	local overlayHeaderDotsIcon
 	local overlayPanelWidth = 0
 	local overlaySettingsAnchor
 	local overlayShown = false
@@ -6599,7 +6600,7 @@ do
 	local hotkeyAssetProbeStarted = false
 	local overlayUIScale
 	local overlayScale = 100
-	local hotkeyStyle = "default"
+	local hotkeyStyle = "values"
 	local overlayRightAligned = false
 	local hotkeyDynamicTitle = false
 	local lastTriggeredName = nil
@@ -6619,23 +6620,38 @@ do
 	local hotkeySettingsOutsideConnection
 	local hotkeySettingsDragChangedConnection
 	local hotkeySettingsDragEndedConnection
+	local hotkeyStyleMenuRoot
+	local hotkeyStyleMenuOpen = false
+	local hotkeyStyleMenuScale
+	local hotkeyStyleMenuToken = 0
+	local hotkeyStyleMenuOptions = {}
+	local toggleHotkeyStyleMenu
+	local positionHotkeyStyleMenu
+	local closeHotkeyStyleMenu
 	local positionHotkeySettings
 	local closeHotkeySettings
 	local toggleHotkeySettings
 
 	local HOTKEY_ICON = "rbxassetid://121978468376124"
 	local HOTKEY_ACCENT = Color3.fromRGB(96, 139, 255)
-	local HOTKEY_CARD = Color3.fromRGB(23, 27, 40)
-	local HOTKEY_KEY_CARD = Color3.fromRGB(43, 48, 64)
-	local HOTKEY_NAME_CARD = Color3.fromRGB(78, 92, 125)
-	local HOTKEY_TEXT = Color3.fromRGB(247, 248, 252)
-	local HOTKEY_MUTED = Color3.fromRGB(186, 191, 207)
+	-- OpenZen uses translucent black surfaces; over a blue scene they become
+	-- the slate-blue pills shown in the reference screenshots.
+	local HOTKEY_CARD = Color3.fromRGB(0, 0, 0)
+	local HOTKEY_KEY_CARD = Color3.fromRGB(0, 0, 0)
+	local HOTKEY_NAME_CARD = Color3.fromRGB(0, 0, 0)
+	local HOTKEY_TEXT = Color3.fromRGB(255, 255, 255)
+	local HOTKEY_MUTED = Color3.fromRGB(232, 235, 242)
 
 	do
 		local saved = Nerx.LayoutState and Nerx.LayoutState.hotkeysPanel
 		if type(saved) == "table" then
 			overlayScale = math.clamp(tonumber(saved.Scale) or 100, 75, 150)
-			hotkeyStyle = saved.Style == "keys" and "keys" or "default"
+			local savedStyle = saved.Style
+			if savedStyle == "keys" or savedStyle == "values" or savedStyle == "switches" then
+				hotkeyStyle = savedStyle
+			elseif savedStyle == "default" then
+				hotkeyStyle = "switches"
+			end
 			overlayRightAligned = saved.RightAligned == true
 			hotkeyDynamicTitle = saved.DynamicTitle == true
 		end
@@ -6780,16 +6796,20 @@ do
 	end
 
 	local HOTKEY_ROW_HEIGHT = 22
-	local HOTKEY_ROW_GAP = 4
-	local HOTKEY_HEADER_HEIGHT = 26
+	local HOTKEY_ROW_GAP = 3
+	local HOTKEY_HEADER_HEIGHT = 24
 	local HOTKEY_DOTS_SIZE = 16
-	local HOTKEY_HEADER_TEXT_SIZE = 12.5
-	local HOTKEY_NAME_TEXT_SIZE = 10.5
-	local HOTKEY_KEY_TEXT_SIZE = 9.5
-	local HOTKEY_CARD_TRANSPARENCY = 0.12
-	local HOTKEY_KEY_TRANSPARENCY = 0.18
-	local HOTKEY_NAME_TRANSPARENCY = 0.2
+	local HOTKEY_HEADER_TEXT_SIZE = 13
+	local HOTKEY_NAME_TEXT_SIZE = 11
+	local HOTKEY_KEY_TEXT_SIZE = 10
+	local HOTKEY_CARD_TRANSPARENCY = 0.25
+	local HOTKEY_KEY_TRANSPARENCY = 0.65
+	local HOTKEY_NAME_TRANSPARENCY = 0.65
 	local HOTKEY_ROW_STAGGER = 0.035
+	local HOTKEY_IN = TweenInfo.new(0.2, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out)
+	local HOTKEY_OUT = TweenInfo.new(0.2, Enum.EasingStyle.Cubic, Enum.EasingDirection.In)
+	local HOTKEY_SIZE = TweenInfo.new(0.2, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+	local HOTKEY_ROW_MOVE = TweenInfo.new(0.15, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
 
 	local renderHotkeyScale
 
@@ -6801,7 +6821,7 @@ do
 			Size = UDim2.fromOffset(width, height),
 			ZIndex = 2,
 		})
-		U.corner(card, 6)
+		U.corner(card, 5)
 		return card
 	end
 
@@ -6860,19 +6880,17 @@ do
 		local kind, on, value = bindVisualState(bind)
 		if style == "keys" then
 			return "text", tostring(bind.Key or ""), nil, false
+		elseif style == "switches" then
+			return "icon", nil, on and "toggle-right" or "toggle-left", on
 		end
 		if kind == "toggle" then
-			return "icon", nil, on and "toggle-right" or "toggle-left", on
+			return "text", on and "ON" or "OFF", nil, on
 		elseif kind == "slider" then
 			return "text", tostring(value == nil and "-" or value), nil, false
 		elseif kind == "dropdown" then
-			local text = tostring(value == nil and "" or value)
-			if text ~= "" and #text <= 12 then
-				return "text", text, nil, false
-			end
-			return "icon", nil, "chevron-large-down", false
+			return "text", tostring(value == nil and "-" or value), nil, false
 		end
-		return "icon", nil, "circle-play", false
+		return "text", tostring(bind.Key or ""), nil, false
 	end
 
 	local function syncHotkeySettings()
@@ -6881,7 +6899,12 @@ do
 			return
 		end
 		overlayScale = math.clamp(tonumber(saved.Scale) or 100, 75, 150)
-		hotkeyStyle = saved.Style == "keys" and "keys" or "default"
+		local savedStyle = saved.Style
+			if savedStyle == "keys" or savedStyle == "values" or savedStyle == "switches" then
+				hotkeyStyle = savedStyle
+			elseif savedStyle == "default" then
+				hotkeyStyle = "switches"
+			end
 		overlayRightAligned = saved.RightAligned == true
 		hotkeyDynamicTitle = saved.DynamicTitle == true
 		if overlayUIScale then
@@ -6890,20 +6913,21 @@ do
 	end
 
 	local function createOverlayEntry(data)
-		local startX = data.X + (overlayRightAligned and 14 or -14)
+		local startX = data.X + (overlayRightAligned and 20 or -20)
 		local row = U.canvas(overlayRoot, {
 			Name = "NerxHotkeyRow",
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			Position = UDim2.fromOffset(startX, data.Y),
-			Size = UDim2.fromOffset(data.RowWidth, HOTKEY_ROW_HEIGHT),
+			Size = UDim2.fromOffset(data.RowWidth, 0),
+			ClipsDescendants = true,
 			GroupTransparency = 1,
 			ZIndex = 1,
 		})
 		local keyCard = hotkeyPill(row, data.KeyBoxWidth, HOTKEY_ROW_HEIGHT, HOTKEY_KEY_CARD, HOTKEY_KEY_TRANSPARENCY)
 		keyCard.Position = UDim2.fromOffset(data.KeyX, 0)
-		local keyLabel = hotkeyText(keyCard, "", HOTKEY_KEY_TEXT_SIZE, data.KeyBoxWidth - 4, HOTKEY_ROW_HEIGHT, 0.12)
-		keyLabel.Position = UDim2.fromOffset(2, 0)
+		local keyLabel = hotkeyText(keyCard, "", HOTKEY_KEY_TEXT_SIZE, data.KeyBoxWidth - 6, HOTKEY_ROW_HEIGHT, 0.12)
+		keyLabel.Position = UDim2.fromOffset(3, 0)
 		keyLabel.TextXAlignment = Enum.TextXAlignment.Center
 		keyLabel.TextTruncate = Enum.TextTruncate.AtEnd
 		keyLabel.Visible = false
@@ -6918,8 +6942,8 @@ do
 		keyIcon.Visible = data.KeyKind == "icon"
 		local nameCard = hotkeyPill(row, data.NameBoxWidth, HOTKEY_ROW_HEIGHT, HOTKEY_NAME_CARD, HOTKEY_NAME_TRANSPARENCY)
 		nameCard.Position = UDim2.fromOffset(data.NameX, 0)
-		local nameLabel = hotkeyText(nameCard, data.NameText, HOTKEY_NAME_TEXT_SIZE, data.NameBoxWidth - 12, HOTKEY_ROW_HEIGHT, 0.02)
-		nameLabel.Position = UDim2.fromOffset(6, 0)
+		local nameLabel = hotkeyText(nameCard, data.NameText, HOTKEY_NAME_TEXT_SIZE, data.NameBoxWidth - 10, HOTKEY_ROW_HEIGHT, 0.02)
+		nameLabel.Position = UDim2.fromOffset(5, 0)
 		nameLabel.TextXAlignment = overlayRightAligned and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left
 		nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
 		return {
@@ -6939,7 +6963,7 @@ do
 		}
 	end
 
-	local function applyOverlayEntry(entry, data, animate, skipPosition)
+	local function applyOverlayEntry(entry, data, animate, skipPosition, skipSize)
 		local row = entry.Frame
 		local keyCard = entry.KeyCard
 		local keyLabel = entry.KeyLabel
@@ -6964,9 +6988,15 @@ do
 		else
 			keyIcon.Visible = false
 			keyLabel.Visible = true
-			keyLabel.Text = tostring(data.KeyText or "")
-			keyLabel.Position = UDim2.fromOffset(2, 0)
-			keyLabel.Size = UDim2.fromOffset(math.max(4, data.KeyBoxWidth - 4), HOTKEY_ROW_HEIGHT)
+			local keyText = tostring(data.KeyText or "")
+			keyLabel.Text = keyText
+			keyLabel.Position = UDim2.fromOffset(3, 0)
+			keyLabel.Size = UDim2.fromOffset(math.max(4, data.KeyBoxWidth - 6), HOTKEY_ROW_HEIGHT)
+			local maxKeyTextWidth = math.max(4, data.KeyBoxWidth - 6)
+			local measuredKey = U.measure(keyText, HOTKEY_KEY_TEXT_SIZE, Fonts.Bold).X
+			keyLabel.TextSize = measuredKey > maxKeyTextWidth
+				and math.max(7, HOTKEY_KEY_TEXT_SIZE * maxKeyTextWidth / measuredKey)
+				or HOTKEY_KEY_TEXT_SIZE
 			if entry.KeyKind ~= "text" then
 				keyLabel.TextTransparency = 1
 				U.tween(keyLabel, TWEEN.Popup, { TextTransparency = data.KeyTransparency or 0.12 })
@@ -6975,23 +7005,27 @@ do
 			end
 		end
 
-		local props = {
-			Size = UDim2.fromOffset(data.RowWidth, HOTKEY_ROW_HEIGHT),
-		}
+		local props = {}
+		if not skipSize then
+			props.Size = UDim2.fromOffset(data.RowWidth, HOTKEY_ROW_HEIGHT)
+		end
 		if not skipPosition then
 			props.Position = UDim2.fromOffset(data.X, data.Y)
 		end
-		U.tween(row, TWEEN.Fast, props)
-		U.tween(keyCard, TWEEN.Fast, {
+		if props.Size or props.Position then
+			U.tween(row, props.Position and HOTKEY_ROW_MOVE or HOTKEY_SIZE, props)
+		end
+		U.tween(keyCard, HOTKEY_SIZE, {
 			Size = UDim2.fromOffset(data.KeyBoxWidth, HOTKEY_ROW_HEIGHT),
 			Position = UDim2.fromOffset(data.KeyX, 0),
 		})
-		U.tween(nameCard, TWEEN.Fast, {
+		U.tween(nameCard, HOTKEY_SIZE, {
 			Size = UDim2.fromOffset(data.NameBoxWidth, HOTKEY_ROW_HEIGHT),
 			Position = UDim2.fromOffset(data.NameX, 0),
 		})
 		nameLabel.Text = data.NameText
-		nameLabel.Size = UDim2.fromOffset(math.max(8, data.NameBoxWidth - 12), HOTKEY_ROW_HEIGHT)
+		nameLabel.Position = UDim2.fromOffset(5, 0)
+		nameLabel.Size = UDim2.fromOffset(math.max(8, data.NameBoxWidth - 10), HOTKEY_ROW_HEIGHT)
 		nameLabel.TextXAlignment = overlayRightAligned and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left
 		entry.KeyKind = data.KeyKind
 		entry.KeyIconText = data.KeyIcon
@@ -7006,13 +7040,14 @@ do
 		entry.Removing = true
 		entry.Token = entry.Token + 1
 		local token = entry.Token
-		local slide = overlayRightAligned and 14 or -14
+		local slide = overlayRightAligned and 40 or -40
 		local position = entry.Frame.Position
-		U.tween(entry.Frame, TWEEN.Fast, {
+		U.tween(entry.Frame, HOTKEY_OUT, {
 			GroupTransparency = 1,
+			Size = UDim2.fromOffset(entry.Frame.Size.X.Offset, 0),
 			Position = UDim2.new(position.X.Scale, position.X.Offset + slide, position.Y.Scale, position.Y.Offset),
 		})
-		task.delay(0.18, function()
+		task.delay(0.22, function()
 			if entry.Frame and entry.Frame.Parent and entry.Token == token and entry.Removing then
 				entry.Frame:Destroy()
 				if overlayEntries[entry.Id] == entry then
@@ -7036,7 +7071,7 @@ do
 		else
 			U.tween(headerLabel, TWEEN.Fast, { TextTransparency = 0.02 })
 		end
-		local info = animate == false and TWEEN.Fast or TWEEN.Fast
+		local info = HOTKEY_SIZE
 		U.tween(overlayHeaderCard, info, { Size = UDim2.fromOffset(panelWidth, HOTKEY_HEADER_HEIGHT) })
 		U.tween(headerIcon, info, { Position = UDim2.fromOffset(iconX, math.floor((HOTKEY_HEADER_HEIGHT - 15) * 0.5)) })
 		U.tween(headerLabel, info, {
@@ -7067,7 +7102,7 @@ do
 			ZIndex = 4,
 		})
 		overlayHeaderIconHolder = iconHolder
-		overlayIconFallback = U.icon(iconHolder, "rectangle-list", 13, HOTKEY_ACCENT, {
+		overlayIconFallback = U.icon(iconHolder, "rectangle-list", 13, HOTKEY_TEXT, {
 			Size = UDim2.fromScale(1, 1),
 			TextTransparency = hotkeyAssetLoaded == true and 1 or 0,
 			ZIndex = 4,
@@ -7077,7 +7112,7 @@ do
 			BorderSizePixel = 0,
 			Size = UDim2.fromScale(1, 1),
 			Image = HOTKEY_ICON,
-			ImageColor3 = HOTKEY_ACCENT,
+			ImageColor3 = HOTKEY_TEXT,
 			Visible = hotkeyAssetLoaded == true,
 			ZIndex = 5,
 		}, iconHolder)
@@ -7115,9 +7150,10 @@ do
 		hotkeyDotsButton = dots
 		local dotsIcon = U.icon(dots, "three-dots-horizontal", 12, HOTKEY_MUTED, {
 			Size = UDim2.fromScale(1, 1),
-			TextTransparency = 0.25,
+			TextTransparency = hotkeySettingsOpen and 0.02 or 0.25,
 			ZIndex = 6,
 		})
+		overlayHeaderDotsIcon = dotsIcon
 		local dotsInput = U.inputButton(dots, function()
 			if toggleHotkeySettings then
 				toggleHotkeySettings(dots)
@@ -7129,7 +7165,7 @@ do
 			U.tween(dotsIcon, TWEEN.Fast, { TextTransparency = 0.02 })
 		end)
 		U.connect(dotsInput.MouseLeave, function()
-			U.tween(dotsIcon, TWEEN.Fast, { TextTransparency = 0.25 })
+			U.tween(dotsIcon, TWEEN.Fast, { TextTransparency = hotkeySettingsOpen and 0.02 or 0.25 })
 		end)
 	end
 
@@ -7164,7 +7200,7 @@ do
 				overlayShown = false
 				overlayToken = overlayToken + 1
 				local token = overlayToken
-				U.tween(overlayRoot, TWEEN.Popup, { GroupTransparency = 1 })
+				U.tween(overlayRoot, HOTKEY_OUT, { GroupTransparency = 1 })
 				task.delay(0.18, function()
 					if token == overlayToken and not overlayShown then
 						if overlayRoot and overlayRoot.Parent then
@@ -7183,6 +7219,7 @@ do
 							overlayHeaderLabel = nil
 							overlayHeaderIconHolder = nil
 							overlayHeaderDots = nil
+							overlayHeaderDotsIcon = nil
 							hotkeyDotsButton = nil
 							overlayIconImage = nil
 							overlayIconFallback = nil
@@ -7199,36 +7236,41 @@ do
 		end
 
 		local rowData = {}
-		local maxKeyWidth = 0
-		for _, bind in ipairs(visibleBinds) do
+		for order, bind in ipairs(visibleBinds) do
 			local keyKind, keyText, keyIcon, tumblerOn = keyDisplayFor(bind, hotkeyStyle)
 			local nameText = tostring(bind.Name or "Bind")
 			local nameWidth = U.measure(nameText, HOTKEY_NAME_TEXT_SIZE, Fonts.Bold).X
-			local keyWidth = keyKind == "icon" and 0 or U.measure(tostring(keyText or ""), HOTKEY_KEY_TEXT_SIZE, Fonts.Bold).X
-			maxKeyWidth = math.max(maxKeyWidth, keyWidth)
 			rowData[#rowData + 1] = {
 				Id = bind.Id,
+				Order = order,
 				NameText = nameText,
 				KeyKind = keyKind,
 				KeyText = keyText,
 				KeyIcon = keyIcon,
-				KeyTransparency = keyKind == "icon" and (tumblerOn and 0.02 or 0.35) or 0.12,
+				KeyTransparency = keyKind == "icon" and (tumblerOn and 0.02 or 0.4) or 0.12,
 				TumblerOn = tumblerOn,
 				NameWidth = math.clamp(nameWidth, 0, 220),
 			}
 		end
 
-		local keyBoxWidth = math.clamp(maxKeyWidth + 14, 30, 64)
+		table.sort(rowData, function(a, b)
+			if math.abs(a.NameWidth - b.NameWidth) > 0.01 then
+				return a.NameWidth > b.NameWidth
+			end
+			return a.Order < b.Order
+		end)
+
+		local keyBoxWidth = HOTKEY_ROW_HEIGHT
 		local maxRowWidth = 0
 		for _, data in ipairs(rowData) do
-			data.NameBoxWidth = math.max(44, data.NameWidth + 14)
+			data.NameBoxWidth = math.max(36, data.NameWidth + 10)
 			data.RowWidth = keyBoxWidth + HOTKEY_ROW_GAP + data.NameBoxWidth
 			maxRowWidth = math.max(maxRowWidth, data.RowWidth)
 		end
 
 		local measuredTitle = U.measure(headerText, HOTKEY_HEADER_TEXT_SIZE, Fonts.Bold).X
 		local titleTextWidth = math.clamp(measuredTitle, 24, 210)
-		local panelWidth = math.max(maxRowWidth + 8, 10 + 15 + 8 + titleTextWidth + 6 + HOTKEY_DOTS_SIZE + 10)
+		local panelWidth = math.max(maxRowWidth, 10 + 15 + 5 + titleTextWidth + 6 + HOTKEY_DOTS_SIZE + 10)
 		local totalHeight = HOTKEY_HEADER_HEIGHT + #visibleBinds * (HOTKEY_ROW_HEIGHT + HOTKEY_ROW_GAP)
 
 		local iconX
@@ -7236,11 +7278,11 @@ do
 		local dotsX
 		if overlayRightAligned then
 			iconX = panelWidth - 10 - 15
-			titleX = iconX - 8 - titleTextWidth
+			titleX = iconX - 5 - titleTextWidth
 			dotsX = titleX - 6 - HOTKEY_DOTS_SIZE
 		else
 			iconX = 10
-			titleX = 10 + 15 + 8
+			titleX = 10 + 15 + 5
 			dotsX = titleX + titleTextWidth + 6
 		end
 
@@ -7273,23 +7315,24 @@ do
 			local entry = overlayEntries[data.Id]
 			if entry and not entry.Removing then
 				entry.Token = entry.Token + 1
-				U.tween(entry.Frame, TWEEN.Fast, { GroupTransparency = 0 })
-				applyOverlayEntry(entry, data, true, false)
+				U.tween(entry.Frame, HOTKEY_IN, { GroupTransparency = 0 })
+				applyOverlayEntry(entry, data, true, false, false)
 			else
 				if entry and entry.Frame then
 					entry.Frame:Destroy()
 				end
 				entry = createOverlayEntry(data)
 				overlayEntries[data.Id] = entry
-				applyOverlayEntry(entry, data, false, true)
+				applyOverlayEntry(entry, data, false, true, true)
 				entry.Token = entry.Token + 1
 				local token = entry.Token
 				local delay = math.min(0.3, entering * HOTKEY_ROW_STAGGER)
 				entering = entering + 1
 				task.delay(delay, function()
 					if entry.Frame and entry.Frame.Parent and entry.Token == token and not entry.Removing then
-						U.tween(entry.Frame, TWEEN.Popup, {
+						U.tween(entry.Frame, HOTKEY_IN, {
 							GroupTransparency = 0,
+							Size = UDim2.fromOffset(data.RowWidth, HOTKEY_ROW_HEIGHT),
 							Position = UDim2.fromOffset(data.X, data.Y),
 						})
 					end
@@ -7298,7 +7341,7 @@ do
 		end
 
 		overlayPanelWidth = panelWidth
-		U.tween(overlayRoot, TWEEN.Fast, { Size = UDim2.fromOffset(panelWidth, totalHeight) })
+		U.tween(overlayRoot, HOTKEY_SIZE, { Size = UDim2.fromOffset(panelWidth, totalHeight) })
 		applyOverlayPosition()
 
 		if not overlayShown then
@@ -7306,12 +7349,12 @@ do
 			overlayToken = overlayToken + 1
 			overlayRoot.Visible = true
 			U.setGroupTransparency(overlayRoot, 1)
-			U.tween(overlayRoot, TWEEN.Popup, { GroupTransparency = 0 })
+			U.tween(overlayRoot, HOTKEY_IN, { GroupTransparency = 0 })
 		else
 			overlayToken = overlayToken + 1
 			overlayRoot.Visible = true
 			if (overlayRoot.GroupTransparency or 0) > 0 then
-				U.tween(overlayRoot, TWEEN.Fast, { GroupTransparency = 0 })
+				U.tween(overlayRoot, HOTKEY_IN, { GroupTransparency = 0 })
 			end
 		end
 
@@ -7320,12 +7363,30 @@ do
 		end
 	end
 
+	local function normalizeHotkeyStyle(value)
+		if value == "keys" or value == "values" or value == "switches" then
+			return value
+		elseif value == "default" then
+			return "switches"
+		end
+		return "values"
+	end
+
+	local function hotkeyStyleText(style)
+		if style == "keys" then
+			return "Keys"
+		elseif style == "switches" then
+			return "Switches"
+		end
+		return "Values"
+	end
+
 	local function setHotkeyStyle(value)
-		hotkeyStyle = value == "keys" and "keys" or "default"
+		hotkeyStyle = normalizeHotkeyStyle(value)
 		saveOverlayPosition()
 		buildOverlay()
 		if hotkeySettingsStyleValue then
-			hotkeySettingsStyleValue.Text = hotkeyStyle == "keys" and "Keys" or "Default"
+			hotkeySettingsStyleValue.Text = hotkeyStyleText(hotkeyStyle)
 		end
 		if hotkeySettingsOpen and positionHotkeySettings then
 			task.defer(positionHotkeySettings)
@@ -7392,31 +7453,25 @@ do
 		end
 		hotkeySettingsRoot = U.canvas(screenGui, {
 			Name = "NerxHotkeySettings",
-			BackgroundTransparency = 1,
+			BackgroundColor3 = Theme.SurfaceRaised,
+			BackgroundTransparency = 0.02,
 			BorderSizePixel = 0,
 			Size = UDim2.fromOffset(SETTINGS_WIDTH, SETTINGS_HEIGHT),
 			Visible = false,
 			ZIndex = 1000,
 			GroupTransparency = 0,
 		})
+		-- Corners, stroke and shadow belong to the popup CanvasGroup itself, the
+		-- same construction as U.popup / the built-in row three-dot menu.
+		U.corner(hotkeySettingsRoot, 8)
+		U.stroke(hotkeySettingsRoot, Theme.Stroke, 0.45, 1)
+		U.shadow(hotkeySettingsRoot, "soft")
 		hotkeySettingsScale = U.new("UIScale", {
 			Scale = 1,
 		}, hotkeySettingsRoot)
 
-		-- Same surface, radius, stroke and shadow as the row three-dot menu.
-		local card = U.frame(hotkeySettingsRoot, {
-			BackgroundColor3 = Theme.SurfaceRaised,
-			BackgroundTransparency = 0.02,
-			BorderSizePixel = 0,
-			Size = UDim2.fromScale(1, 1),
-			ZIndex = 1001,
-		})
-		U.corner(card, 8)
-		U.stroke(card, Theme.Stroke, 0.45, 1)
-		U.shadow(card, "soft")
-
 		local function menuRow(y, height)
-			local row = U.frame(card, {
+			local row = U.frame(hotkeySettingsRoot, {
 				BackgroundColor3 = Theme.White,
 				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
@@ -7450,10 +7505,10 @@ do
 		end
 
 		local styleRow = menuRow(5, 28)
-		local styleLabel = hotkeyText(styleRow, "Style", 11, 90, 28, 0.2)
+		local styleLabel = hotkeyText(styleRow, "Display Style", 11, 90, 28, 0.2)
 		styleLabel.Position = UDim2.fromOffset(9, 0)
 		styleLabel.TextColor3 = Theme.Muted
-		hotkeySettingsStyleValue = hotkeyText(styleRow, "Default", 10.5, 72, 28, 0.2)
+		hotkeySettingsStyleValue = hotkeyText(styleRow, hotkeyStyleText(hotkeyStyle), 10.5, 72, 28, 0.2)
 		hotkeySettingsStyleValue.Position = UDim2.new(1, -20, 0, 0)
 		hotkeySettingsStyleValue.Size = UDim2.fromOffset(72, 28)
 		hotkeySettingsStyleValue.TextColor3 = Theme.Muted
@@ -7466,7 +7521,9 @@ do
 			ZIndex = 1004,
 		})
 		local styleInput = U.inputButton(styleRow, function()
-			setHotkeyStyle(hotkeyStyle == "keys" and "default" or "keys")
+			if toggleHotkeyStyleMenu then
+				toggleHotkeyStyleMenu()
+			end
 		end)
 		styleInput.ZIndex = 1005
 		rowHover(styleInput, styleRow, { styleLabel, hotkeySettingsStyleValue }, styleChevron)
@@ -7574,9 +7631,7 @@ do
 			local function setVisual(value, animated)
 				current = value == true
 				local info = animated and TWEEN.Default or TWEEN.Fast
-				U.tween(track, info, {
-					BackgroundColor3 = current and Theme.Accent or Theme.ToggleOff,
-				})
+				U.tween(track, info, { BackgroundColor3 = current and Theme.Accent or Theme.ToggleOff })
 				U.tween(knob, info, {
 					Position = UDim2.new(current and 0.72 or 0.28, 0, 0.5, 0),
 					BackgroundColor3 = current and Theme.Window or Theme.ToggleOffKnob,
@@ -7621,6 +7676,14 @@ do
 				and position.Y >= absolute.Y and position.Y <= absolute.Y + size.Y then
 				return
 			end
+			if hotkeyStyleMenuOpen and hotkeyStyleMenuRoot and hotkeyStyleMenuRoot.Parent then
+				local menuAbsolute = hotkeyStyleMenuRoot.AbsolutePosition
+				local menuSize = hotkeyStyleMenuRoot.AbsoluteSize
+				if position.X >= menuAbsolute.X and position.X <= menuAbsolute.X + menuSize.X
+					and position.Y >= menuAbsolute.Y and position.Y <= menuAbsolute.Y + menuSize.Y then
+					return
+				end
+			end
 			if overlaySettingsAnchor and overlaySettingsAnchor.Parent then
 				local anchorAbsolute = overlaySettingsAnchor.AbsolutePosition
 				local anchorSize = overlaySettingsAnchor.AbsoluteSize
@@ -7654,8 +7717,6 @@ do
 		local size = anchor.AbsoluteSize
 		local x = absolute.X + size.X + 8
 		if x + cardWidth > viewport.X - 8 then
-			-- For the HUD dots, prefer the outer side of the whole panel so the
-			-- popover never covers the row stack (important with Right Align).
 			if anchor == hotkeyDotsButton and overlayRoot then
 				x = overlayRoot.AbsolutePosition.X - cardWidth - 8
 			else
@@ -7669,6 +7730,9 @@ do
 		end
 		y = math.clamp(y, 8, math.max(8, viewport.Y - cardHeight - 8))
 		hotkeySettingsRoot.Position = UDim2.fromOffset(x, y)
+		if hotkeyStyleMenuOpen and positionHotkeyStyleMenu then
+			positionHotkeyStyleMenu()
+		end
 	end
 
 	closeHotkeySettings = function()
@@ -7676,6 +7740,12 @@ do
 			return
 		end
 		hotkeySettingsOpen = false
+		if closeHotkeyStyleMenu then
+			closeHotkeyStyleMenu(true)
+		end
+		if overlayHeaderDotsIcon and overlayHeaderDotsIcon.Parent then
+			U.tween(overlayHeaderDotsIcon, TWEEN.Fast, { TextTransparency = 0.25 })
+		end
 		hotkeySettingsToken = hotkeySettingsToken + 1
 		local token = hotkeySettingsToken
 		local position = hotkeySettingsRoot.Position
@@ -7720,10 +7790,11 @@ do
 	toggleHotkeySettings = function(anchor)
 		anchor = anchor or hotkeyDotsButton or overlayRoot
 		if hotkeySettingsOpen then
-			-- Both three-dot buttons control the same popover. Clicking the other
-			-- button moves it there instead of closing it.
 			if anchor and anchor ~= overlaySettingsAnchor then
 				overlaySettingsAnchor = anchor
+				if closeHotkeyStyleMenu then
+					closeHotkeyStyleMenu(true)
+				end
 				positionHotkeySettings()
 				return
 			end
@@ -7733,6 +7804,9 @@ do
 			return
 		end
 		overlaySettingsAnchor = anchor
+		if closeHotkeyStyleMenu then
+			closeHotkeyStyleMenu(true)
+		end
 		ensureHotkeySettings()
 		if not hotkeySettingsRoot then
 			return
@@ -7740,8 +7814,11 @@ do
 		hotkeySettingsOpen = true
 		hotkeySettingsIgnoreClick = true
 		hotkeySettingsToken = hotkeySettingsToken + 1
+		if overlayHeaderDotsIcon and overlayHeaderDotsIcon.Parent then
+			U.tween(overlayHeaderDotsIcon, TWEEN.Fast, { TextTransparency = 0.02 })
+		end
 		if hotkeySettingsStyleValue then
-			hotkeySettingsStyleValue.Text = hotkeyStyle == "keys" and "Keys" or "Default"
+			hotkeySettingsStyleValue.Text = hotkeyStyleText(hotkeyStyle)
 		end
 		renderHotkeyScale()
 		for _, entry in pairs(hotkeySettingsSwitches) do
@@ -7765,6 +7842,171 @@ do
 		task.delay(0.12, function()
 			hotkeySettingsIgnoreClick = false
 		end)
+	end
+
+	local function ensureHotkeyStyleMenu()
+		if hotkeyStyleMenuRoot and hotkeyStyleMenuRoot.Parent then
+			return
+		end
+		hotkeyStyleMenuRoot = U.canvas(screenGui, {
+			Name = "NerxHotkeyStyleMenu",
+			BackgroundColor3 = Theme.SurfaceRaised,
+			BackgroundTransparency = 0.02,
+			BorderSizePixel = 0,
+			Size = UDim2.fromOffset(96, 94),
+			Visible = false,
+			ZIndex = 1110,
+			GroupTransparency = 0,
+		})
+		U.corner(hotkeyStyleMenuRoot, 8)
+		U.stroke(hotkeyStyleMenuRoot, Theme.Stroke, 0.45, 1)
+		U.shadow(hotkeyStyleMenuRoot, "soft")
+		hotkeyStyleMenuScale = U.new("UIScale", { Scale = 1 }, hotkeyStyleMenuRoot)
+		hotkeyStyleMenuOptions = {}
+		local options = {
+			{ Id = "values", Text = "Values" },
+			{ Id = "keys", Text = "Keys" },
+			{ Id = "switches", Text = "Switches" },
+		}
+		for index, option in ipairs(options) do
+			local row = U.frame(hotkeyStyleMenuRoot, {
+				BackgroundColor3 = Theme.White,
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset(5, 5 + (index - 1) * 28),
+				Size = UDim2.new(1, -10, 0, 28),
+				ZIndex = 1112,
+			})
+			U.corner(row, 5)
+			local label = U.label(row, {
+				Text = option.Text,
+				TextSize = 10.5,
+				TextColor3 = Theme.Muted,
+				TextTransparency = 0.2,
+				Position = UDim2.fromOffset(9, 0),
+				Size = UDim2.new(1, -34, 1, 0),
+				TextTruncate = Enum.TextTruncate.AtEnd,
+				ZIndex = 1113,
+			})
+			local check = U.icon(row, "circle-check", 11, Theme.Accent, {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -8, 0.5, 0),
+				Size = UDim2.fromOffset(12, 12),
+				TextTransparency = 0.05,
+				ZIndex = 1114,
+			})
+			local input = U.inputButton(row, function()
+				setHotkeyStyle(option.Id)
+				if closeHotkeyStyleMenu then
+					closeHotkeyStyleMenu()
+				end
+			end)
+			input.ZIndex = 1115
+			U.connect(input.MouseEnter, function()
+				U.tween(row, TWEEN.Fast, { BackgroundTransparency = 0.94 })
+				U.tween(label, TWEEN.Fast, { TextTransparency = 0 })
+			end)
+			U.connect(input.MouseLeave, function()
+				U.tween(row, TWEEN.Fast, { BackgroundTransparency = 1 })
+				U.tween(label, TWEEN.Fast, { TextTransparency = 0.2 })
+			end)
+			hotkeyStyleMenuOptions[#hotkeyStyleMenuOptions + 1] = {
+				Id = option.Id,
+				Row = row,
+				Label = label,
+				Check = check,
+			}
+		end
+	end
+
+	local function updateHotkeyStyleMenuSelection()
+		for _, option in ipairs(hotkeyStyleMenuOptions) do
+			if option.Check then
+				option.Check.Visible = option.Id == hotkeyStyle
+			end
+		end
+	end
+
+	positionHotkeyStyleMenu = function()
+		if not hotkeyStyleMenuRoot or not hotkeySettingsRoot or not hotkeyStyleMenuOpen then
+			return
+		end
+		local viewport = U.viewport()
+		local mainAbsolute = hotkeySettingsRoot.AbsolutePosition
+		local mainSize = hotkeySettingsRoot.AbsoluteSize
+		local menuWidth = hotkeyStyleMenuRoot.Size.X.Offset
+		local menuHeight = hotkeyStyleMenuRoot.Size.Y.Offset
+		local x = mainAbsolute.X + mainSize.X + 6
+		if x + menuWidth > viewport.X - 8 then
+			x = mainAbsolute.X - menuWidth - 6
+		end
+		x = math.clamp(x, 8, math.max(8, viewport.X - menuWidth - 8))
+		local y = mainAbsolute.Y + 5
+		if y + menuHeight > viewport.Y - 8 then
+			y = viewport.Y - menuHeight - 8
+		end
+		y = math.clamp(y, 8, math.max(8, viewport.Y - menuHeight - 8))
+		hotkeyStyleMenuRoot.Position = UDim2.fromOffset(x, y)
+	end
+
+	closeHotkeyStyleMenu = function(instant)
+		if not hotkeyStyleMenuRoot or not hotkeyStyleMenuOpen then
+			return
+		end
+		hotkeyStyleMenuOpen = false
+		hotkeyStyleMenuToken = hotkeyStyleMenuToken + 1
+		local token = hotkeyStyleMenuToken
+		if instant then
+			hotkeyStyleMenuRoot:Destroy()
+			hotkeyStyleMenuRoot = nil
+			hotkeyStyleMenuScale = nil
+			hotkeyStyleMenuOptions = {}
+			return
+		end
+		local position = hotkeyStyleMenuRoot.Position
+		U.tween(hotkeyStyleMenuRoot, TWEEN.Fast, {
+			GroupTransparency = 1,
+			Position = UDim2.new(position.X.Scale, position.X.Offset + 6, position.Y.Scale, position.Y.Offset),
+		})
+		if hotkeyStyleMenuScale then
+			U.tween(hotkeyStyleMenuScale, TWEEN.Fast, { Scale = 0.94 })
+		end
+		task.delay(0.16, function()
+			if token == hotkeyStyleMenuToken and not hotkeyStyleMenuOpen and hotkeyStyleMenuRoot then
+				hotkeyStyleMenuRoot:Destroy()
+				hotkeyStyleMenuRoot = nil
+				hotkeyStyleMenuScale = nil
+				hotkeyStyleMenuOptions = {}
+			end
+		end)
+	end
+
+	toggleHotkeyStyleMenu = function()
+		if hotkeyStyleMenuOpen then
+			if closeHotkeyStyleMenu then
+				closeHotkeyStyleMenu()
+			end
+			return
+		end
+		ensureHotkeyStyleMenu()
+		if not hotkeyStyleMenuRoot or not hotkeySettingsRoot then
+			return
+		end
+		hotkeyStyleMenuOpen = true
+		updateHotkeyStyleMenuSelection()
+		positionHotkeyStyleMenu()
+		hotkeyStyleMenuRoot.Visible = true
+		local target = hotkeyStyleMenuRoot.Position
+		hotkeyStyleMenuRoot.Position = UDim2.new(target.X.Scale, target.X.Offset + 6, target.Y.Scale, target.Y.Offset)
+		U.setGroupTransparency(hotkeyStyleMenuRoot, 1)
+		if hotkeyStyleMenuScale then
+			hotkeyStyleMenuScale.Scale = 0.94
+			U.tween(hotkeyStyleMenuScale, TWEEN.Popup, { Scale = 1 })
+		end
+		U.tween(hotkeyStyleMenuRoot, TWEEN.Popup, {
+			GroupTransparency = 0,
+			Position = target,
+		})
 	end
 
 	local function resolveTarget(target)
