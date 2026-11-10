@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.2.9
+	Nerx UI Library · v1.3.0
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.2.9"
+Nerx.Version = "1.3.0"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -375,6 +375,46 @@ function U.inputButton(parent, callback)
 	return button
 end
 
+-- Press feedback runs on a damped spring instead of a fixed tween, so buttons
+-- keep their velocity when re-pressed mid-return (same model as the web jelly).
+local pressSprings = {}
+local pressLoop
+
+local function stepPressSprings()
+	if pressLoop then
+		return
+	end
+	pressLoop = RunService.Heartbeat:Connect(function(dt)
+		local active = false
+		for scaleObject, body in pairs(pressSprings) do
+			if not scaleObject.Parent then
+				pressSprings[scaleObject] = nil
+			else
+				local remaining = math.min(dt, 0.05)
+				local steps = math.max(1, math.ceil(remaining / (1 / 180)))
+				local h = remaining / steps
+				for _ = 1, steps do
+					body.velocity += ((body.target - body.value) * body.stiffness - body.velocity * body.damping) * h
+					body.value += body.velocity * h
+				end
+				scaleObject.Scale = body.value
+				if math.abs(body.velocity) < 0.0015 and math.abs(body.target - body.value) < 0.0004 then
+					body.value = body.target
+					body.velocity = 0
+					scaleObject.Scale = body.value
+					pressSprings[scaleObject] = nil
+				else
+					active = true
+				end
+			end
+		end
+		if not active and next(pressSprings) == nil then
+			pressLoop:Disconnect()
+			pressLoop = nil
+		end
+	end)
+end
+
 function U.pressFx(input, target, pressScale)
 	if not input or not target or target.ClassName == "ScreenGui" then
 		return
@@ -386,21 +426,41 @@ function U.pressFx(input, target, pressScale)
 		press.Scale = 1
 		press.Parent = target
 	end
-	local scale = pressScale or 0.975
-	local function setScale(value)
-		U.tween(press, TWEEN.Fast, { Scale = value })
+	local defaultDepth = pressScale or 0.975
+	local function pressDepth()
+		local frosted = rawget(Nerx, "Frosted")
+		if not pressScale and frosted and frosted.Enabled then
+			return frosted.Params.Press
+		end
+		return defaultDepth
+	end
+	local function pressTo(depth)
+		local frosted = rawget(Nerx, "Frosted")
+		local damping = 24
+		if frosted and frosted.Enabled then
+			damping = frosted.Params.Spring
+		end
+		local body = pressSprings[press]
+		if not body then
+			body = { value = press.Scale, velocity = 0, target = press.Scale, stiffness = 520, damping = damping }
+			pressSprings[press] = body
+		end
+		body.stiffness = 520
+		body.damping = damping
+		body.target = depth
+		stepPressSprings()
 	end
 	U.connect(input.InputBegan, function(inputObject)
 		if inputObject.UserInputType == Enum.UserInputType.MouseButton1
 			or inputObject.UserInputType == Enum.UserInputType.Touch then
-			setScale(scale)
+			pressTo(pressDepth())
 		end
 	end)
 	U.connect(input.InputEnded, function()
-		setScale(1)
+		pressTo(1)
 	end)
 	U.connect(input.MouseLeave, function()
-		setScale(1)
+		pressTo(1)
 	end)
 	return press
 end
@@ -3431,11 +3491,11 @@ local function createPage(window, host, tab, config)
 		AnchorPoint = Vector2.new(1, 0),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Position = UDim2.new(1, -20, 0, 18),
-		Size = UDim2.fromOffset(0, 24),
+		Position = UDim2.new(1, -20, 0, 17),
+		Size = UDim2.fromOffset(0, 26),
 		AutomaticSize = Enum.AutomaticSize.X,
 	})
-	U.hlist(headerControls, 12, Enum.HorizontalAlignment.Right, Enum.VerticalAlignment.Center)
+	U.hlist(headerControls, 10, Enum.HorizontalAlignment.Right, Enum.VerticalAlignment.Center)
 	page.HeaderControls = headerControls
 
 	local chipBar = U.frame(root, {
@@ -3717,6 +3777,9 @@ local function createPage(window, host, tab, config)
 		self.Selector = api
 		self.HasChips = true
 		chipBar.Visible = true
+		-- Keep the page actions on the selector row so the header reads as one line
+		-- (title above, filter chips + actions below).
+		headerControls.Position = UDim2.new(1, -20, 0, 52)
 		self:Relayout()
 		return api
 	end
@@ -3807,10 +3870,12 @@ local function createPage(window, host, tab, config)
 
 	function page:SetHeaderIcon(icon, callback)
 		local root = U.frame(headerControls, {
+			BackgroundColor3 = Theme.FieldDeep,
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Size = UDim2.fromOffset(24, 24),
+			Size = UDim2.fromOffset(20, 20),
 		})
+		U.corner(root, 10)
 		root.LayoutOrder = 2
 		local iconLabel = U.icon(root, icon or "gear", 16, Theme.Muted, {
 			TextTransparency = 0.35,
@@ -3819,10 +3884,12 @@ local function createPage(window, host, tab, config)
 		})
 		local input = U.inputButton(root, callback or function() end)
 		U.connect(input.MouseEnter, function()
+			U.tween(root, TWEEN.Fast, { BackgroundTransparency = 0.8 })
 			U.tween(iconLabel, TWEEN.Fast, { TextTransparency = 0.05 })
 		end)
 		U.connect(input.MouseLeave, function()
-			U.tween(iconLabel, TWEEN.Fast, { TextTransparency = 0.45 })
+			U.tween(root, TWEEN.Fast, { BackgroundTransparency = 1 })
+			U.tween(iconLabel, TWEEN.Fast, { TextTransparency = 0.35 })
 		end)
 		self.HeaderIcon = root
 		return root
@@ -3903,6 +3970,9 @@ local function createPage(window, host, tab, config)
 			root.Visible = false
 			root.Position = UDim2.fromOffset(0, 0)
 			U.setGroupTransparency(root, 0)
+		end
+		if self.Preview and self.Preview.OnShow then
+			self.Preview.OnShow(active)
 		end
 	end
 
@@ -4524,6 +4594,7 @@ end
 		ClipsDescendants = true,
 	})
 	U.corner(avatar, 15)
+	window.AccountAvatar = avatar
 	local avatarIcon = U.icon(avatar, "person-standing", 15, Theme.Muted, {
 		TextTransparency = 0.35,
 		Size = UDim2.fromScale(1, 1),
@@ -5557,6 +5628,13 @@ end
 	end
 
 	table.insert(Nerx.Windows, window)
+	if Nerx.Frosted and Nerx.Frosted.Enabled then
+		task.defer(function()
+			pcall(function()
+				Nerx.Frosted:Apply()
+			end)
+		end)
+	end
 	return window
 end
 
@@ -5756,6 +5834,7 @@ function U.preview(page, config)
 		Position = UDim2.new(0.1, 0, 0.08, 0),
 		Size = UDim2.new(0, 1, 0.64, 0),
 	})
+	preview.Guide = guide
 	U.frame(guide, {
 		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundColor3 = Theme.Muted,
@@ -5781,6 +5860,7 @@ function U.preview(page, config)
 		Position = UDim2.new(0.5, 0, 1, -28),
 		Size = UDim2.fromOffset(212, 34),
 	})
+	preview.Ground = ground
 	U.corner(ground, 16)
 	U.stroke(ground, Theme.Muted, 0.45, 1)
 
@@ -5823,6 +5903,57 @@ function U.preview(page, config)
 		placeholder.Visible = false
 		ground.Position = UDim2.new(0.5, 0, 1, -30)
 		preview.Image = image
+	end
+
+	function preview:AddViewport(viewportConfig)
+		viewportConfig = viewportConfig or {}
+		if preview.Viewport then
+			return preview.Viewport, preview.World, preview.Camera
+		end
+
+		local viewport = U.new("ViewportFrame", {
+			Name = "PreviewViewport",
+			BackgroundColor3 = viewportConfig.BackgroundColor3 or Theme.Window,
+			BackgroundTransparency = viewportConfig.BackgroundTransparency or 0,
+			BorderSizePixel = 0,
+			ClipsDescendants = true,
+			Position = UDim2.fromOffset(0, 0),
+			Size = UDim2.fromScale(1, 1),
+			Ambient = viewportConfig.Ambient or Color3.fromRGB(178, 184, 194),
+			LightColor = viewportConfig.LightColor or Color3.fromRGB(236, 241, 250),
+			LightDirection = viewportConfig.LightDirection or Vector3.new(-0.45, -0.8, -0.4),
+			ZIndex = 1,
+		}, stage)
+
+		local world = U.new("WorldModel", { Name = "PreviewWorld" }, viewport)
+		local camera = U.new("Camera", {
+			Name = "PreviewCamera",
+			FieldOfView = viewportConfig.FieldOfView or 50,
+		}, viewport)
+		viewport.CurrentCamera = camera
+
+		preview.Viewport = viewport
+		preview.World = world
+		preview.Camera = camera
+		if preview.Placeholder then
+			preview.Placeholder.Visible = false
+		end
+		if preview.Image then
+			preview.Image.Visible = false
+		end
+		if preview.Guide then
+			preview.Guide.Visible = false
+		end
+		if preview.Ground then
+			preview.Ground.Visible = false
+		end
+		return viewport, world, camera
+	end
+
+	function preview:SetViewportVisible(value)
+		if preview.Viewport then
+			preview.Viewport.Visible = value ~= false
+		end
 	end
 
 	function preview:SetName(text)
@@ -6421,6 +6552,41 @@ do
 	Nerx._Internal.buildPalette = buildPalette
 	Nerx._Internal.recolorGui = recolorGui
 
+	-- Palette remapping only follows colours that exist in the old palette, so
+	-- chrome built from shared tones (account card, avatar well, sidebar) is
+	-- re-applied by role after every theme switch.
+	local function refreshChrome()
+		for _, win in ipairs(Nerx.Windows) do
+			if win.Account then
+				win.Account.BackgroundColor3 = Theme.Surface
+				local stroke = win.Account:FindFirstChildOfClass("UIStroke")
+				if stroke then
+					stroke.Color = Theme.Stroke
+					stroke.Transparency = 0.65
+				end
+			end
+			if win.AccountAvatar then
+				win.AccountAvatar.BackgroundColor3 = Theme.Field
+			end
+			if win.AccountAvatarIcon then
+				win.AccountAvatarIcon.TextColor3 = Theme.Muted
+			end
+			if win.AccountName then
+				win.AccountName.TextColor3 = Theme.Text
+			end
+			if win.AccountTag then
+				win.AccountTag.TextColor3 = Theme.Muted
+			end
+			if win.AccountChevron then
+				win.AccountChevron.TextColor3 = Theme.Muted
+			end
+			if win.Sidebar then
+				win.Sidebar.BackgroundColor3 = Theme.Sidebar
+			end
+		end
+	end
+	Nerx._Internal.refreshChrome = refreshChrome
+
 	local themesStore = {
 		version = 1,
 		active = nil,
@@ -6488,6 +6654,7 @@ do
 			end
 		end
 		recolorGui(oldPalette, palette)
+		refreshChrome()
 		for _, callback in ipairs(Nerx.AccentListeners) do
 			task.spawn(pcall, callback, Theme.Accent)
 		end
@@ -6764,6 +6931,27 @@ do
 	local HOTKEY_NAME_CARD = Color3.fromRGB(0, 0, 0)
 	local HOTKEY_TEXT = Color3.fromRGB(255, 255, 255)
 	local HOTKEY_MUTED = Color3.fromRGB(232, 235, 242)
+
+	-- The HUD is a floating overlay, so it follows the menu's luminance: dark
+	-- translucent cards on dark themes, light cards with dark text on light ones.
+	local function applyHotkeyTheme()
+		local main = Theme.Main
+		local dark = (main.R * 0.2126 + main.G * 0.7152 + main.B * 0.0722) < 0.45
+		if dark then
+			HOTKEY_CARD = Color3.fromRGB(0, 0, 0)
+			HOTKEY_KEY_CARD = Color3.fromRGB(0, 0, 0)
+			HOTKEY_NAME_CARD = Color3.fromRGB(0, 0, 0)
+			HOTKEY_TEXT = Color3.fromRGB(255, 255, 255)
+			HOTKEY_MUTED = Color3.fromRGB(232, 235, 242)
+		else
+			HOTKEY_CARD = Theme.SurfaceRaised
+			HOTKEY_KEY_CARD = Theme.SurfaceRaised
+			HOTKEY_NAME_CARD = Theme.SurfaceRaised
+			HOTKEY_TEXT = Theme.Text
+			HOTKEY_MUTED = Theme.Muted
+		end
+	end
+	applyHotkeyTheme()
 
 	do
 		local saved = Nerx.LayoutState and Nerx.LayoutState.hotkeysPanel
@@ -8704,6 +8892,245 @@ do
 	Nerx.BindManager = BindManager
 	Nerx.HotkeyIcon = HOTKEY_ICON
 	Nerx.HotkeyAccent = HOTKEY_ACCENT
+
+	-- Rebuild the floating HUD with the new palette after a theme switch.
+	table.insert(Nerx.Themes.OnChanged, function()
+		applyHotkeyTheme()
+		pcall(function()
+			BindManager:RefreshOverlay()
+		end)
+	end)
+end
+
+-- ---------------------------------------------------------------------------------------
+-- Frosted glass / 毛玻璃
+-- A real glass material is not available for ScreenGuis, so the mode combines a
+-- scene BlurEffect, translucent menu surfaces, a diagonal sheen, a chromatic rim
+-- and spring press feedback. Every value is adjustable at runtime.
+-- ---------------------------------------------------------------------------------------
+
+do
+	local Lighting = game:GetService("Lighting")
+
+	local Frosted = {
+		Enabled = false,
+		Params = {
+			Blur = 14,
+			Opacity = 0.30,
+			Dispersion = 0.45,
+			Outline = 0.55,
+			Sheen = 0.40,
+			Press = 0.965,
+			Spring = 24,
+			Radius = 12,
+			Thickness = 1,
+		},
+		OnChanged = {},
+	}
+	Nerx.Frosted = Frosted
+
+	local state = {
+		surfaces = {},
+		layers = {},
+		blur = nil,
+	}
+
+	local function ensureBlur()
+		local blur = Lighting:FindFirstChild("NerxFrostedBlur")
+		if not (blur and blur:IsA("BlurEffect")) then
+			blur = Instance.new("BlurEffect")
+			blur.Name = "NerxFrostedBlur"
+			blur.Size = 0
+			blur.Parent = Lighting
+		end
+		state.blur = blur
+		return blur
+	end
+
+	local function restoreSurfaces()
+		for _, store in pairs(state.surfaces) do
+			for object, original in pairs(store) do
+				if object.Parent then
+					object.BackgroundTransparency = original
+				end
+			end
+		end
+		state.surfaces = {}
+	end
+
+	local function applySurfaces()
+		for _, win in ipairs(Nerx.Windows) do
+			local root = win.Root
+			if root and root.Parent then
+				local store = state.surfaces[root]
+				if not store then
+					store = {}
+					state.surfaces[root] = store
+				end
+				for _, object in ipairs(root:GetDescendants()) do
+					if object:IsA("GuiObject") and not object:GetAttribute("NerxFrostLayer") then
+						local ok, transparency = pcall(function()
+							return object.BackgroundTransparency
+						end)
+						if ok and transparency and transparency < 0.99 then
+							if store[object] == nil then
+								store[object] = transparency
+							end
+							object.BackgroundTransparency = math.clamp(store[object] + Frosted.Params.Opacity, 0, 0.94)
+						end
+					end
+				end
+			end
+		end
+	end
+
+	local function buildLayers(win)
+		local root = win.Root
+		if not root or not root.Parent then
+			return nil
+		end
+		local layer = state.layers[root]
+		if layer and layer.sheen.Parent then
+			return layer
+		end
+
+		local sheen = Instance.new("Frame")
+		sheen.Name = "NerxFrostSheen"
+		sheen.BackgroundColor3 = Color3.new(1, 1, 1)
+		sheen.BackgroundTransparency = 0
+		sheen.BorderSizePixel = 0
+		sheen.Size = UDim2.fromScale(1, 1)
+		sheen.ZIndex = 240
+		sheen.Active = false
+		sheen:SetAttribute("NerxFrostLayer", true)
+		U.corner(sheen, Frosted.Params.Radius)
+		local gradient = Instance.new("UIGradient")
+		gradient.Rotation = 18
+		gradient.Parent = sheen
+		sheen.Parent = root
+
+		local rim = Instance.new("Frame")
+		rim.Name = "NerxFrostRim"
+		rim.BackgroundTransparency = 1
+		rim.BorderSizePixel = 0
+		rim.Size = UDim2.fromScale(1, 1)
+		rim.ZIndex = 241
+		rim.Active = false
+		rim:SetAttribute("NerxFrostLayer", true)
+		U.corner(rim, Frosted.Params.Radius)
+		local stroke = Instance.new("UIStroke")
+		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		stroke.LineJoinMode = Enum.LineJoinMode.Round
+		local strokeGradient = Instance.new("UIGradient")
+		strokeGradient.Rotation = 35
+		strokeGradient.Parent = stroke
+		stroke.Parent = rim
+		rim.Parent = root
+
+		layer = { sheen = sheen, gradient = gradient, rim = rim, stroke = stroke, strokeGradient = strokeGradient }
+		state.layers[root] = layer
+		return layer
+	end
+
+	local function paintLayers()
+		local params = Frosted.Params
+		for _, win in ipairs(Nerx.Windows) do
+			local layer = buildLayers(win)
+			if layer then
+				U.corner(layer.sheen, params.Radius)
+				U.corner(layer.rim, params.Radius)
+
+				-- Diagonal sheen: a quiet highlight across the upper-left face.
+				layer.gradient.Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 1 - params.Sheen * 0.16),
+					NumberSequenceKeypoint.new(0.42, 0.93),
+					NumberSequenceKeypoint.new(1, 1),
+				})
+
+				-- Chromatic rim: red and blue split by the dispersion amount.
+				local split = math.clamp(params.Dispersion, 0, 1)
+				local function tint(color, amount)
+					return Color3.new(
+						color.R + (1 - color.R) * (1 - amount),
+						color.G + (1 - color.G) * (1 - amount),
+						color.B + (1 - color.B) * (1 - amount)
+					)
+				end
+				layer.strokeGradient.Color = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, tint(Color3.fromRGB(255, 96, 96), split)),
+					ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
+					ColorSequenceKeypoint.new(1, tint(Color3.fromRGB(96, 150, 255), split)),
+				})
+				layer.stroke.Thickness = params.Thickness
+				layer.stroke.Transparency = math.clamp(0.62 - params.Outline * 0.42, 0, 1)
+			end
+		end
+	end
+
+	function Frosted:Apply(partial)
+		if type(partial) == "table" then
+			for key, value in pairs(partial) do
+				if self.Params[key] ~= nil and (typeof(value) == "number" or typeof(value) == "boolean") then
+					self.Params[key] = value
+				end
+			end
+		end
+		if not self.Enabled then
+			return
+		end
+		local blur = ensureBlur()
+		blur.Size = self.Params.Blur
+		blur.Enabled = self.Params.Blur > 0.5
+		applySurfaces()
+		paintLayers()
+		for _, callback in ipairs(self.OnChanged) do
+			task.spawn(pcall, callback, self.Params)
+		end
+	end
+
+	function Frosted:SetEnabled(enabled)
+		enabled = enabled == true
+		if self.Enabled == enabled then
+			if enabled then
+				self:Apply()
+			end
+			return
+		end
+		self.Enabled = enabled
+		if enabled then
+			self:Apply()
+		else
+			if state.blur then
+				state.blur.Size = 0
+				state.blur.Enabled = false
+			end
+			restoreSurfaces()
+			for _, layer in pairs(state.layers) do
+				if layer.sheen then
+					layer.sheen:Destroy()
+				end
+				if layer.rim then
+					layer.rim:Destroy()
+				end
+			end
+			state.layers = {}
+			for _, callback in ipairs(self.OnChanged) do
+				task.spawn(pcall, callback, self.Params)
+			end
+		end
+	end
+
+	function Frosted:Toggle()
+		self:SetEnabled(not self.Enabled)
+	end
+
+	function Frosted:GetParams()
+		local copy = {}
+		for key, value in pairs(self.Params) do
+			copy[key] = value
+		end
+		return copy
+	end
 end
 
 do
@@ -9481,6 +9908,12 @@ function Nerx:Unload()
 		self.ActiveKeybindCapture = nil
 	end
 	self.CapturingKeybind = false
+
+	if self.Frosted then
+		pcall(function()
+			self.Frosted:SetEnabled(false)
+		end)
+	end
 
 	self:ClosePopup()
 	for _, connection in ipairs(self.Connections) do
