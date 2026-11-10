@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.3.0
+	Nerx UI Library · v1.3.1
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.3.0"
+Nerx.Version = "1.3.1"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -5631,7 +5631,7 @@ end
 	if Nerx.Frosted and Nerx.Frosted.Enabled then
 		task.defer(function()
 			pcall(function()
-				Nerx.Frosted:Apply()
+				Nerx.Frosted:Refresh()
 			end)
 		end)
 	end
@@ -8912,28 +8912,37 @@ end
 do
 	local Lighting = game:GetService("Lighting")
 
+	local DEFAULT_PARAMS = {
+		Blur = 14,
+		Opacity = 0.30,
+		Dispersion = 0.45,
+		Outline = 0.55,
+		Sheen = 0.40,
+		Press = 0.965,
+		Spring = 24,
+		Radius = 12,
+		Thickness = 1,
+	}
+
 	local Frosted = {
 		Enabled = false,
-		Params = {
-			Blur = 14,
-			Opacity = 0.30,
-			Dispersion = 0.45,
-			Outline = 0.55,
-			Sheen = 0.40,
-			Press = 0.965,
-			Spring = 24,
-			Radius = 12,
-			Thickness = 1,
+		Params = {},
+		Presets = {
+			Clear = { Blur = 6, Opacity = 0.16, Dispersion = 0.22, Outline = 0.35, Sheen = 0.22, Radius = 10, Thickness = 1 },
+			Frosted = { Blur = 14, Opacity = 0.30, Dispersion = 0.45, Outline = 0.55, Sheen = 0.40, Radius = 12, Thickness = 1 },
+			Heavy = { Blur = 26, Opacity = 0.52, Dispersion = 0.72, Outline = 0.80, Sheen = 0.62, Radius = 18, Thickness = 2 },
 		},
 		OnChanged = {},
 	}
+	for key, value in pairs(DEFAULT_PARAMS) do
+		Frosted.Params[key] = value
+	end
 	Nerx.Frosted = Frosted
 
-	local state = {
-		surfaces = {},
-		layers = {},
-		blur = nil,
-	}
+	local targets = {}
+	local surfaceStore = {}
+	local layerStore = {}
+	local blurEffect
 
 	local function ensureBlur()
 		local blur = Lighting:FindFirstChild("NerxFrostedBlur")
@@ -8941,58 +8950,87 @@ do
 			blur = Instance.new("BlurEffect")
 			blur.Name = "NerxFrostedBlur"
 			blur.Size = 0
+			blur.Enabled = false
 			blur.Parent = Lighting
 		end
-		state.blur = blur
+		blurEffect = blur
 		return blur
 	end
 
-	local function restoreSurfaces()
-		for _, store in pairs(state.surfaces) do
-			for object, original in pairs(store) do
-				if object.Parent then
-					object.BackgroundTransparency = original
-				end
+	local function findTarget(root)
+		for index, entry in ipairs(targets) do
+			if entry.Root == root then
+				return entry, index
 			end
 		end
-		state.surfaces = {}
+		return nil
 	end
 
-	local function applySurfaces()
-		for _, win in ipairs(Nerx.Windows) do
-			local root = win.Root
-			if root and root.Parent then
-				local store = state.surfaces[root]
-				if not store then
-					store = {}
-					state.surfaces[root] = store
-				end
-				for _, object in ipairs(root:GetDescendants()) do
-					if object:IsA("GuiObject") and not object:GetAttribute("NerxFrostLayer") then
-						local ok, transparency = pcall(function()
-							return object.BackgroundTransparency
-						end)
-						if ok and transparency and transparency < 0.99 then
-							if store[object] == nil then
-								store[object] = transparency
-							end
-							object.BackgroundTransparency = math.clamp(store[object] + Frosted.Params.Opacity, 0, 0.94)
-						end
+	local function isExcluded(entry, object)
+		local list = entry.Options and entry.Options.Exclude
+		if not list then
+			return false
+		end
+		for _, candidate in ipairs(list) do
+			if candidate == object then
+				return true
+			end
+		end
+		return false
+	end
+
+	local function paintSurfaces(entry)
+		local root = entry.Root
+		if not root or not root.Parent then
+			return
+		end
+		local options = entry.Options or {}
+		local amount = Frosted.Params.Opacity * (options.Opacity or 1)
+		local ceiling = options.MaxTransparency or 0.94
+		local store = surfaceStore[root]
+		if not store then
+			store = {}
+			surfaceStore[root] = store
+		end
+		for _, object in ipairs(root:GetDescendants()) do
+			if object:IsA("GuiObject") and not object:GetAttribute("NerxFrostLayer") and not isExcluded(entry, object) then
+				local ok, transparency = pcall(function()
+					return object.BackgroundTransparency
+				end)
+				if ok and transparency and transparency < 0.99 then
+					if store[object] == nil then
+						store[object] = transparency
 					end
+					object.BackgroundTransparency = math.clamp(store[object] + amount, 0, ceiling)
 				end
 			end
 		end
 	end
 
-	local function buildLayers(win)
-		local root = win.Root
+	local function restoreSurfaces(root)
+		local store = surfaceStore[root]
+		if not store then
+			return
+		end
+		for object, original in pairs(store) do
+			if object.Parent then
+				object.BackgroundTransparency = original
+			end
+		end
+		surfaceStore[root] = nil
+	end
+
+	local function buildLayer(entry)
+		local root = entry.Root
 		if not root or not root.Parent then
 			return nil
 		end
-		local layer = state.layers[root]
-		if layer and layer.sheen.Parent then
-			return layer
+		local cached = layerStore[root]
+		if cached and cached.sheen.Parent then
+			return cached
 		end
+		local options = entry.Options or {}
+		local baseZ = options.Layer or 240
 
 		local sheen = Instance.new("Frame")
 		sheen.Name = "NerxFrostSheen"
@@ -9000,10 +9038,10 @@ do
 		sheen.BackgroundTransparency = 0
 		sheen.BorderSizePixel = 0
 		sheen.Size = UDim2.fromScale(1, 1)
-		sheen.ZIndex = 240
+		sheen.ZIndex = baseZ
 		sheen.Active = false
 		sheen:SetAttribute("NerxFrostLayer", true)
-		U.corner(sheen, Frosted.Params.Radius)
+		U.corner(sheen, options.Radius or Frosted.Params.Radius)
 		local gradient = Instance.new("UIGradient")
 		gradient.Rotation = 18
 		gradient.Parent = sheen
@@ -9014,10 +9052,10 @@ do
 		rim.BackgroundTransparency = 1
 		rim.BorderSizePixel = 0
 		rim.Size = UDim2.fromScale(1, 1)
-		rim.ZIndex = 241
+		rim.ZIndex = baseZ + 1
 		rim.Active = false
 		rim:SetAttribute("NerxFrostLayer", true)
-		U.corner(rim, Frosted.Params.Radius)
+		U.corner(rim, options.Radius or Frosted.Params.Radius)
 		local stroke = Instance.new("UIStroke")
 		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		stroke.LineJoinMode = Enum.LineJoinMode.Round
@@ -9027,101 +9065,116 @@ do
 		stroke.Parent = rim
 		rim.Parent = root
 
-		layer = { sheen = sheen, gradient = gradient, rim = rim, stroke = stroke, strokeGradient = strokeGradient }
-		state.layers[root] = layer
+		local layer = {
+			sheen = sheen,
+			gradient = gradient,
+			rim = rim,
+			stroke = stroke,
+			strokeGradient = strokeGradient,
+		}
+		layerStore[root] = layer
 		return layer
 	end
 
-	local function paintLayers()
+	local function paintLayer(entry)
+		local layer = buildLayer(entry)
+		if not layer then
+			return
+		end
+		local options = entry.Options or {}
 		local params = Frosted.Params
-		for _, win in ipairs(Nerx.Windows) do
-			local layer = buildLayers(win)
-			if layer then
-				U.corner(layer.sheen, params.Radius)
-				U.corner(layer.rim, params.Radius)
+		local radius = options.Radius or params.Radius
+		local sheenScale = options.Sheen == false and 0 or params.Sheen * (options.SheenScale or 1)
+		local split = math.clamp(params.Dispersion * (options.DispersionScale or 1), 0, 1)
 
-				-- Diagonal sheen: a quiet highlight across the upper-left face.
-				layer.gradient.Transparency = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, 1 - params.Sheen * 0.16),
-					NumberSequenceKeypoint.new(0.42, 0.93),
-					NumberSequenceKeypoint.new(1, 1),
-				})
+		U.corner(layer.sheen, radius)
+		U.corner(layer.rim, radius)
+		layer.gradient.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1 - sheenScale * 0.16),
+			NumberSequenceKeypoint.new(0.42, 0.93),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		local function tint(color, amount)
+			return Color3.new(
+				color.R + (1 - color.R) * (1 - amount),
+				color.G + (1 - color.G) * (1 - amount),
+				color.B + (1 - color.B) * (1 - amount)
+			)
+		end
+		layer.strokeGradient.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, tint(Color3.fromRGB(255, 96, 96), split)),
+			ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
+			ColorSequenceKeypoint.new(1, tint(Color3.fromRGB(96, 150, 255), split)),
+		})
+		layer.stroke.Thickness = options.Thickness or params.Thickness
+		layer.stroke.Transparency = math.clamp(0.62 - params.Outline * 0.42, 0, 1)
+		layer.sheen.Visible = options.Sheen ~= false
+		layer.rim.Visible = options.Rim ~= false
+	end
 
-				-- Chromatic rim: red and blue split by the dispersion amount.
-				local split = math.clamp(params.Dispersion, 0, 1)
-				local function tint(color, amount)
-					return Color3.new(
-						color.R + (1 - color.R) * (1 - amount),
-						color.G + (1 - color.G) * (1 - amount),
-						color.B + (1 - color.B) * (1 - amount)
-					)
-				end
-				layer.strokeGradient.Color = ColorSequence.new({
-					ColorSequenceKeypoint.new(0, tint(Color3.fromRGB(255, 96, 96), split)),
-					ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
-					ColorSequenceKeypoint.new(1, tint(Color3.fromRGB(96, 150, 255), split)),
-				})
-				layer.stroke.Thickness = params.Thickness
-				layer.stroke.Transparency = math.clamp(0.62 - params.Outline * 0.42, 0, 1)
-			end
+	local function notifyChanged()
+		for _, callback in ipairs(Frosted.OnChanged) do
+			task.spawn(pcall, callback, Frosted.Params, Frosted.Enabled)
 		end
 	end
 
+	function Frosted:Register(root, options)
+		if not root then
+			return nil
+		end
+		if findTarget(root) then
+			return nil
+		end
+		local entry = { Root = root, Options = options or {} }
+		table.insert(targets, entry)
+		if self.Enabled then
+			paintSurfaces(entry)
+			paintLayer(entry)
+		end
+		return entry
+	end
+
+	function Frosted:Unregister(root)
+		local entry, index = findTarget(root)
+		if not entry then
+			return false
+		end
+		restoreSurfaces(root)
+		local layer = layerStore[root]
+		if layer then
+			layer.sheen:Destroy()
+			layer.rim:Destroy()
+			layerStore[root] = nil
+		end
+		table.remove(targets, index)
+		return true
+	end
+
+	function Frosted:RegisterWindow(window)
+		if window and window.Root then
+			return self:Register(window.Root, { Kind = "window" })
+		end
+		return nil
+	end
+
+	function Frosted:SetParams(partial)
+		if type(partial) ~= "table" then
+			return self.Params
+		end
+		for key, value in pairs(partial) do
+			if typeof(value) == "number" then
+				self.Params[key] = value
+			elseif self.Params[key] ~= nil and typeof(value) == typeof(self.Params[key]) then
+				self.Params[key] = value
+			end
+		end
+		self:Refresh()
+		return self.Params
+	end
+
+	-- Backwards-compatible alias for early builds.
 	function Frosted:Apply(partial)
-		if type(partial) == "table" then
-			for key, value in pairs(partial) do
-				if self.Params[key] ~= nil and (typeof(value) == "number" or typeof(value) == "boolean") then
-					self.Params[key] = value
-				end
-			end
-		end
-		if not self.Enabled then
-			return
-		end
-		local blur = ensureBlur()
-		blur.Size = self.Params.Blur
-		blur.Enabled = self.Params.Blur > 0.5
-		applySurfaces()
-		paintLayers()
-		for _, callback in ipairs(self.OnChanged) do
-			task.spawn(pcall, callback, self.Params)
-		end
-	end
-
-	function Frosted:SetEnabled(enabled)
-		enabled = enabled == true
-		if self.Enabled == enabled then
-			if enabled then
-				self:Apply()
-			end
-			return
-		end
-		self.Enabled = enabled
-		if enabled then
-			self:Apply()
-		else
-			if state.blur then
-				state.blur.Size = 0
-				state.blur.Enabled = false
-			end
-			restoreSurfaces()
-			for _, layer in pairs(state.layers) do
-				if layer.sheen then
-					layer.sheen:Destroy()
-				end
-				if layer.rim then
-					layer.rim:Destroy()
-				end
-			end
-			state.layers = {}
-			for _, callback in ipairs(self.OnChanged) do
-				task.spawn(pcall, callback, self.Params)
-			end
-		end
-	end
-
-	function Frosted:Toggle()
-		self:SetEnabled(not self.Enabled)
+		return self:SetParams(partial)
 	end
 
 	function Frosted:GetParams()
@@ -9130,6 +9183,84 @@ do
 			copy[key] = value
 		end
 		return copy
+	end
+
+	function Frosted:Reset()
+		for key, value in pairs(DEFAULT_PARAMS) do
+			self.Params[key] = value
+		end
+		self:Refresh()
+	end
+
+	function Frosted:ApplyPreset(name)
+		local preset = self.Presets[name]
+		if type(preset) ~= "table" then
+			return false
+		end
+		for key, value in pairs(preset) do
+			self.Params[key] = value
+		end
+		self:Refresh()
+		return true
+	end
+
+	function Frosted:Refresh()
+		local blur = ensureBlur()
+		blur.Size = self.Enabled and self.Params.Blur or 0
+		blur.Enabled = self.Enabled and self.Params.Blur > 0.5
+		if not self.Enabled then
+			return
+		end
+		-- Windows register automatically; catch any created after enabling.
+		for _, win in ipairs(Nerx.Windows) do
+			if win.Root and not findTarget(win.Root) then
+				table.insert(targets, { Root = win.Root, Options = { Kind = "window" } })
+			end
+		end
+		for _, entry in ipairs(targets) do
+			if entry.Root and entry.Root.Parent then
+				paintSurfaces(entry)
+				paintLayer(entry)
+			end
+		end
+		notifyChanged()
+	end
+
+	function Frosted:SetEnabled(enabled)
+		enabled = enabled == true
+		if self.Enabled == enabled then
+			if enabled then
+				self:Refresh()
+			end
+			return
+		end
+		self.Enabled = enabled
+		if enabled then
+			self:Refresh()
+		else
+			if blurEffect then
+				blurEffect.Size = 0
+				blurEffect.Enabled = false
+			end
+			for _, entry in ipairs(targets) do
+				restoreSurfaces(entry.Root)
+				local layer = layerStore[entry.Root]
+				if layer then
+					layer.sheen:Destroy()
+					layer.rim:Destroy()
+					layerStore[entry.Root] = nil
+				end
+			end
+			notifyChanged()
+		end
+	end
+
+	function Frosted:IsEnabled()
+		return self.Enabled
+	end
+
+	function Frosted:Toggle()
+		self:SetEnabled(not self.Enabled)
 	end
 end
 
