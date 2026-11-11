@@ -9361,6 +9361,7 @@ do
 		local stroke = Instance.new("UIStroke")
 		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		stroke.LineJoinMode = Enum.LineJoinMode.Round
+		stroke.Color = Color3.new(1, 1, 1)
 		local strokeGradient = Instance.new("UIGradient")
 		strokeGradient.Rotation = 90
 		strokeGradient.Parent = stroke
@@ -9381,6 +9382,7 @@ do
 		local chromaStroke = Instance.new("UIStroke")
 		chromaStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		chromaStroke.LineJoinMode = Enum.LineJoinMode.Round
+		chromaStroke.Color = Color3.new(1, 1, 1)
 		chromaStroke.Transparency = 0.9
 		local chromaGradient = Instance.new("UIGradient")
 		chromaGradient.Rotation = 35
@@ -9400,6 +9402,9 @@ do
 		setCorner(halo, radius)
 		local haloStroke = Instance.new("UIStroke")
 		haloStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		-- UIStroke defaults to black; without this the "bloom" rendered as a dark
+		-- square band hugging every rounded card (very visible on the HUD).
+		haloStroke.Color = Color3.new(1, 1, 1)
 		haloStroke.Thickness = 5
 		haloStroke.Transparency = 0.9
 		haloStroke.Parent = halo
