@@ -7280,7 +7280,7 @@ do
 		local keyCard = hotkeyPill(row, data.KeyBoxWidth, HOTKEY_ROW_HEIGHT, HOTKEY_KEY_CARD, HOTKEY_KEY_TRANSPARENCY)
 		keyCard.Position = UDim2.fromOffset(data.KeyX, 0)
 		if frostHud and Nerx.Frosted then
-			Nerx.Frosted:Register(keyCard, { Kind = "card", Radius = 5, Opacity = 0.55, SheenScale = 2 })
+			Nerx.Frosted:Register(keyCard, { Kind = "card", Radius = 5, Opacity = 0.55, SheenScale = 2, Halo = false, Chroma = false })
 		end
 		local keyLabel = hotkeyText(keyCard, "", HOTKEY_KEY_TEXT_SIZE, data.KeyBoxWidth - 6, HOTKEY_ROW_HEIGHT, 0.12)
 		keyLabel.Position = UDim2.fromOffset(3, 0)
@@ -7299,7 +7299,7 @@ do
 		local nameCard = hotkeyPill(row, data.NameBoxWidth, HOTKEY_ROW_HEIGHT, HOTKEY_NAME_CARD, HOTKEY_NAME_TRANSPARENCY)
 		nameCard.Position = UDim2.fromOffset(data.NameX, 0)
 		if frostHud and Nerx.Frosted then
-			Nerx.Frosted:Register(nameCard, { Kind = "card", Radius = 5, Opacity = 0.55, SheenScale = 2 })
+			Nerx.Frosted:Register(nameCard, { Kind = "card", Radius = 5, Opacity = 0.55, SheenScale = 2, Halo = false, Chroma = false })
 		end
 		local nameLabel = hotkeyText(nameCard, data.NameText, HOTKEY_NAME_TEXT_SIZE, data.NameBoxWidth - 10, HOTKEY_ROW_HEIGHT, 0.02)
 		nameLabel.Position = UDim2.fromOffset(5, 0)
@@ -7485,7 +7485,7 @@ do
 		U.tween(headerCard, TWEEN.Popup, { Position = UDim2.fromOffset(0, 0) })
 		overlayHeaderCard = headerCard
 		if frostHud and Nerx.Frosted then
-			Nerx.Frosted:Register(headerCard, { Kind = "card", Radius = 5, Opacity = 0.55, SheenScale = 2 })
+			Nerx.Frosted:Register(headerCard, { Kind = "card", Radius = 5, Opacity = 0.55, SheenScale = 2, Halo = false, Chroma = false })
 		end
 		overlayIconImage = nil
 		overlayIconFallback = nil
@@ -8907,7 +8907,7 @@ do
 				return
 			end
 			if enabled then
-				Nerx.Frosted:Register(pill, { Kind = "card", Radius = 5, Opacity = 0.55, SheenScale = 2 })
+				Nerx.Frosted:Register(pill, { Kind = "card", Radius = 5, Opacity = 0.55, SheenScale = 2, Halo = false, Chroma = false })
 			else
 				pcall(function()
 					Nerx.Frosted:Unregister(pill)
@@ -9502,11 +9502,11 @@ do
 		})
 		layer.chromaStroke.Thickness = math.max(1, (options.Thickness or params.Thickness))
 		layer.chromaStroke.Transparency = math.clamp(1 - split * 0.55, 0, 1)
-		layer.chroma.Visible = split > 0.02 and options.Rim ~= false
+		layer.chroma.Visible = options.Chroma ~= false and split > 0.02 and options.Rim ~= false
 
 		layer.haloStroke.Thickness = math.max(3, (options.Thickness or params.Thickness) * 4)
 		layer.haloStroke.Transparency = math.clamp(0.98 - params.Outline * 0.22, 0, 1)
-		layer.halo.Visible = options.Rim ~= false and params.Outline > 0.05
+		layer.halo.Visible = options.Halo ~= false and options.Rim ~= false and params.Outline > 0.05
 	end
 
 	local function destroyLayer(root)
