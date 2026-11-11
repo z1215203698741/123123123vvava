@@ -6936,6 +6936,46 @@ do
 	local overlayRightAligned = false
 	local hotkeyDynamicTitle = false
 	local lastTriggeredName = nil
+	local activeOrder = {}
+	local headerTextToken = 0
+
+	-- The dynamic title must follow what is *currently* active: once a bind is
+	-- turned off it drops out of the stack, so the header reverts (and its width
+	-- is re-measured) instead of sticking to the last-used name forever.
+	local function refreshTriggeredName()
+		lastTriggeredName = nil
+		for index = #activeOrder, 1, -1 do
+			local id = activeOrder[index]
+			if activeStates[id] then
+				for _, bind in ipairs(binds) do
+					if bind.Id == id then
+						lastTriggeredName = tostring(bind.Name or "Bind")
+						break
+					end
+				end
+				if lastTriggeredName then
+					return
+				end
+			else
+				table.remove(activeOrder, index)
+			end
+		end
+	end
+
+	local function trackActiveOrder(bind)
+		if not bind then
+			return
+		end
+		for index = #activeOrder, 1, -1 do
+			if activeOrder[index] == bind.Id then
+				table.remove(activeOrder, index)
+			end
+		end
+		if activeStates[bind.Id] and bind.Trigger ~= "Condition" then
+			activeOrder[#activeOrder + 1] = bind.Id
+		end
+		refreshTriggeredName()
+	end
 	local hotkeySettingsRoot
 	local hotkeySettingsOpen = false
 	local hotkeySettingsIgnoreClick = false
@@ -7163,6 +7203,7 @@ do
 	local HOTKEY_OUT = TweenInfo.new(0.2, Enum.EasingStyle.Cubic, Enum.EasingDirection.In)
 	local HOTKEY_SIZE = TweenInfo.new(0.2, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
 	local HOTKEY_ROW_MOVE = TweenInfo.new(0.15, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+	local HOTKEY_ICON_FADE = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 	local renderHotkeyScale
 
@@ -7296,6 +7337,17 @@ do
 			ZIndex = 4,
 		})
 		keyIcon.Visible = data.KeyKind == "icon"
+		-- Second icon stacked on the same spot: switching toggle-left/right
+		-- cross-fades between the two instead of snapping the glyph.
+		local keyIconAlt = U.icon(keyCard, data.KeyIcon or "toggle-left", 13, HOTKEY_TEXT, {
+			Position = keyIcon.Position,
+			Size = UDim2.fromOffset(13, 13),
+			TextTransparency = 1,
+			TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+			TextStrokeTransparency = 0.78,
+			ZIndex = 4,
+		})
+		keyIconAlt.Visible = data.KeyKind == "icon"
 		local nameCard = hotkeyPill(row, data.NameBoxWidth, HOTKEY_ROW_HEIGHT, HOTKEY_NAME_CARD, HOTKEY_NAME_TRANSPARENCY)
 		nameCard.Position = UDim2.fromOffset(data.NameX, 0)
 		if frostHud and Nerx.Frosted then
@@ -7311,6 +7363,8 @@ do
 			KeyCard = keyCard,
 			KeyLabel = keyLabel,
 			KeyIcon = keyIcon,
+			KeyIconAlt = keyIconAlt,
+			IconShown = "main",
 			NameCard = nameCard,
 			NameLabel = nameLabel,
 			KeyKind = data.KeyKind,
@@ -7327,25 +7381,49 @@ do
 		local keyCard = entry.KeyCard
 		local keyLabel = entry.KeyLabel
 		local keyIcon = entry.KeyIcon
+		local keyIconAlt = entry.KeyIconAlt
 		local nameCard = entry.NameCard
 		local nameLabel = entry.NameLabel
 
 		if data.KeyKind == "icon" then
 			keyLabel.Visible = false
 			keyIcon.Visible = true
-			local changed = entry.KeyKind ~= "icon" or entry.KeyIconText ~= data.KeyIcon
-			local toggled = entry.KeyKind == "icon" and entry.TumblerOn ~= data.TumblerOn
-			keyIcon.Text = data.KeyIcon
-			keyIcon.Position = UDim2.fromOffset(math.floor((data.KeyBoxWidth - 13) * 0.5), math.floor((HOTKEY_ROW_HEIGHT - 13) * 0.5))
-			keyIcon.Size = UDim2.fromOffset(13, 13)
-			if changed or toggled then
-				keyIcon.TextTransparency = changed and 1 or 0.85
-				U.tween(keyIcon, TWEEN.Popup, { TextTransparency = data.KeyTransparency or 0.02 })
+			keyIconAlt.Visible = true
+			local iconX = math.floor((data.KeyBoxWidth - 13) * 0.5)
+			local iconY = math.floor((HOTKEY_ROW_HEIGHT - 13) * 0.5)
+			local targetTransparency = data.KeyTransparency or 0.02
+			for _, icon in ipairs({ keyIcon, keyIconAlt }) do
+				icon.Position = UDim2.fromOffset(iconX, iconY)
+				icon.Size = UDim2.fromOffset(13, 13)
+				icon.TextColor3 = HOTKEY_TEXT
+			end
+			if entry.KeyKind ~= "icon" then
+				-- Coming back from a text style: fade the icon in.
+				keyIcon.Text = data.KeyIcon
+				keyIcon.TextTransparency = 1
+				keyIconAlt.TextTransparency = 1
+				entry.IconShown = "main"
+				U.tween(keyIcon, HOTKEY_ICON_FADE, { TextTransparency = targetTransparency })
 			else
-				U.tween(keyIcon, TWEEN.Fast, { TextTransparency = data.KeyTransparency or 0.02 })
+				local shown = entry.IconShown == "alt" and keyIconAlt or keyIcon
+				local hidden = (shown == keyIcon) and keyIconAlt or keyIcon
+				if shown.Text ~= data.KeyIcon then
+					-- Cross-fade the old glyph out and the new ones in, which reads
+					-- as the switch knob sliding instead of an instant icon swap.
+					hidden.Text = data.KeyIcon
+					hidden.TextColor3 = HOTKEY_TEXT
+					hidden.TextTransparency = 1
+					U.tween(shown, HOTKEY_ICON_FADE, { TextTransparency = 1 })
+					U.tween(hidden, HOTKEY_ICON_FADE, { TextTransparency = targetTransparency })
+					entry.IconShown = (hidden == keyIcon) and "main" or "alt"
+				else
+					U.tween(shown, TWEEN.Fast, { TextTransparency = targetTransparency })
+					hidden.TextTransparency = 1
+				end
 			end
 		else
 			keyIcon.Visible = false
+			keyIconAlt.Visible = false
 			keyLabel.Visible = true
 			local keyText = tostring(data.KeyText or "")
 			keyLabel.Text = keyText
@@ -7393,6 +7471,9 @@ do
 		nameCard.BackgroundColor3 = HOTKEY_NAME_CARD
 		keyLabel.TextColor3 = HOTKEY_TEXT
 		keyIcon.TextColor3 = HOTKEY_TEXT
+		if keyIconAlt then
+			keyIconAlt.TextColor3 = HOTKEY_TEXT
+		end
 		nameLabel.TextColor3 = HOTKEY_TEXT
 
 		entry.KeyKind = data.KeyKind
@@ -7445,9 +7526,19 @@ do
 		local headerIcon = overlayHeaderIconHolder
 		local dots = overlayHeaderDots
 		if headerLabel.Text ~= headerText then
-			headerLabel.Text = headerText
-			headerLabel.TextTransparency = 1
-			U.tween(headerLabel, TWEEN.Popup, { TextTransparency = 0.02 })
+			-- Fade the old title out, swap the text and fade the new one in, so a
+			-- bind turning off glides back to "Hotkeys" instead of popping.
+			headerTextToken = headerTextToken + 1
+			local textToken = headerTextToken
+			U.tween(headerLabel, TWEEN.Fast, { TextTransparency = 1 })
+			task.delay(0.09, function()
+				if textToken ~= headerTextToken or not headerLabel.Parent then
+					return
+				end
+				headerLabel.Text = headerText
+				headerLabel.TextTransparency = 1
+				U.tween(headerLabel, TWEEN.Popup, { TextTransparency = 0.02 })
+			end)
 		else
 			U.tween(headerLabel, TWEEN.Fast, { TextTransparency = 0.02 })
 		end
@@ -8515,7 +8606,7 @@ do
 		end
 		visited[bind.Id] = true
 		activeStates[bind.Id] = true
-		lastTriggeredName = tostring(bind.Name or "Bind")
+		trackActiveOrder(bind)
 		applyBindActions(bind, true)
 		refreshChildren(bind, visited)
 		buildOverlay()
@@ -8532,6 +8623,7 @@ do
 		end
 		visited[bind.Id] = true
 		activeStates[bind.Id] = nil
+		trackActiveOrder(bind)
 		applyBindActions(bind, false)
 		refreshChildren(bind, visited)
 		buildOverlay()
