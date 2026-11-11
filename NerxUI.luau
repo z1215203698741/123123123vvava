@@ -9343,10 +9343,24 @@ do
 		layer.grain.Visible = params.Grain > 0.01
 
 		layer.gradient.Color = ColorSequence.new(Color3.new(1, 1, 1))
+		-- Two identical bands half a period apart make the gradient periodic:
+		-- sliding Offset from 0 to 0.5 lands on an identical image, so the sweep
+		-- loops without the visible "restart halfway" snap.
+		local peak = 1 - sheenAmount * 0.22
+		local shoulder = 1 - sheenAmount * 0.08
 		layer.gradient.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 1 - sheenAmount * 0.28),
-			NumberSequenceKeypoint.new(0.22, 1 - sheenAmount * 0.02),
-			NumberSequenceKeypoint.new(0.5, 1 - sheenAmount * 0.08),
+			NumberSequenceKeypoint.new(0, 1),
+			NumberSequenceKeypoint.new(0.15, 1),
+			NumberSequenceKeypoint.new(0.205, shoulder),
+			NumberSequenceKeypoint.new(0.25, peak),
+			NumberSequenceKeypoint.new(0.295, shoulder),
+			NumberSequenceKeypoint.new(0.35, 1),
+			NumberSequenceKeypoint.new(0.5, 1),
+			NumberSequenceKeypoint.new(0.65, 1),
+			NumberSequenceKeypoint.new(0.705, shoulder),
+			NumberSequenceKeypoint.new(0.75, peak),
+			NumberSequenceKeypoint.new(0.795, shoulder),
+			NumberSequenceKeypoint.new(0.85, 1),
 			NumberSequenceKeypoint.new(1, 1),
 		})
 		layer.sheen.Visible = sheenAmount > 0.01 and options.Sheen ~= false
@@ -9405,8 +9419,9 @@ do
 				sweepConnection = nil
 				return
 			end
-			sweepClock = (sweepClock + dt * (0.05 + Frosted.Params.Sweep * 0.45)) % 1
-			local offset = -0.35 + sweepClock * 0.7
+			-- 0..0.5 is exactly one pattern period, so wrapping is invisible.
+			sweepClock = (sweepClock + dt * (0.04 + Frosted.Params.Sweep * 0.36)) % 0.5
+			local offset = sweepClock
 			for _, layer in pairs(layerStore) do
 				if layer.sheen.Parent then
 					layer.gradient.Offset = Vector2.new(offset, 0)
