@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.3.2
+	Nerx UI Library · v1.3.3
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.3.2"
+Nerx.Version = "1.3.3"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -187,6 +187,36 @@ Nerx.Popup = nil
 Nerx.PopupOverlay = nil
 Nerx.PopupHost = nil
 Nerx.Indicators = nil
+
+-- Drop GUIs left behind by a previous injection. An old menu or hotkey HUD
+-- lingering next to the new one ignores the new frost state, which makes the
+-- sync switches look broken.
+do
+	local seen = {}
+	local function purge(container)
+		if not container or seen[container] then
+			return
+		end
+		seen[container] = true
+		local ok, children = pcall(function()
+			return container:GetChildren()
+		end)
+		if not ok or type(children) ~= "table" then
+			return
+		end
+		for _, child in ipairs(children) do
+			if child:IsA("ScreenGui") and string.sub(child.Name, 1, 5) == "Nerx_" then
+				pcall(function()
+					child:Destroy()
+				end)
+			end
+		end
+	end
+	purge(parentGui)
+	pcall(function()
+		purge(LocalPlayer:FindFirstChild("PlayerGui"))
+	end)
+end
 
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "Nerx_" .. tostring(math.random(100000, 999999))
