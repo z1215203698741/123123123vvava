@@ -7348,6 +7348,15 @@ do
 		nameLabel.Position = UDim2.fromOffset(5, 0)
 		nameLabel.Size = UDim2.fromOffset(math.max(8, data.NameBoxWidth - 10), HOTKEY_ROW_HEIGHT)
 		nameLabel.TextXAlignment = overlayRightAligned and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left
+
+		-- Re-apply the HUD palette so a theme switch never leaves old black
+		-- pills behind on a light theme.
+		keyCard.BackgroundColor3 = HOTKEY_KEY_CARD
+		nameCard.BackgroundColor3 = HOTKEY_NAME_CARD
+		keyLabel.TextColor3 = HOTKEY_TEXT
+		keyIcon.TextColor3 = HOTKEY_TEXT
+		nameLabel.TextColor3 = HOTKEY_TEXT
+
 		entry.KeyKind = data.KeyKind
 		entry.KeyIconText = data.KeyIcon
 		entry.TumblerOn = data.TumblerOn
@@ -7401,6 +7410,20 @@ do
 		})
 		headerLabel.TextXAlignment = overlayRightAligned and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left
 		U.tween(dots, info, { Position = UDim2.fromOffset(dotsX, math.floor((HOTKEY_HEADER_HEIGHT - HOTKEY_DOTS_SIZE) * 0.5)) })
+
+		-- Keep the header in the active palette as well.
+		overlayHeaderCard.BackgroundColor3 = HOTKEY_CARD
+		headerLabel.TextColor3 = HOTKEY_TEXT
+		if overlayIconFallback then
+			overlayIconFallback.TextColor3 = HOTKEY_TEXT
+		end
+		if overlayIconImage then
+			overlayIconImage.ImageColor3 = HOTKEY_TEXT
+		end
+		if overlayHeaderDotsIcon then
+			overlayHeaderDotsIcon.TextColor3 = HOTKEY_MUTED
+		end
+
 		if hotkeySettingsOpen and positionHotkeySettings then
 			task.defer(positionHotkeySettings)
 		end
@@ -9015,12 +9038,28 @@ do
 			store = {}
 			surfaceStore[root] = store
 		end
-		-- Include the root itself: for windows and popup cards the root carries
-		-- the panel fill, and that fill has to turn translucent for the glass to
-		-- show the scene behind it.
+		-- Only the outer shell becomes translucent. Making every nested frame
+		-- translucent was exposing inner preview blocks and card fills as
+		-- washed-out rectangles with visible corners ("角料").
 		local list = { root }
-		for _, descendant in ipairs(root:GetDescendants()) do
-			list[#list + 1] = descendant
+		if options.Kind == "window" then
+			local rootSize = root.AbsoluteSize
+			if rootSize.X > 0 and rootSize.Y > 0 then
+				local rootArea = rootSize.X * rootSize.Y
+				for _, child in ipairs(root:GetChildren()) do
+					if child:IsA("GuiObject") then
+						local size = child.AbsoluteSize
+						if size.X * size.Y >= rootArea * 0.10 then
+							local okChild, childTransparency = pcall(function()
+								return child.BackgroundTransparency
+							end)
+							if okChild and childTransparency and childTransparency < 0.99 then
+								list[#list + 1] = child
+							end
+						end
+					end
+				end
+			end
 		end
 		for _, object in ipairs(list) do
 			if object:IsA("GuiObject") and not object:GetAttribute("NerxFrostLayer") and not isExcluded(entry, object) then
@@ -9067,6 +9106,68 @@ do
 		return frame
 	end
 
+	-- The Radius param must reshape the panel itself, not just the glass sheets.
+	-- Matching both keeps the corners concentric, so no stray corner scraps can
+	-- appear while still letting the radius be adjusted.
+	local shapeStore = {}
+
+	local function applyShape(root, radius)
+		if not root or not root:IsA("GuiObject") then
+			return
+		end
+		local corners = {}
+		for _, child in ipairs(root:GetChildren()) do
+			if child:IsA("UICorner") then
+				corners[#corners + 1] = child
+			end
+		end
+		local store = shapeStore[root]
+		if not store then
+			store = { Corners = {}, Created = nil }
+			for _, corner in ipairs(corners) do
+				store.Corners[corner] = corner.CornerRadius
+			end
+			shapeStore[root] = store
+		end
+		if #corners == 0 then
+			local corner = Instance.new("UICorner")
+			corner.Parent = root
+			store.Created = corner
+			corners[1] = corner
+		end
+		local value = UDim.new(0, math.max(0, radius))
+		for _, corner in ipairs(corners) do
+			corner.CornerRadius = value
+		end
+	end
+
+	local function restoreShape(root)
+		local store = shapeStore[root]
+		if not store then
+			return
+		end
+		for corner, value in pairs(store.Corners) do
+			if corner.Parent then
+				corner.CornerRadius = value
+			end
+		end
+		if store.Created and store.Created.Parent then
+			store.Created:Destroy()
+		end
+		shapeStore[root] = nil
+	end
+
+	-- Repainting must update the existing UICorner instead of stacking a new one;
+	-- stacked corners keep an old radius alive and show as corner scraps.
+	local function setCorner(object, radius)
+		local corner = object:FindFirstChildOfClass("UICorner")
+		if not corner then
+			corner = Instance.new("UICorner")
+			corner.Parent = object
+		end
+		corner.CornerRadius = UDim.new(0, math.max(0, radius))
+	end
+
 	local function buildLayer(entry)
 		local root = entry.Root
 		if not root or not root.Parent then
@@ -9093,7 +9194,7 @@ do
 		tint.ZIndex = baseZ
 		tint.Active = false
 		tint:SetAttribute("NerxFrostLayer", true)
-		U.corner(tint, radius)
+		setCorner(tint, radius)
 		local tintGradient = Instance.new("UIGradient")
 		tintGradient.Rotation = 90
 		tintGradient.Parent = tint
@@ -9113,7 +9214,7 @@ do
 		grain.ZIndex = baseZ
 		grain.Active = false
 		grain:SetAttribute("NerxFrostLayer", true)
-		U.corner(grain, radius)
+		setCorner(grain, radius)
 		grain.Parent = root
 
 		-- 3. Sheen: diagonal specular band that sweeps.
@@ -9126,7 +9227,7 @@ do
 		sheen.ZIndex = baseZ
 		sheen.Active = false
 		sheen:SetAttribute("NerxFrostLayer", true)
-		U.corner(sheen, radius)
+		setCorner(sheen, radius)
 		local gradient = Instance.new("UIGradient")
 		gradient.Rotation = 20
 		gradient.Parent = sheen
@@ -9142,7 +9243,7 @@ do
 		rim.ZIndex = baseZ
 		rim.Active = false
 		rim:SetAttribute("NerxFrostLayer", true)
-		U.corner(rim, math.max(0, radius - 1))
+		setCorner(rim, math.max(0, radius - 1))
 		local stroke = Instance.new("UIStroke")
 		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		stroke.LineJoinMode = Enum.LineJoinMode.Round
@@ -9162,7 +9263,7 @@ do
 		chroma.ZIndex = baseZ
 		chroma.Active = false
 		chroma:SetAttribute("NerxFrostLayer", true)
-		U.corner(chroma, radius + 1)
+		setCorner(chroma, radius + 1)
 		local chromaStroke = Instance.new("UIStroke")
 		chromaStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		chromaStroke.LineJoinMode = Enum.LineJoinMode.Round
@@ -9182,7 +9283,7 @@ do
 		halo.ZIndex = baseZ
 		halo.Active = false
 		halo:SetAttribute("NerxFrostLayer", true)
-		U.corner(halo, radius)
+		setCorner(halo, radius)
 		local haloStroke = Instance.new("UIStroke")
 		haloStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		haloStroke.Thickness = 5
@@ -9217,15 +9318,17 @@ do
 		local options = entry.Options or {}
 		local params = Frosted.Params
 		local radius = options.Radius or params.Radius
+		-- Reshape the panel so its corners stay concentric with the glass.
+		applyShape(entry.Root, radius)
 		local sheenAmount = options.Sheen == false and 0 or params.Sheen * (options.SheenScale or 1)
 		local split = math.clamp(params.Dispersion * (options.DispersionScale or 1), 0, 1)
 
-		U.corner(layer.tint, radius)
-		U.corner(layer.grain, radius)
-		U.corner(layer.sheen, radius)
-		U.corner(layer.rim, math.max(0, radius - 1))
-		U.corner(layer.chroma, radius + 1)
-		U.corner(layer.halo, radius)
+		setCorner(layer.tint, radius)
+		setCorner(layer.grain, radius)
+		setCorner(layer.sheen, radius)
+		setCorner(layer.rim, math.max(0, radius - 1))
+		setCorner(layer.chroma, radius + 1)
+		setCorner(layer.halo, radius)
 
 		-- BackgroundTransparency stays 0: the UIGradient below drives the actual
 		-- alpha per row (Roblox multiplies both, so a non-zero base would hide it).
@@ -9340,6 +9443,7 @@ do
 			return false
 		end
 		restoreSurfaces(root)
+		restoreShape(root)
 		destroyLayer(root)
 		table.remove(targets, index)
 		return true
@@ -9448,6 +9552,7 @@ do
 			end
 			for _, entry in ipairs(targets) do
 				restoreSurfaces(entry.Root)
+				restoreShape(entry.Root)
 				destroyLayer(entry.Root)
 			end
 			notifyChanged()
