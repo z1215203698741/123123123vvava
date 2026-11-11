@@ -937,6 +937,11 @@ function Nerx:ClosePopup(instant)
 
 	local card = popup.Card
 	local overlay = popup.Overlay
+	if Nerx.Frosted and card then
+		pcall(function()
+			Nerx.Frosted:Unregister(card)
+		end)
+	end
 	if instant or not card or not card.Parent then
 		if card then
 			card:Destroy()
@@ -1084,6 +1089,11 @@ function U.popup(anchor, width, height, builder, alignRight, placement)
 	})
 
 	builder(card)
+
+	-- Popups are separate roots, so frost them explicitly when the mode is on.
+	if Nerx.Frosted and Nerx.Frosted.Enabled then
+		Nerx.Frosted:Register(card, { Kind = "popup" })
+	end
 
 	for _, object in ipairs(card:GetDescendants()) do
 		if object:IsA("GuiObject") then
@@ -8911,26 +8921,37 @@ end
 
 do
 	local Lighting = game:GetService("Lighting")
+	local GRAIN_TEXTURE = "rbxasset://textures/particles/smoke_main.dds"
 
+	-- Ported from the web liquid-glass stack:
+	--   1. blurred backdrop  -> scene BlurEffect + translucent surfaces
+	--   2. tint              -> white wash on top of the glass
+	--   3. specular / grain  -> tiled grain + diagonal sweep
+	--   4. gradient border   -> inner hairline stroke with a soft gradient
+	--   5. chromatic fringe  -> second, slightly larger red/blue stroke
+	--   6. outer bloom       -> wide transparent stroke
 	local DEFAULT_PARAMS = {
-		Blur = 14,
-		Opacity = 0.30,
-		Dispersion = 0.45,
-		Outline = 0.55,
-		Sheen = 0.40,
-		Press = 0.965,
-		Spring = 24,
+		Blur = 12,
+		Opacity = 0.55,
+		Tint = 0.10,
+		Grain = 0.30,
+		Sheen = 0.55,
+		Sweep = 0.35,
+		Dispersion = 0.55,
+		Outline = 0.65,
+		Thickness = 1.5,
 		Radius = 12,
-		Thickness = 1,
+		Press = 0.965,
+		Spring = 22,
 	}
 
 	local Frosted = {
 		Enabled = false,
 		Params = {},
 		Presets = {
-			Clear = { Blur = 6, Opacity = 0.16, Dispersion = 0.22, Outline = 0.35, Sheen = 0.22, Radius = 10, Thickness = 1 },
-			Frosted = { Blur = 14, Opacity = 0.30, Dispersion = 0.45, Outline = 0.55, Sheen = 0.40, Radius = 12, Thickness = 1 },
-			Heavy = { Blur = 26, Opacity = 0.52, Dispersion = 0.72, Outline = 0.80, Sheen = 0.62, Radius = 18, Thickness = 2 },
+			Clear = { Blur = 6, Opacity = 0.34, Tint = 0.06, Grain = 0.14, Sheen = 0.30, Sweep = 0.18, Dispersion = 0.26, Outline = 0.40, Thickness = 1 },
+			Frosted = { Blur = 12, Opacity = 0.55, Tint = 0.10, Grain = 0.30, Sheen = 0.55, Sweep = 0.35, Dispersion = 0.55, Outline = 0.65, Thickness = 1.5 },
+			Heavy = { Blur = 22, Opacity = 0.74, Tint = 0.18, Grain = 0.55, Sheen = 0.78, Sweep = 0.55, Dispersion = 0.80, Outline = 0.90, Thickness = 2 },
 		},
 		OnChanged = {},
 	}
@@ -8943,6 +8964,8 @@ do
 	local surfaceStore = {}
 	local layerStore = {}
 	local blurEffect
+	local sweepConnection
+	local sweepClock = 0
 
 	local function ensureBlur()
 		local blur = Lighting:FindFirstChild("NerxFrostedBlur")
@@ -8971,7 +8994,7 @@ do
 		if not list then
 			return false
 		end
-		for _, candidate in ipairs(list) do
+		for _, candidate in list do
 			if candidate == object then
 				return true
 			end
@@ -8986,7 +9009,7 @@ do
 		end
 		local options = entry.Options or {}
 		local amount = Frosted.Params.Opacity * (options.Opacity or 1)
-		local ceiling = options.MaxTransparency or 0.94
+		local ceiling = options.MaxTransparency or 0.92
 		local store = surfaceStore[root]
 		if not store then
 			store = {}
@@ -9020,6 +9043,20 @@ do
 		surfaceStore[root] = nil
 	end
 
+	local function newLayer(root, name, className, z, radius)
+		local frame = Instance.new(className)
+		frame.Name = name
+		frame.BackgroundTransparency = 1
+		frame.BorderSizePixel = 0
+		frame.Size = UDim2.fromScale(1, 1)
+		frame.ZIndex = z
+		frame.Active = false
+		frame:SetAttribute("NerxFrostLayer", true)
+		U.corner(frame, radius)
+		frame.Parent = root
+		return frame
+	end
+
 	local function buildLayer(entry)
 		local root = entry.Root
 		if not root or not root.Parent then
@@ -9031,46 +9068,125 @@ do
 		end
 		local options = entry.Options or {}
 		local baseZ = options.Layer or 240
+		local radius = options.Radius or Frosted.Params.Radius
 
+		-- 1. Tint: a very light white wash, like rgba(255,255,255,.06).
+		local tint = Instance.new("Frame")
+		tint.Name = "NerxFrostTint"
+		tint.BackgroundColor3 = Color3.new(1, 1, 1)
+		tint.BackgroundTransparency = 0.94
+		tint.BorderSizePixel = 0
+		tint.Size = UDim2.fromScale(1, 1)
+		tint.ZIndex = baseZ
+		tint.Active = false
+		tint:SetAttribute("NerxFrostLayer", true)
+		U.corner(tint, radius)
+		tint.Parent = root
+
+		-- 2. Grain: tiled soft smoke sells the "frosted" surface.
+		local grain = Instance.new("ImageLabel")
+		grain.Name = "NerxFrostGrain"
+		grain.BackgroundTransparency = 1
+		grain.BorderSizePixel = 0
+		grain.Size = UDim2.fromScale(1, 1)
+		grain.ScaleType = Enum.ScaleType.Tile
+		grain.TileSize = UDim2.fromOffset(90, 90)
+		grain.Image = GRAIN_TEXTURE
+		grain.ImageColor3 = Color3.new(1, 1, 1)
+		grain.ImageTransparency = 0.9
+		grain.ZIndex = baseZ + 1
+		grain.Active = false
+		grain:SetAttribute("NerxFrostLayer", true)
+		U.corner(grain, radius)
+		grain.Parent = root
+
+		-- 3. Sheen: diagonal specular band that sweeps.
 		local sheen = Instance.new("Frame")
 		sheen.Name = "NerxFrostSheen"
 		sheen.BackgroundColor3 = Color3.new(1, 1, 1)
 		sheen.BackgroundTransparency = 0
 		sheen.BorderSizePixel = 0
 		sheen.Size = UDim2.fromScale(1, 1)
-		sheen.ZIndex = baseZ
+		sheen.ZIndex = baseZ + 2
 		sheen.Active = false
 		sheen:SetAttribute("NerxFrostLayer", true)
-		U.corner(sheen, options.Radius or Frosted.Params.Radius)
+		U.corner(sheen, radius)
 		local gradient = Instance.new("UIGradient")
-		gradient.Rotation = 18
+		gradient.Rotation = 20
 		gradient.Parent = sheen
 		sheen.Parent = root
 
+		-- 4. Gradient hairline border, inset by one pixel.
 		local rim = Instance.new("Frame")
 		rim.Name = "NerxFrostRim"
 		rim.BackgroundTransparency = 1
 		rim.BorderSizePixel = 0
-		rim.Size = UDim2.fromScale(1, 1)
-		rim.ZIndex = baseZ + 1
+		rim.Position = UDim2.fromOffset(1, 1)
+		rim.Size = UDim2.new(1, -2, 1, -2)
+		rim.ZIndex = baseZ + 3
 		rim.Active = false
 		rim:SetAttribute("NerxFrostLayer", true)
-		U.corner(rim, options.Radius or Frosted.Params.Radius)
+		U.corner(rim, math.max(0, radius - 1))
 		local stroke = Instance.new("UIStroke")
 		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		stroke.LineJoinMode = Enum.LineJoinMode.Round
 		local strokeGradient = Instance.new("UIGradient")
-		strokeGradient.Rotation = 35
+		strokeGradient.Rotation = 90
 		strokeGradient.Parent = stroke
 		stroke.Parent = rim
 		rim.Parent = root
 
+		-- 5. Chromatic fringe: a slightly larger stroke split into R/B.
+		local chroma = Instance.new("Frame")
+		chroma.Name = "NerxFrostChroma"
+		chroma.BackgroundTransparency = 1
+		chroma.BorderSizePixel = 0
+		chroma.Position = UDim2.fromOffset(-1, -1)
+		chroma.Size = UDim2.new(1, 2, 1, 2)
+		chroma.ZIndex = baseZ + 4
+		chroma.Active = false
+		chroma:SetAttribute("NerxFrostLayer", true)
+		U.corner(chroma, radius + 1)
+		local chromaStroke = Instance.new("UIStroke")
+		chromaStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		chromaStroke.LineJoinMode = Enum.LineJoinMode.Round
+		chromaStroke.Transparency = 0.9
+		local chromaGradient = Instance.new("UIGradient")
+		chromaGradient.Rotation = 35
+		chromaGradient.Parent = chromaStroke
+		chromaStroke.Parent = chroma
+		chroma.Parent = root
+
+		-- 6. Outer bloom: wide, very transparent stroke.
+		local halo = Instance.new("Frame")
+		halo.Name = "NerxFrostHalo"
+		halo.BackgroundTransparency = 1
+		halo.BorderSizePixel = 0
+		halo.Size = UDim2.fromScale(1, 1)
+		halo.ZIndex = baseZ + 5
+		halo.Active = false
+		halo:SetAttribute("NerxFrostLayer", true)
+		U.corner(halo, radius)
+		local haloStroke = Instance.new("UIStroke")
+		haloStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		haloStroke.Thickness = 5
+		haloStroke.Transparency = 0.9
+		haloStroke.Parent = halo
+		halo.Parent = root
+
 		local layer = {
+			tint = tint,
+			grain = grain,
 			sheen = sheen,
 			gradient = gradient,
 			rim = rim,
 			stroke = stroke,
 			strokeGradient = strokeGradient,
+			chroma = chroma,
+			chromaStroke = chromaStroke,
+			chromaGradient = chromaGradient,
+			halo = halo,
+			haloStroke = haloStroke,
 		}
 		layerStore[root] = layer
 		return layer
@@ -9084,32 +9200,91 @@ do
 		local options = entry.Options or {}
 		local params = Frosted.Params
 		local radius = options.Radius or params.Radius
-		local sheenScale = options.Sheen == false and 0 or params.Sheen * (options.SheenScale or 1)
+		local sheenAmount = options.Sheen == false and 0 or params.Sheen * (options.SheenScale or 1)
 		local split = math.clamp(params.Dispersion * (options.DispersionScale or 1), 0, 1)
 
+		U.corner(layer.tint, radius)
+		U.corner(layer.grain, radius)
 		U.corner(layer.sheen, radius)
-		U.corner(layer.rim, radius)
+		U.corner(layer.rim, math.max(0, radius - 1))
+		U.corner(layer.chroma, radius + 1)
+		U.corner(layer.halo, radius)
+
+		layer.tint.BackgroundTransparency = math.clamp(1 - params.Tint * 0.14, 0, 1)
+		layer.grain.ImageTransparency = math.clamp(1 - params.Grain * 0.5, 0, 1)
+		layer.grain.Visible = params.Grain > 0.01
+
+		layer.gradient.Color = ColorSequence.new(Color3.new(1, 1, 1))
 		layer.gradient.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 1 - sheenScale * 0.16),
-			NumberSequenceKeypoint.new(0.42, 0.93),
+			NumberSequenceKeypoint.new(0, 1 - sheenAmount * 0.10),
+			NumberSequenceKeypoint.new(0.22, 1 - sheenAmount * 0.02),
+			NumberSequenceKeypoint.new(0.5, 1 - sheenAmount * 0.06),
 			NumberSequenceKeypoint.new(1, 1),
 		})
-		local function tint(color, amount)
+		layer.sheen.Visible = sheenAmount > 0.01 and options.Sheen ~= false
+
+		-- Hairline: bright at the top, fading toward the bottom.
+		layer.strokeGradient.Color = ColorSequence.new(Color3.new(1, 1, 1))
+		layer.strokeGradient.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, math.clamp(1 - params.Outline * 0.85, 0, 1)),
+			NumberSequenceKeypoint.new(0.5, math.clamp(1 - params.Outline * 0.35, 0, 1)),
+			NumberSequenceKeypoint.new(1, math.clamp(1 - params.Outline * 0.62, 0, 1)),
+		})
+		layer.stroke.Thickness = math.max(1, options.Thickness or params.Thickness - 0.5)
+		layer.rim.Visible = options.Rim ~= false and params.Outline > 0.01
+
+		local function fringe(color, amount)
 			return Color3.new(
 				color.R + (1 - color.R) * (1 - amount),
 				color.G + (1 - color.G) * (1 - amount),
 				color.B + (1 - color.B) * (1 - amount)
 			)
 		end
-		layer.strokeGradient.Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, tint(Color3.fromRGB(255, 96, 96), split)),
+		layer.chromaGradient.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, fringe(Color3.fromRGB(255, 90, 90), split)),
 			ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
-			ColorSequenceKeypoint.new(1, tint(Color3.fromRGB(96, 150, 255), split)),
+			ColorSequenceKeypoint.new(1, fringe(Color3.fromRGB(90, 150, 255), split)),
 		})
-		layer.stroke.Thickness = options.Thickness or params.Thickness
-		layer.stroke.Transparency = math.clamp(0.62 - params.Outline * 0.42, 0, 1)
-		layer.sheen.Visible = options.Sheen ~= false
-		layer.rim.Visible = options.Rim ~= false
+		layer.chromaStroke.Thickness = math.max(1, (options.Thickness or params.Thickness))
+		layer.chromaStroke.Transparency = math.clamp(1 - split * 0.45, 0, 1)
+		layer.chroma.Visible = split > 0.02 and options.Rim ~= false
+
+		layer.haloStroke.Thickness = math.max(3, (options.Thickness or params.Thickness) * 4)
+		layer.haloStroke.Transparency = math.clamp(0.98 - params.Outline * 0.22, 0, 1)
+		layer.halo.Visible = options.Rim ~= false and params.Outline > 0.05
+	end
+
+	local function destroyLayer(root)
+		local layer = layerStore[root]
+		if not layer then
+			return
+		end
+		for _, name in ipairs({ "tint", "grain", "sheen", "rim", "chroma", "halo" }) do
+			if layer[name] then
+				layer[name]:Destroy()
+			end
+		end
+		layerStore[root] = nil
+	end
+
+	local function startSweep()
+		if sweepConnection then
+			return
+		end
+		sweepConnection = RunService.RenderStepped:Connect(function(dt)
+			if not Frosted.Enabled then
+				sweepConnection:Disconnect()
+				sweepConnection = nil
+				return
+			end
+			sweepClock = (sweepClock + dt * (0.05 + Frosted.Params.Sweep * 0.45)) % 1
+			local offset = -0.35 + sweepClock * 0.7
+			for _, layer in pairs(layerStore) do
+				if layer.sheen.Parent then
+					layer.gradient.Offset = Vector2.new(offset, 0)
+				end
+			end
+		end)
 	end
 
 	local function notifyChanged()
@@ -9140,12 +9315,7 @@ do
 			return false
 		end
 		restoreSurfaces(root)
-		local layer = layerStore[root]
-		if layer then
-			layer.sheen:Destroy()
-			layer.rim:Destroy()
-			layerStore[root] = nil
-		end
+		destroyLayer(root)
 		table.remove(targets, index)
 		return true
 	end
@@ -9161,18 +9331,21 @@ do
 		if type(partial) ~= "table" then
 			return self.Params
 		end
+		local opacityChanged = false
 		for key, value in pairs(partial) do
 			if typeof(value) == "number" then
+				if key == "Opacity" and value ~= self.Params.Opacity then
+					opacityChanged = true
+				end
 				self.Params[key] = value
 			elseif self.Params[key] ~= nil and typeof(value) == typeof(self.Params[key]) then
 				self.Params[key] = value
 			end
 		end
-		self:Refresh()
+		self:Refresh(not opacityChanged)
 		return self.Params
 	end
 
-	-- Backwards-compatible alias for early builds.
 	function Frosted:Apply(partial)
 		return self:SetParams(partial)
 	end
@@ -9204,14 +9377,13 @@ do
 		return true
 	end
 
-	function Frosted:Refresh()
+	function Frosted:Refresh(skipSurfaces)
 		local blur = ensureBlur()
 		blur.Size = self.Enabled and self.Params.Blur or 0
 		blur.Enabled = self.Enabled and self.Params.Blur > 0.5
 		if not self.Enabled then
 			return
 		end
-		-- Windows register automatically; catch any created after enabling.
 		for _, win in ipairs(Nerx.Windows) do
 			if win.Root and not findTarget(win.Root) then
 				table.insert(targets, { Root = win.Root, Options = { Kind = "window" } })
@@ -9219,10 +9391,13 @@ do
 		end
 		for _, entry in ipairs(targets) do
 			if entry.Root and entry.Root.Parent then
-				paintSurfaces(entry)
+				if not skipSurfaces then
+					paintSurfaces(entry)
+				end
 				paintLayer(entry)
 			end
 		end
+		startSweep()
 		notifyChanged()
 	end
 
@@ -9238,18 +9413,17 @@ do
 		if enabled then
 			self:Refresh()
 		else
+			if sweepConnection then
+				sweepConnection:Disconnect()
+				sweepConnection = nil
+			end
 			if blurEffect then
 				blurEffect.Size = 0
 				blurEffect.Enabled = false
 			end
 			for _, entry in ipairs(targets) do
 				restoreSurfaces(entry.Root)
-				local layer = layerStore[entry.Root]
-				if layer then
-					layer.sheen:Destroy()
-					layer.rim:Destroy()
-					layerStore[entry.Root] = nil
-				end
+				destroyLayer(entry.Root)
 			end
 			notifyChanged()
 		end
