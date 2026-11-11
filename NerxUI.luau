@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.3.1
+	Nerx UI Library · v1.3.2
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.3.1"
+Nerx.Version = "1.3.2"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -6878,7 +6878,7 @@ do
 	local activeStates = {}
 	local listeners = {}
 	local bindCounter = 0
-	local overlayEnabled = true
+	local overlayEnabled = false
 
 	local overlayRoot
 	local overlayEntries = {}
@@ -8931,14 +8931,14 @@ do
 	--   5. chromatic fringe  -> second, slightly larger red/blue stroke
 	--   6. outer bloom       -> wide transparent stroke
 	local DEFAULT_PARAMS = {
-		Blur = 12,
-		Opacity = 0.55,
-		Tint = 0.10,
-		Grain = 0.30,
-		Sheen = 0.55,
+		Blur = 0,
+		Opacity = 0.32,
+		Tint = 0.25,
+		Grain = 0.40,
+		Sheen = 0.60,
 		Sweep = 0.35,
-		Dispersion = 0.55,
-		Outline = 0.65,
+		Dispersion = 0.50,
+		Outline = 0.70,
 		Thickness = 1.5,
 		Radius = 12,
 		Press = 0.965,
@@ -8949,9 +8949,9 @@ do
 		Enabled = false,
 		Params = {},
 		Presets = {
-			Clear = { Blur = 6, Opacity = 0.34, Tint = 0.06, Grain = 0.14, Sheen = 0.30, Sweep = 0.18, Dispersion = 0.26, Outline = 0.40, Thickness = 1 },
-			Frosted = { Blur = 12, Opacity = 0.55, Tint = 0.10, Grain = 0.30, Sheen = 0.55, Sweep = 0.35, Dispersion = 0.55, Outline = 0.65, Thickness = 1.5 },
-			Heavy = { Blur = 22, Opacity = 0.74, Tint = 0.18, Grain = 0.55, Sheen = 0.78, Sweep = 0.55, Dispersion = 0.80, Outline = 0.90, Thickness = 2 },
+			Clear = { Blur = 0, Opacity = 0.20, Tint = 0.14, Grain = 0.20, Sheen = 0.35, Sweep = 0.18, Dispersion = 0.30, Outline = 0.50, Thickness = 1 },
+			Frosted = { Blur = 0, Opacity = 0.32, Tint = 0.25, Grain = 0.40, Sheen = 0.60, Sweep = 0.35, Dispersion = 0.50, Outline = 0.70, Thickness = 1.5 },
+			Heavy = { Blur = 12, Opacity = 0.45, Tint = 0.38, Grain = 0.65, Sheen = 0.85, Sweep = 0.55, Dispersion = 0.75, Outline = 0.95, Thickness = 2 },
 		},
 		OnChanged = {},
 	}
@@ -9015,7 +9015,14 @@ do
 			store = {}
 			surfaceStore[root] = store
 		end
-		for _, object in ipairs(root:GetDescendants()) do
+		-- Include the root itself: for windows and popup cards the root carries
+		-- the panel fill, and that fill has to turn translucent for the glass to
+		-- show the scene behind it.
+		local list = { root }
+		for _, descendant in ipairs(root:GetDescendants()) do
+			list[#list + 1] = descendant
+		end
+		for _, object in ipairs(list) do
 			if object:IsA("GuiObject") and not object:GetAttribute("NerxFrostLayer") and not isExcluded(entry, object) then
 				local ok, transparency = pcall(function()
 					return object.BackgroundTransparency
@@ -9024,7 +9031,10 @@ do
 					if store[object] == nil then
 						store[object] = transparency
 					end
-					object.BackgroundTransparency = math.clamp(store[object] + amount, 0, ceiling)
+					-- Blend toward transparent instead of adding, so panels that
+					-- are already semi-transparent never go fully invisible.
+					local base = store[object]
+					object.BackgroundTransparency = math.clamp(base + amount * (1 - base), 0, ceiling)
 				end
 			end
 		end
@@ -9067,7 +9077,10 @@ do
 			return cached
 		end
 		local options = entry.Options or {}
-		local baseZ = options.Layer or 240
+		-- Layers must sit above the panel background but BELOW the menu content,
+		-- otherwise the wash covers labels and controls. Content uses ZIndex
+		-- 1..10, so every layer shares ZIndex 0 and stacks by creation order.
+		local baseZ = options.Layer or 0
 		local radius = options.Radius or Frosted.Params.Radius
 
 		-- 1. Tint: a very light white wash, like rgba(255,255,255,.06).
@@ -9081,6 +9094,9 @@ do
 		tint.Active = false
 		tint:SetAttribute("NerxFrostLayer", true)
 		U.corner(tint, radius)
+		local tintGradient = Instance.new("UIGradient")
+		tintGradient.Rotation = 90
+		tintGradient.Parent = tint
 		tint.Parent = root
 
 		-- 2. Grain: tiled soft smoke sells the "frosted" surface.
@@ -9090,11 +9106,11 @@ do
 		grain.BorderSizePixel = 0
 		grain.Size = UDim2.fromScale(1, 1)
 		grain.ScaleType = Enum.ScaleType.Tile
-		grain.TileSize = UDim2.fromOffset(90, 90)
+		grain.TileSize = UDim2.fromOffset(120, 120)
 		grain.Image = GRAIN_TEXTURE
 		grain.ImageColor3 = Color3.new(1, 1, 1)
 		grain.ImageTransparency = 0.9
-		grain.ZIndex = baseZ + 1
+		grain.ZIndex = baseZ
 		grain.Active = false
 		grain:SetAttribute("NerxFrostLayer", true)
 		U.corner(grain, radius)
@@ -9107,7 +9123,7 @@ do
 		sheen.BackgroundTransparency = 0
 		sheen.BorderSizePixel = 0
 		sheen.Size = UDim2.fromScale(1, 1)
-		sheen.ZIndex = baseZ + 2
+		sheen.ZIndex = baseZ
 		sheen.Active = false
 		sheen:SetAttribute("NerxFrostLayer", true)
 		U.corner(sheen, radius)
@@ -9123,7 +9139,7 @@ do
 		rim.BorderSizePixel = 0
 		rim.Position = UDim2.fromOffset(1, 1)
 		rim.Size = UDim2.new(1, -2, 1, -2)
-		rim.ZIndex = baseZ + 3
+		rim.ZIndex = baseZ
 		rim.Active = false
 		rim:SetAttribute("NerxFrostLayer", true)
 		U.corner(rim, math.max(0, radius - 1))
@@ -9143,7 +9159,7 @@ do
 		chroma.BorderSizePixel = 0
 		chroma.Position = UDim2.fromOffset(-1, -1)
 		chroma.Size = UDim2.new(1, 2, 1, 2)
-		chroma.ZIndex = baseZ + 4
+		chroma.ZIndex = baseZ
 		chroma.Active = false
 		chroma:SetAttribute("NerxFrostLayer", true)
 		U.corner(chroma, radius + 1)
@@ -9163,7 +9179,7 @@ do
 		halo.BackgroundTransparency = 1
 		halo.BorderSizePixel = 0
 		halo.Size = UDim2.fromScale(1, 1)
-		halo.ZIndex = baseZ + 5
+		halo.ZIndex = baseZ
 		halo.Active = false
 		halo:SetAttribute("NerxFrostLayer", true)
 		U.corner(halo, radius)
@@ -9176,6 +9192,7 @@ do
 
 		local layer = {
 			tint = tint,
+			tintGradient = tintGradient,
 			grain = grain,
 			sheen = sheen,
 			gradient = gradient,
@@ -9210,15 +9227,23 @@ do
 		U.corner(layer.chroma, radius + 1)
 		U.corner(layer.halo, radius)
 
-		layer.tint.BackgroundTransparency = math.clamp(1 - params.Tint * 0.14, 0, 1)
-		layer.grain.ImageTransparency = math.clamp(1 - params.Grain * 0.5, 0, 1)
+		-- BackgroundTransparency stays 0: the UIGradient below drives the actual
+		-- alpha per row (Roblox multiplies both, so a non-zero base would hide it).
+		layer.tint.BackgroundTransparency = 0
+		layer.tintGradient.Color = ColorSequence.new(Color3.new(1, 1, 1))
+		layer.tintGradient.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, math.clamp(1 - params.Tint * 0.90, 0, 1)),
+			NumberSequenceKeypoint.new(0.40, math.clamp(1 - params.Tint * 0.45, 0, 1)),
+			NumberSequenceKeypoint.new(1, math.clamp(1 - params.Tint * 0.15, 0, 1)),
+		})
+		layer.grain.ImageTransparency = math.clamp(1 - params.Grain * 0.55, 0, 1)
 		layer.grain.Visible = params.Grain > 0.01
 
 		layer.gradient.Color = ColorSequence.new(Color3.new(1, 1, 1))
 		layer.gradient.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 1 - sheenAmount * 0.10),
+			NumberSequenceKeypoint.new(0, 1 - sheenAmount * 0.28),
 			NumberSequenceKeypoint.new(0.22, 1 - sheenAmount * 0.02),
-			NumberSequenceKeypoint.new(0.5, 1 - sheenAmount * 0.06),
+			NumberSequenceKeypoint.new(0.5, 1 - sheenAmount * 0.08),
 			NumberSequenceKeypoint.new(1, 1),
 		})
 		layer.sheen.Visible = sheenAmount > 0.01 and options.Sheen ~= false
@@ -9226,9 +9251,9 @@ do
 		-- Hairline: bright at the top, fading toward the bottom.
 		layer.strokeGradient.Color = ColorSequence.new(Color3.new(1, 1, 1))
 		layer.strokeGradient.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, math.clamp(1 - params.Outline * 0.85, 0, 1)),
-			NumberSequenceKeypoint.new(0.5, math.clamp(1 - params.Outline * 0.35, 0, 1)),
-			NumberSequenceKeypoint.new(1, math.clamp(1 - params.Outline * 0.62, 0, 1)),
+			NumberSequenceKeypoint.new(0, math.clamp(1 - params.Outline * 0.95, 0, 1)),
+			NumberSequenceKeypoint.new(0.5, math.clamp(1 - params.Outline * 0.40, 0, 1)),
+			NumberSequenceKeypoint.new(1, math.clamp(1 - params.Outline * 0.65, 0, 1)),
 		})
 		layer.stroke.Thickness = math.max(1, options.Thickness or params.Thickness - 0.5)
 		layer.rim.Visible = options.Rim ~= false and params.Outline > 0.01
@@ -9246,7 +9271,7 @@ do
 			ColorSequenceKeypoint.new(1, fringe(Color3.fromRGB(90, 150, 255), split)),
 		})
 		layer.chromaStroke.Thickness = math.max(1, (options.Thickness or params.Thickness))
-		layer.chromaStroke.Transparency = math.clamp(1 - split * 0.45, 0, 1)
+		layer.chromaStroke.Transparency = math.clamp(1 - split * 0.55, 0, 1)
 		layer.chroma.Visible = split > 0.02 and options.Rim ~= false
 
 		layer.haloStroke.Thickness = math.max(3, (options.Thickness or params.Thickness) * 4)
