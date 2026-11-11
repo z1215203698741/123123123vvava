@@ -6879,6 +6879,8 @@ do
 	local listeners = {}
 	local bindCounter = 0
 	local overlayEnabled = false
+	-- Optional: frost the floating Hotkeys HUD pills together with the menu.
+	local frostHud = false
 
 	local overlayRoot
 	local overlayEntries = {}
@@ -7247,6 +7249,9 @@ do
 		})
 		local keyCard = hotkeyPill(row, data.KeyBoxWidth, HOTKEY_ROW_HEIGHT, HOTKEY_KEY_CARD, HOTKEY_KEY_TRANSPARENCY)
 		keyCard.Position = UDim2.fromOffset(data.KeyX, 0)
+		if frostHud and Nerx.Frosted then
+			Nerx.Frosted:Register(keyCard, { Kind = "card", Radius = 5 })
+		end
 		local keyLabel = hotkeyText(keyCard, "", HOTKEY_KEY_TEXT_SIZE, data.KeyBoxWidth - 6, HOTKEY_ROW_HEIGHT, 0.12)
 		keyLabel.Position = UDim2.fromOffset(3, 0)
 		keyLabel.TextXAlignment = Enum.TextXAlignment.Center
@@ -7263,6 +7268,9 @@ do
 		keyIcon.Visible = data.KeyKind == "icon"
 		local nameCard = hotkeyPill(row, data.NameBoxWidth, HOTKEY_ROW_HEIGHT, HOTKEY_NAME_CARD, HOTKEY_NAME_TRANSPARENCY)
 		nameCard.Position = UDim2.fromOffset(data.NameX, 0)
+		if frostHud and Nerx.Frosted then
+			Nerx.Frosted:Register(nameCard, { Kind = "card", Radius = 5 })
+		end
 		local nameLabel = hotkeyText(nameCard, data.NameText, HOTKEY_NAME_TEXT_SIZE, data.NameBoxWidth - 10, HOTKEY_ROW_HEIGHT, 0.02)
 		nameLabel.Position = UDim2.fromOffset(5, 0)
 		nameLabel.TextXAlignment = overlayRightAligned and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left
@@ -7370,6 +7378,18 @@ do
 		entry.Removing = true
 		entry.Token = entry.Token + 1
 		local token = entry.Token
+		if Nerx.Frosted then
+			if entry.KeyCard then
+				pcall(function()
+					Nerx.Frosted:Unregister(entry.KeyCard)
+				end)
+			end
+			if entry.NameCard then
+				pcall(function()
+					Nerx.Frosted:Unregister(entry.NameCard)
+				end)
+			end
+		end
 		local slide = overlayRightAligned and 40 or -40
 		local position = entry.Frame.Position
 		U.tween(entry.Frame, HOTKEY_OUT, {
@@ -7434,6 +7454,9 @@ do
 		headerCard.Position = UDim2.fromOffset(overlayRightAligned and 14 or -14, 0)
 		U.tween(headerCard, TWEEN.Popup, { Position = UDim2.fromOffset(0, 0) })
 		overlayHeaderCard = headerCard
+		if frostHud and Nerx.Frosted then
+			Nerx.Frosted:Register(headerCard, { Kind = "card", Radius = 5 })
+		end
 		overlayIconImage = nil
 		overlayIconFallback = nil
 		hotkeyDotsButton = nil
@@ -7551,12 +7574,29 @@ do
 							overlayRoot.Visible = false
 						end
 						for _, entry in pairs(overlayEntries) do
+							if Nerx.Frosted then
+								if entry.KeyCard then
+									pcall(function()
+										Nerx.Frosted:Unregister(entry.KeyCard)
+									end)
+								end
+								if entry.NameCard then
+									pcall(function()
+										Nerx.Frosted:Unregister(entry.NameCard)
+									end)
+								end
+							end
 							if entry.Frame then
 								entry.Frame:Destroy()
 							end
 						end
 						table.clear(overlayEntries)
 						if overlayHeaderCard then
+							if Nerx.Frosted then
+								pcall(function()
+									Nerx.Frosted:Unregister(overlayHeaderCard)
+								end)
+							end
 							overlayHeaderCard:Destroy()
 							overlayHeaderCard = nil
 							-- Children are destroyed with the header.
@@ -8825,6 +8865,36 @@ do
 		return overlayEnabled
 	end
 
+	-- Register / unregister the floating HUD pills with the frosted-glass mode.
+	function BindManager:SetFrosted(enabled)
+		enabled = enabled == true
+		frostHud = enabled
+		if not Nerx.Frosted then
+			return
+		end
+		local function applyPill(pill)
+			if not pill then
+				return
+			end
+			if enabled then
+				Nerx.Frosted:Register(pill, { Kind = "card", Radius = 5 })
+			else
+				pcall(function()
+					Nerx.Frosted:Unregister(pill)
+				end)
+			end
+		end
+		for _, entry in pairs(overlayEntries) do
+			applyPill(entry.KeyCard)
+			applyPill(entry.NameCard)
+		end
+		applyPill(overlayHeaderCard)
+	end
+
+	function BindManager:IsFrosted()
+		return frostHud
+	end
+
 	function BindManager:SetHotkeyStyle(value)
 		setHotkeyStyle(value)
 	end
@@ -9168,6 +9238,19 @@ do
 		corner.CornerRadius = UDim.new(0, math.max(0, radius))
 	end
 
+	-- Shared screen-space sweep: one wave travels left -> right across the whole
+	-- screen and every frosted panel samples it at its own screen position, so
+	-- the HUD, the menu and open popups all catch the same sweep in order.
+	local SWEEP_PAD = 420
+	local sweepX = -SWEEP_PAD
+
+	local function applySweepOffset(root, layer)
+		local position = root.AbsolutePosition
+		local size = root.AbsoluteSize
+		local localX = (sweepX - position.X) / math.max(1, size.X)
+		layer.gradient.Offset = Vector2.new(localX - 0.5, 0)
+	end
+
 	local function buildLayer(entry)
 		local root = entry.Root
 		if not root or not root.Parent then
@@ -9217,7 +9300,8 @@ do
 		setCorner(grain, radius)
 		grain.Parent = root
 
-		-- 3. Sheen: diagonal specular band that sweeps.
+		-- 3. Sheen: one diagonal specular band. Its offset is driven in screen
+		-- space, so every frosted surface shares the same travelling wave.
 		local sheen = Instance.new("Frame")
 		sheen.Name = "NerxFrostSheen"
 		sheen.BackgroundColor3 = Color3.new(1, 1, 1)
@@ -9342,28 +9426,22 @@ do
 		layer.grain.ImageTransparency = math.clamp(1 - params.Grain * 0.55, 0, 1)
 		layer.grain.Visible = params.Grain > 0.01
 
-		layer.gradient.Color = ColorSequence.new(Color3.new(1, 1, 1))
-		-- Two identical bands half a period apart make the gradient periodic:
-		-- sliding Offset from 0 to 0.5 lands on an identical image, so the sweep
-		-- loops without the visible "restart halfway" snap.
-		local peak = 1 - sheenAmount * 0.22
-		local shoulder = 1 - sheenAmount * 0.08
-		layer.gradient.Transparency = NumberSequence.new({
+		-- A single soft band in the middle of the gradient; the screen-space
+		-- offset below moves it as one shared wave across every frosted surface.
+		local sheenSequence = NumberSequence.new({
 			NumberSequenceKeypoint.new(0, 1),
-			NumberSequenceKeypoint.new(0.15, 1),
-			NumberSequenceKeypoint.new(0.205, shoulder),
-			NumberSequenceKeypoint.new(0.25, peak),
-			NumberSequenceKeypoint.new(0.295, shoulder),
 			NumberSequenceKeypoint.new(0.35, 1),
-			NumberSequenceKeypoint.new(0.5, 1),
+			NumberSequenceKeypoint.new(0.43, 1 - sheenAmount * 0.07),
+			NumberSequenceKeypoint.new(0.5, 1 - sheenAmount * 0.22),
+			NumberSequenceKeypoint.new(0.57, 1 - sheenAmount * 0.07),
 			NumberSequenceKeypoint.new(0.65, 1),
-			NumberSequenceKeypoint.new(0.705, shoulder),
-			NumberSequenceKeypoint.new(0.75, peak),
-			NumberSequenceKeypoint.new(0.795, shoulder),
-			NumberSequenceKeypoint.new(0.85, 1),
 			NumberSequenceKeypoint.new(1, 1),
 		})
-		layer.sheen.Visible = sheenAmount > 0.01 and options.Sheen ~= false
+		layer.gradient.Color = ColorSequence.new(Color3.new(1, 1, 1))
+		layer.gradient.Transparency = sheenSequence
+		local sheenVisible = sheenAmount > 0.01 and options.Sheen ~= false
+		layer.sheen.Visible = sheenVisible
+		applySweepOffset(entry.Root, layer)
 
 		-- Hairline: bright at the top, fading toward the bottom.
 		layer.strokeGradient.Color = ColorSequence.new(Color3.new(1, 1, 1))
@@ -9419,12 +9497,14 @@ do
 				sweepConnection = nil
 				return
 			end
-			-- 0..0.5 is exactly one pattern period, so wrapping is invisible.
-			sweepClock = (sweepClock + dt * (0.04 + Frosted.Params.Sweep * 0.36)) % 0.5
-			local offset = sweepClock
-			for _, layer in pairs(layerStore) do
+			-- One global wave: it starts left of the screen and ends right of it,
+			-- so the sweep enters the left HUD first and travels into the menu.
+			sweepClock = (sweepClock + dt * (0.05 + Frosted.Params.Sweep * 0.35)) % 1
+			local viewport = U.viewport()
+			sweepX = -SWEEP_PAD + sweepClock * (viewport.X + SWEEP_PAD * 2)
+			for root, layer in pairs(layerStore) do
 				if layer.sheen.Parent then
-					layer.gradient.Offset = Vector2.new(offset, 0)
+					applySweepOffset(root, layer)
 				end
 			end
 		end)
