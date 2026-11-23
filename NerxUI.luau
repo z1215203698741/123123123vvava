@@ -495,6 +495,45 @@ function U.pressFx(input, target, pressScale)
 	return press
 end
 
+-- Small "chip" behind three-dot menus. Frosted glass washes out bare icons, so
+-- the dots get a 12% contrast tint (light on dark themes, dark on light ones)
+-- plus a hairline. Nothing decorative, just enough to read as a button.
+function U.dotsChip(parent, callback, options)
+	options = options or {}
+	local size = options.Size or 18
+	local z = options.ZIndex or 5
+	local chip = U.frame(parent, {
+		BackgroundColor3 = Theme.Text,
+		BackgroundTransparency = 0.88,
+		BorderSizePixel = 0,
+		Size = UDim2.fromOffset(size, size),
+		Active = true,
+		ZIndex = z,
+	})
+	U.corner(chip, options.Radius or 5)
+	local stroke = U.stroke(chip, Theme.Stroke, 0.65, 1)
+	local icon = U.icon(chip, "three-dots-horizontal", options.IconSize or 12, Theme.Text, {
+		Size = UDim2.fromScale(1, 1),
+		TextTransparency = 0.12,
+		ZIndex = z + 1,
+	})
+	local input = U.inputButton(chip, callback)
+	input.ZIndex = z + 2
+	U.pressFx(input, chip, 0.92)
+	local function renderHover(on)
+		U.tween(chip, TWEEN.Fast, { BackgroundTransparency = on and 0.80 or 0.88 })
+		U.tween(icon, TWEEN.Fast, { TextTransparency = on and 0 or 0.12 })
+		stroke.Transparency = on and 0.50 or 0.65
+	end
+	U.connect(input.MouseEnter, function()
+		renderHover(true)
+	end)
+	U.connect(input.MouseLeave, function()
+		renderHover(false)
+	end)
+	return { Root = chip, Icon = icon, Stroke = stroke, Input = input }
+end
+
 function U.measure(text, size, font)
 	if not text or text == "" then
 		return Vector2.new(0, size or 12)
@@ -1702,26 +1741,11 @@ local function openMenu(anchor, items)
 end
 
 local function optionDots(parent, component, config)
-	local root = U.frame(parent, {
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		Size = UDim2.fromOffset(18, 20),
-	})
-	local icon = U.icon(root, "three-dots-horizontal", 15, Theme.Muted, {
-		TextTransparency = 0.45,
-		Size = UDim2.fromScale(1, 1),
-	})
-	local input = U.inputButton(root, function()
-		openMenu(root, menuItemsFor(component, config))
-	end)
-	U.pressFx(input, root, 0.9)
-	U.connect(input.MouseEnter, function()
-		U.tween(icon, TWEEN.Fast, { TextTransparency = 0.1 })
-	end)
-	U.connect(input.MouseLeave, function()
-		U.tween(icon, TWEEN.Fast, { TextTransparency = 0.45 })
-	end)
-	return root
+	local chip
+	chip = U.dotsChip(parent, function()
+		openMenu(chip.Root, menuItemsFor(component, config))
+	end, { Size = 18, IconSize = 13 })
+	return chip.Root
 end
 
 local function dropdownField(parent, width, disabled)
@@ -7555,9 +7579,8 @@ do
 		if overlayIconImage then
 			overlayIconImage.ImageColor3 = HOTKEY_TEXT
 		end
-		if overlayHeaderDotsIcon then
-			overlayHeaderDotsIcon.TextColor3 = HOTKEY_MUTED
-		end
+		-- The header dots chip uses Theme.Text/Theme.Stroke, so no HUD colour
+		-- override here; forcing the old palette would kill its contrast.
 
 		if hotkeySettingsOpen and positionHotkeySettings then
 			task.defer(positionHotkeySettings)
@@ -7621,34 +7644,17 @@ do
 			end
 		end)
 
-		local dots = U.frame(headerCard, {
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(dotsX, math.floor((HOTKEY_HEADER_HEIGHT - HOTKEY_DOTS_SIZE) * 0.5)),
-			Size = UDim2.fromOffset(HOTKEY_DOTS_SIZE, HOTKEY_DOTS_SIZE),
-			ZIndex = 6,
-		})
-		overlayHeaderDots = dots
-		hotkeyDotsButton = dots
-		local dotsIcon = U.icon(dots, "three-dots-horizontal", 12, HOTKEY_MUTED, {
-			Size = UDim2.fromScale(1, 1),
-			TextTransparency = hotkeySettingsOpen and 0.02 or 0.25,
-			ZIndex = 6,
-		})
-		overlayHeaderDotsIcon = dotsIcon
-		local dotsInput = U.inputButton(dots, function()
+		local dotsChip
+		dotsChip = U.dotsChip(headerCard, function()
 			if toggleHotkeySettings then
-				toggleHotkeySettings(dots)
+				toggleHotkeySettings(dotsChip.Root)
 			end
-		end)
-		dotsInput.ZIndex = 10
-		U.pressFx(dotsInput, dots, 0.9)
-		U.connect(dotsInput.MouseEnter, function()
-			U.tween(dotsIcon, TWEEN.Fast, { TextTransparency = 0.02 })
-		end)
-		U.connect(dotsInput.MouseLeave, function()
-			U.tween(dotsIcon, TWEEN.Fast, { TextTransparency = hotkeySettingsOpen and 0.02 or 0.25 })
-		end)
+		end, { Size = HOTKEY_DOTS_SIZE, IconSize = 12, ZIndex = 6 })
+		local dots = dotsChip.Root
+		dots.Position = UDim2.fromOffset(dotsX, math.floor((HOTKEY_HEADER_HEIGHT - HOTKEY_DOTS_SIZE) * 0.5))
+		overlayHeaderDots = dots
+		overlayHeaderDotsIcon = dotsChip.Icon
+		hotkeyDotsButton = dots
 	end
 
 	-- Mirrors Margele/OpenZen KeyBindsHud. Key boxes share one column width;
@@ -8243,7 +8249,7 @@ do
 			closeHotkeyStyleMenu(true)
 		end
 		if overlayHeaderDotsIcon and overlayHeaderDotsIcon.Parent then
-			U.tween(overlayHeaderDotsIcon, TWEEN.Fast, { TextTransparency = 0.25 })
+			U.tween(overlayHeaderDotsIcon, TWEEN.Fast, { TextTransparency = 0.12 })
 		end
 		hotkeySettingsToken = hotkeySettingsToken + 1
 		local token = hotkeySettingsToken
@@ -8314,7 +8320,7 @@ do
 		hotkeySettingsIgnoreClick = true
 		hotkeySettingsToken = hotkeySettingsToken + 1
 		if overlayHeaderDotsIcon and overlayHeaderDotsIcon.Parent then
-			U.tween(overlayHeaderDotsIcon, TWEEN.Fast, { TextTransparency = 0.02 })
+			U.tween(overlayHeaderDotsIcon, TWEEN.Fast, { TextTransparency = 0 })
 		end
 		if hotkeySettingsStyleValue then
 			hotkeySettingsStyleValue.Text = hotkeyStyleText(hotkeyStyle)
