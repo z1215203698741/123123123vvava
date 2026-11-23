@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.4.0
+	Nerx UI Library · v1.3.5
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -626,225 +626,6 @@ function U.shadow(parent, strength)
 	return stroke
 end
 
--- Liquid-glass bevel used by every control: crisp top/bottom rims, soft left/right
--- side light, optional four-corner L brackets and an accent bloom. All colours
--- come from Theme.* so palette switches keep working.
-function U.glass(parent, options)
-	options = options or {}
-	local padTop = options.PadTop or 0
-	local padRight = options.PadRight or 0
-	local padBottom = options.PadBottom or 0
-	local padLeft = options.PadLeft or 0
-	local baseZ = parent.ZIndex or 1
-	local layers = {}
-	local radius = options.Radius
-	if radius == nil then
-		local corner = parent:FindFirstChildOfClass("UICorner")
-		radius = corner and corner.CornerRadius.Offset or 8
-	end
-
-	if options.AccentWash then
-		local wash = U.frame(parent, {
-			Name = "NerxGlassAccentWash",
-			BackgroundColor3 = options.WashColor or Theme.Accent,
-			BackgroundTransparency = options.WashTransparency or 0.9,
-			BorderSizePixel = 0,
-			Position = UDim2.new(0, -padLeft, 0, -padTop),
-			Size = UDim2.new(1, padLeft + padRight, 1, padTop + padBottom),
-			ZIndex = baseZ,
-			Active = false,
-		})
-		U.corner(wash, radius)
-		layers[#layers + 1] = wash
-	end
-
-	local function addLine(name, position, size, color, transparency, zIndex)
-		local line = U.frame(parent, {
-			Name = name,
-			BackgroundColor3 = color,
-			BackgroundTransparency = transparency or 0,
-			BorderSizePixel = 0,
-			Position = position,
-			Size = size,
-			ZIndex = zIndex or (baseZ + 1),
-			Active = false,
-		})
-		layers[#layers + 1] = line
-		return line
-	end
-
-	if options.Bevel ~= false then
-		local top = addLine(
-			"NerxGlassTop",
-			UDim2.new(0, 6 - padLeft, 0, -padTop),
-			UDim2.new(1, padLeft + padRight - 12, 0, 1),
-			Theme.White,
-			0
-		)
-		local topFade = Instance.new("UIGradient")
-		topFade.Color = ColorSequence.new(Theme.White)
-		topFade.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 1),
-			NumberSequenceKeypoint.new(0.5, options.TopTransparency or 0.42),
-			NumberSequenceKeypoint.new(1, 1),
-		})
-		topFade.Parent = top
-
-		local bottom = addLine(
-			"NerxGlassBottom",
-			UDim2.new(0, 6 - padLeft, 1, padBottom - 1),
-			UDim2.new(1, padLeft + padRight - 12, 0, 1),
-			Theme.Black,
-			0
-		)
-		local bottomFade = Instance.new("UIGradient")
-		bottomFade.Color = ColorSequence.new(Theme.Black)
-		bottomFade.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 1),
-			NumberSequenceKeypoint.new(0.5, options.BottomTransparency or 0.5),
-			NumberSequenceKeypoint.new(1, 1),
-		})
-		bottomFade.Parent = bottom
-
-		addLine(
-			"NerxGlassLeft",
-			UDim2.new(0, -padLeft, 0, 6 - padTop),
-			UDim2.new(0, 1, 1, padTop + padBottom - 12),
-			Theme.White,
-			options.LeftTransparency or 0.9
-		)
-		addLine(
-			"NerxGlassRight",
-			UDim2.new(1, padRight - 1, 0, 6 - padTop),
-			UDim2.new(0, 1, 1, padTop + padBottom - 12),
-			Theme.Black,
-			options.RightTransparency or 0.72
-		)
-	end
-
-	if options.Cap then
-		local capColor = options.CapColor or Theme.Accent
-		local capX = 2 - padLeft
-		local capTop = 4 - padTop
-		local cap = U.frame(parent, {
-			Name = "NerxGlassCap",
-			BackgroundColor3 = capColor,
-			BackgroundTransparency = 0.55,
-			BorderSizePixel = 0,
-			Position = UDim2.new(0, capX, 0, capTop),
-			Size = UDim2.new(0, 2, 1, padTop + padBottom - 8),
-			ZIndex = baseZ + 2,
-			Active = false,
-		})
-		U.corner(cap, 1)
-		local capFade = Instance.new("UIGradient")
-		capFade.Rotation = 90
-		capFade.Color = ColorSequence.new(capColor)
-		capFade.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.15),
-			NumberSequenceKeypoint.new(0.55, 0.6),
-			NumberSequenceKeypoint.new(1, 1),
-		})
-		capFade.Parent = cap
-		layers[#layers + 1] = cap
-
-		local dot = U.frame(parent, {
-			Name = "NerxGlassCapDot",
-			BackgroundColor3 = capColor,
-			BackgroundTransparency = 0.15,
-			BorderSizePixel = 0,
-			AnchorPoint = Vector2.new(0, 0.5),
-			Position = UDim2.new(0, capX + 1, 0.5, 0),
-			Size = UDim2.fromOffset(3, 3),
-			ZIndex = baseZ + 3,
-			Active = false,
-		})
-		U.corner(dot, 1.5)
-		layers[#layers + 1] = dot
-	end
-
-	if options.Corners then
-		local inset = options.CornerInset or 4
-		local length = options.CornerLength or 6
-		local color = options.CornerColor or Theme.Accent
-		local transparency = options.CornerTransparency or 0.55
-		local leftX = inset - padLeft
-		local rightX = padRight - inset - length
-		local rightXOne = padRight - inset - 1
-		local topY = inset - padTop
-		local bottomY = padBottom - inset - 1
-		local bottomYLen = padBottom - inset - length
-
-		local function hLine(xScale, xOffset, yScale, yOffset)
-			addLine(
-				"NerxGlassCornerH",
-				UDim2.new(xScale, xOffset, yScale, yOffset),
-				UDim2.fromOffset(length, 1),
-				color,
-				transparency,
-				baseZ + 2
-			)
-		end
-		local function vLine(xScale, xOffset, yScale, yOffset)
-			addLine(
-				"NerxGlassCornerV",
-				UDim2.new(xScale, xOffset, yScale, yOffset),
-				UDim2.fromOffset(1, length),
-				color,
-				transparency,
-				baseZ + 2
-			)
-		end
-
-		hLine(0, leftX, 0, topY)
-		vLine(0, leftX, 0, topY)
-		hLine(1, rightX, 0, topY)
-		vLine(1, rightXOne, 0, topY)
-		hLine(0, leftX, 1, bottomY)
-		vLine(0, leftX, 1, bottomYLen)
-		hLine(1, rightX, 1, bottomY)
-		vLine(1, rightXOne, 1, bottomYLen)
-	end
-
-	local glow
-	if options.Glow then
-		local ok, instance = pcall(function()
-			return Instance.new("UIShadow")
-		end)
-		if ok and instance then
-			glow = instance
-			local configured = pcall(function()
-				glow.Name = "NerxGlassGlow"
-				glow.Color = options.GlowColor or Theme.Accent
-				glow.BlurRadius = UDim.new(0, options.GlowBlur or 10)
-				glow.Offset = UDim2.fromOffset(0, 0)
-				glow.Spread = UDim2.fromOffset(0, 0)
-				glow.Transparency = options.GlowTransparency or 0.86
-				glow.Inset = false
-				glow.Mode = Enum.ApplyShadowMode.Shape
-				glow.ShowBehindParent = true
-			end)
-			if configured then
-				glow.Parent = parent
-			else
-				glow:Destroy()
-			end
-		end
-	end
-
-	return {
-		Layers = layers,
-		SetVisible = function(value)
-			for _, layer in ipairs(layers) do
-				layer.Visible = value ~= false
-			end
-			if glow and glow.Parent then
-				glow.Transparency = value == false and 1 or (options.GlowTransparency or 0.86)
-			end
-		end,
-	}
-end
-
 function U.ripple(center, color, options)
 	-- Shockwave used when the palette changes: a stack of concentric strokes
 	-- expands from the clicked control and fades out. Layered thicknesses fake
@@ -1329,7 +1110,7 @@ function U.popup(anchor, width, height, builder, alignRight, placement)
 	local card = U.canvas(parent, {
 		Name = "NerxPopup",
 		BackgroundColor3 = Theme.SurfaceRaised,
-		BackgroundTransparency = 0.08,
+		BackgroundTransparency = 0.02,
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(width, height),
 		ZIndex = 902,
@@ -1413,21 +1194,6 @@ function U.popup(anchor, width, height, builder, alignRight, placement)
 	})
 
 	builder(card)
-
-	local popupPadding = card:FindFirstChildOfClass("UIPadding")
-	U.glass(card, {
-		Radius = 8,
-		PadTop = popupPadding and popupPadding.PaddingTop.Offset or 0,
-		PadRight = popupPadding and popupPadding.PaddingRight.Offset or 0,
-		PadBottom = popupPadding and popupPadding.PaddingBottom.Offset or 0,
-		PadLeft = popupPadding and popupPadding.PaddingLeft.Offset or 0,
-		Corners = true,
-		CornerInset = 3,
-		CornerLength = 5,
-		CornerTransparency = 0.5,
-		TopTransparency = 0.55,
-		BottomTransparency = 0.55,
-	})
 
 	-- Popups are separate roots, so frost them explicitly when the mode is on.
 	if Nerx.Frosted and Nerx.Frosted.Enabled then
@@ -1816,19 +1582,12 @@ end
 local function toggleWidget(parent, defaultValue, callback, disabled)
 	local root = U.frame(parent, {
 		BackgroundColor3 = Theme.ToggleOff,
-		BackgroundTransparency = 0.1,
+		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(32, 18),
 	})
 	U.corner(root, 9)
 	local border = U.stroke(root, Theme.Stroke, 0.55, 1)
-	U.glass(root, {
-		Radius = 9,
-		TopTransparency = 0.55,
-		BottomTransparency = 0.55,
-		LeftTransparency = 0.9,
-		RightTransparency = 0.8,
-	})
 
 	local knob = U.frame(root, {
 		AnchorPoint = Vector2.new(0.5, 0.5),
@@ -1839,36 +1598,6 @@ local function toggleWidget(parent, defaultValue, callback, disabled)
 		Size = UDim2.fromOffset(14, 14),
 	})
 	U.corner(knob, 8)
-	U.stroke(knob, Theme.White, 0.55, 1)
-	U.frame(knob, {
-		BackgroundColor3 = Theme.White,
-		BackgroundTransparency = 0.35,
-		BorderSizePixel = 0,
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0, 2),
-		Size = UDim2.fromOffset(6, 2),
-		ZIndex = 4,
-		Active = false,
-	})
-	local knobShadowOk, knobShadow = pcall(function()
-		return Instance.new("UIShadow")
-	end)
-	if knobShadowOk and knobShadow then
-		local configured = pcall(function()
-			knobShadow.Color = Theme.Black
-			knobShadow.BlurRadius = UDim.new(0, 4)
-			knobShadow.Offset = UDim2.fromOffset(0, 1)
-			knobShadow.Transparency = 0.58
-			knobShadow.Inset = false
-			knobShadow.Mode = Enum.ApplyShadowMode.Shape
-			knobShadow.ShowBehindParent = true
-		end)
-		if configured then
-			knobShadow.Parent = knob
-		else
-			knobShadow:Destroy()
-		end
-	end
 
 	local value = defaultValue == true
 	local api = { Root = root, Value = value, Disabled = disabled == true }
@@ -1916,11 +1645,11 @@ local function toggleWidget(parent, defaultValue, callback, disabled)
 	U.pressFx(toggleInput, root, 0.94)
 	U.connect(toggleInput.MouseEnter, function()
 		if not api.Disabled then
-			U.tween(root, TWEEN.Fast, { BackgroundTransparency = 0.02 })
+			U.tween(root, TWEEN.Fast, { BackgroundTransparency = 0.08 })
 		end
 	end)
 	U.connect(toggleInput.MouseLeave, function()
-		U.tween(root, TWEEN.Fast, { BackgroundTransparency = 0.1 })
+		U.tween(root, TWEEN.Fast, { BackgroundTransparency = 0 })
 	end)
 
 	U.onAccent(function(color)
@@ -2075,22 +1804,11 @@ end
 local function dropdownField(parent, width, disabled)
 	local field = U.frame(parent, {
 		BackgroundColor3 = disabled and Theme.FieldDisabled or Theme.Field,
-		BackgroundTransparency = 0.12,
+		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(width or 132, 24),
 	})
 	U.corner(field, 5)
-	U.stroke(field, Theme.Stroke, 0.55, 1)
-	U.glass(field, {
-		Radius = 5,
-		Corners = true,
-		CornerInset = 3,
-		CornerLength = 5,
-		CornerTransparency = 0.5,
-		TopTransparency = 0.55,
-		BottomTransparency = 0.55,
-		Cap = true,
-	})
 
 	local label = U.label(field, {
 		Text = "",
@@ -2161,24 +1879,11 @@ local function smallButton(parent, text, callback, disabled)
 	local api = { Disabled = disabled == true }
 	local root = U.frame(parent, {
 		BackgroundColor3 = api.Disabled and Theme.FieldDisabled or Theme.Button,
-		BackgroundTransparency = api.Disabled and 0.4 or 0.16,
+		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(74, 24),
 	})
 	U.corner(root, 5)
-	U.stroke(root, Theme.Stroke, 0.62, 1)
-	U.glass(root, {
-		Radius = 5,
-		PadRight = 6,
-		PadLeft = 6,
-		Corners = true,
-		CornerInset = 3,
-		CornerLength = 5,
-		CornerTransparency = 0.55,
-		TopTransparency = 0.55,
-		BottomTransparency = 0.55,
-		Cap = true,
-	})
 	U.padding(root, 0, 6, 0, 6)
 	local label = U.label(root, {
 		Text = text or "Button",
@@ -2197,7 +1902,6 @@ local function smallButton(parent, text, callback, disabled)
 	function api:SetDisabled(value)
 		api.Disabled = value
 		root.BackgroundColor3 = value and Theme.FieldDisabled or Theme.Button
-		root.BackgroundTransparency = value and 0.4 or 0.16
 		label.TextColor3 = value and Theme.Faint or Theme.Text
 		label.TextTransparency = value and 0.55 or 0.05
 	end
@@ -2210,44 +1914,24 @@ local function smallButton(parent, text, callback, disabled)
 	U.pressFx(input, root, 0.97)
 	U.connect(input.MouseEnter, function()
 		if not api.Disabled then
-			U.tween(root, TWEEN.Fast, { BackgroundColor3 = Theme.ButtonHover, BackgroundTransparency = 0.06 })
+			U.tween(root, TWEEN.Fast, { BackgroundColor3 = Theme.ButtonHover })
 		end
 	end)
 	U.connect(input.MouseLeave, function()
-		U.tween(root, TWEEN.Fast, {
-			BackgroundColor3 = api.Disabled and Theme.FieldDisabled or Theme.Button,
-			BackgroundTransparency = api.Disabled and 0.4 or 0.16,
-		})
+		U.tween(root, TWEEN.Fast, { BackgroundColor3 = api.Disabled and Theme.FieldDisabled or Theme.Button })
 	end)
 	return api
 end
 
 local function primaryButton(parent, text, width, height, callback)
 	local root = U.frame(parent, {
-		BackgroundColor3 = Theme.SurfaceRaised,
-		BackgroundTransparency = 0.08,
+		BackgroundColor3 = Theme.Button,
+		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(width or 84, height or 28),
 	})
 	U.corner(root, 6)
-	U.stroke(root, Theme.Accent, 0.55, 1)
-	U.glass(root, {
-		Radius = 6,
-		PadRight = 7,
-		PadLeft = 7,
-		AccentWash = true,
-		WashTransparency = 0.84,
-		Corners = true,
-		CornerInset = 3,
-		CornerLength = 7,
-		CornerTransparency = 0.32,
-		TopTransparency = 0.3,
-		BottomTransparency = 0.5,
-		Cap = true,
-		Glow = true,
-		GlowTransparency = 0.9,
-		GlowBlur = 12,
-	})
+	U.stroke(root, Theme.Stroke, 0.45, 1)
 	U.padding(root, 0, 7, 0, 7)
 	local fitSize = 11
 	local innerWidth = math.max(1, (width or 84) - 14)
@@ -2267,10 +1951,10 @@ local function primaryButton(parent, text, width, height, callback)
 	local input = U.inputButton(root, callback or function() end)
 	U.pressFx(input, root, 0.97)
 	U.connect(input.MouseEnter, function()
-		U.tween(root, TWEEN.Fast, { BackgroundColor3 = Theme.ButtonHover, BackgroundTransparency = 0.02 })
+		U.tween(root, TWEEN.Fast, { BackgroundColor3 = Theme.ButtonHover })
 	end)
 	U.connect(input.MouseLeave, function()
-		U.tween(root, TWEEN.Fast, { BackgroundColor3 = Theme.SurfaceRaised, BackgroundTransparency = 0.08 })
+		U.tween(root, TWEEN.Fast, { BackgroundColor3 = Theme.Button })
 	end)
 	return { Root = root, Label = label }
 end
@@ -2334,14 +2018,6 @@ local function createChip(parent, rawItem, options)
 	})
 	U.corner(root, math.floor(height / 2))
 	local stroke = U.stroke(root, Theme.Stroke, 0.5, 1)
-	local glass = U.glass(root, {
-		Radius = math.floor(height / 2),
-		TopTransparency = 0.55,
-		BottomTransparency = 0.55,
-		LeftTransparency = 0.9,
-		RightTransparency = 0.75,
-	})
-	glass:SetVisible(not options.Segment)
 
 	local iconLabel = nil
 	local dot = nil
@@ -2402,7 +2078,6 @@ local function createChip(parent, rawItem, options)
 
 	local function render()
 		local selected = api.Selected
-		glass:SetVisible(not options.Segment or selected)
 		if options.Segment then
 			-- Segment inside a shared track: only the active one draws a thumb.
 			U.tween(root, TWEEN.Fast, {
@@ -2573,15 +2248,6 @@ local function segmentedWidget(parent, config)
 	U.corner(root, 8)
 	if container then
 		U.stroke(root, Theme.Stroke, 0.55, 1)
-		U.glass(root, {
-			Radius = 8,
-			Corners = true,
-			CornerInset = 3,
-			CornerLength = 5,
-			CornerTransparency = 0.55,
-			TopTransparency = 0.55,
-			BottomTransparency = 0.55,
-		})
 		-- 1px specular along the top of the track: the "3D" hint, no gradient.
 		U.frame(root, {
 			BackgroundColor3 = Color3.new(1, 1, 1),
@@ -2603,7 +2269,7 @@ local function segmentedWidget(parent, config)
 	if container then
 		thumb = U.frame(root, {
 			BackgroundColor3 = Theme.SurfaceRaised,
-			BackgroundTransparency = 0.1,
+			BackgroundTransparency = 0.18,
 			BorderSizePixel = 0,
 			Position = UDim2.fromOffset(2, 2),
 			Size = UDim2.fromOffset(math.max(1, segmentWidth - 4), height - 4),
@@ -2612,11 +2278,6 @@ local function segmentedWidget(parent, config)
 		})
 		U.corner(thumb, 6)
 		U.stroke(thumb, Theme.Accent, 0.55, 1)
-		U.glass(thumb, {
-			Radius = 6,
-			TopTransparency = 0.35,
-			BottomTransparency = 0.5,
-		})
 	end
 
 	local function fitLabel(button)
@@ -2753,22 +2414,11 @@ local function inputWidget(parent, config)
 	config = config or {}
 	local root = U.frame(parent, {
 		BackgroundColor3 = Theme.Field,
-		BackgroundTransparency = 0.1,
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(config.Width or 200, config.Height or 28),
 	})
 	U.corner(root, 6)
 	local stroke = U.stroke(root, Theme.Stroke, 0.7, 1)
-	U.glass(root, {
-		Radius = 6,
-		Corners = true,
-		CornerInset = 3,
-		CornerLength = 5,
-		CornerTransparency = 0.5,
-		TopTransparency = 0.55,
-		BottomTransparency = 0.55,
-		Cap = true,
-	})
 	local iconOffset = 0
 	if config.Icon then
 		U.icon(root, config.Icon, 12, Theme.Muted, {
@@ -2816,11 +2466,11 @@ local function inputWidget(parent, config)
 		end
 	end)
 	U.connect(box.Focused, function()
-		U.tween(stroke, TWEEN.Fast, { Transparency = 0.25, Color = Theme.Accent })
+		U.tween(stroke, TWEEN.Fast, { Transparency = 0.25 })
 		U.tween(root, TWEEN.Fast, { BackgroundColor3 = Theme.FieldHover })
 	end)
 	U.connect(box.FocusLost, function()
-		U.tween(stroke, TWEEN.Fast, { Transparency = 0.7, Color = Theme.Stroke })
+		U.tween(stroke, TWEEN.Fast, { Transparency = 0.7 })
 		U.tween(root, TWEEN.Fast, { BackgroundColor3 = Theme.Field })
 		if config.Callback then
 			config.Callback(box.Text)
@@ -3008,22 +2658,24 @@ local function createSection(page, config)
 	U.corner(card, useCard and 10 or 8)
 	local cardStroke = U.stroke(card, Theme.Stroke, useCard and 0.65 or 1, 1)
 	if useCard then
-		-- Liquid-glass plate: crisp rim + side bevel + four corner brackets.
-		-- The fill stays half-transparent so a blurred shadow underneath would
-		-- show through the glass and muddy the card; only lines are added.
-		U.glass(card, {
-			Radius = 10,
-			PadTop = 2,
-			PadBottom = 2,
-			Corners = true,
-			CornerInset = 5,
-			CornerLength = 7,
-			CornerTransparency = 0.72,
-			TopTransparency = 0.62,
-			BottomTransparency = 0.6,
-			LeftTransparency = 0.92,
-			RightTransparency = 0.84,
+		-- Raised glass plate: a fading 1 px reflection along the top edge. The
+		-- fill stays half-transparent, so no drop shadow is drawn underneath it
+		-- (a blurred shadow would show through the glass and muddy the card).
+		local topLight = U.frame(root, {
+			Name = "NerxCardTopLight",
+			BackgroundColor3 = Theme.White,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(16, 21),
+			Size = UDim2.new(1, -32, 0, 1),
+			ZIndex = 2,
 		})
+		local lightFade = Instance.new("UIGradient")
+		lightFade.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1),
+			NumberSequenceKeypoint.new(0.5, 0.68),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		lightFade.Parent = topLight
 	end
 	U.padding(card, useCard and 2 or 0, 0, useCard and 2 or 0, 0)
 	U.list(card, 0)
@@ -3150,7 +2802,6 @@ local function createSection(page, config)
 			Size = UDim2.new(1, 0, 0, 3),
 		})
 		U.corner(rail, 2)
-		U.stroke(rail, Theme.Stroke, 0.65, 1)
 
 		local fill = U.frame(rail, {
 			BackgroundColor3 = Theme.Accent,
@@ -3159,14 +2810,6 @@ local function createSection(page, config)
 			Size = UDim2.new(0, 0, 1, 0),
 		})
 		U.corner(fill, 2)
-		U.frame(fill, {
-			BackgroundColor3 = Theme.White,
-			BackgroundTransparency = 0.55,
-			BorderSizePixel = 0,
-			Position = UDim2.new(0, 2, 0, 0),
-			Size = UDim2.new(1, -4, 0, 1),
-			Active = false,
-		})
 
 		local knob = U.frame(track, {
 			AnchorPoint = Vector2.new(0, 0.5),
@@ -3177,56 +2820,16 @@ local function createSection(page, config)
 			ZIndex = 3,
 		})
 		U.corner(knob, 5)
-		U.stroke(knob, Theme.White, 0.5, 1)
-		U.frame(knob, {
-			BackgroundColor3 = Theme.White,
-			BackgroundTransparency = 0.4,
-			BorderSizePixel = 0,
-			AnchorPoint = Vector2.new(0.5, 0),
-			Position = UDim2.new(0.5, 0, 0, 2),
-			Size = UDim2.fromOffset(4, 1),
-			ZIndex = 4,
-			Active = false,
-		})
-		local knobShadowOk, knobShadow = pcall(function()
-			return Instance.new("UIShadow")
-		end)
-		if knobShadowOk and knobShadow then
-			local configured = pcall(function()
-				knobShadow.Color = Theme.Black
-				knobShadow.BlurRadius = UDim.new(0, 4)
-				knobShadow.Offset = UDim2.fromOffset(0, 1)
-				knobShadow.Transparency = 0.55
-				knobShadow.Inset = false
-				knobShadow.Mode = Enum.ApplyShadowMode.Shape
-				knobShadow.ShowBehindParent = true
-			end)
-			if configured then
-				knobShadow.Parent = knob
-			else
-				knobShadow:Destroy()
-			end
-		end
 
 		local valuePill = U.frame(row, {
 			AnchorPoint = Vector2.new(1, 0.5),
 			BackgroundColor3 = Theme.Field,
-			BackgroundTransparency = 0.12,
 			BorderSizePixel = 0,
 			Position = UDim2.new(1, -inset, 0.5, 0),
 			Size = UDim2.fromOffset(52, 24),
 		})
 		U.corner(valuePill, 5)
 		U.stroke(valuePill, Theme.Stroke, 0.5, 1)
-		U.glass(valuePill, {
-			Radius = 5,
-			Corners = true,
-			CornerInset = 2,
-			CornerLength = 3,
-			CornerTransparency = 0.55,
-			TopTransparency = 0.55,
-			BottomTransparency = 0.55,
-		})
 		local valueBox = U.new("TextBox", {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
@@ -3461,22 +3064,10 @@ local function createSection(page, config)
 
 		local field = U.frame(controls, {
 			BackgroundColor3 = Theme.Field,
-			BackgroundTransparency = 0.12,
 			BorderSizePixel = 0,
 			Size = UDim2.fromOffset(108, 24),
 		})
 		U.corner(field, 5)
-		U.stroke(field, Theme.Stroke, 0.55, 1)
-		U.glass(field, {
-			Radius = 5,
-			Corners = true,
-			CornerInset = 3,
-			CornerLength = 5,
-			CornerTransparency = 0.5,
-			TopTransparency = 0.55,
-			BottomTransparency = 0.55,
-			Cap = true,
-		})
 		local text = U.label(field, {
 			Text = key and U.keyName(key) or "click to set",
 			TextSize = key and 10 or 9.5,
@@ -3596,22 +3187,10 @@ local function createSection(page, config)
 
 		local field = U.frame(controls, {
 			BackgroundColor3 = Theme.Field,
-			BackgroundTransparency = 0.12,
 			BorderSizePixel = 0,
 			Size = UDim2.fromOffset(142, 24),
 		})
 		U.corner(field, 5)
-		U.stroke(field, Theme.Stroke, 0.55, 1)
-		U.glass(field, {
-			Radius = 5,
-			Corners = true,
-			CornerInset = 3,
-			CornerLength = 5,
-			CornerTransparency = 0.5,
-			TopTransparency = 0.55,
-			BottomTransparency = 0.55,
-			Cap = true,
-		})
 		local box = U.new("TextBox", {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
@@ -3917,13 +3496,6 @@ local function createSection(page, config)
 		})
 		U.corner(root, 9)
 		local actionStroke = U.stroke(root, Theme.Stroke, 0.60, 1)
-		U.glass(root, {
-			Radius = 9,
-			TopTransparency = 0.6,
-			BottomTransparency = 0.6,
-			LeftTransparency = 0.92,
-			RightTransparency = 0.82,
-		})
 		if action.Icon then
 			U.icon(root, action.Icon, 9, Theme.Muted, {
 				Position = UDim2.fromOffset(7, 0),
@@ -4404,13 +3976,6 @@ local function createPage(window, host, tab, config)
 		})
 		U.corner(track, 15)
 		U.stroke(track, Theme.Stroke, 0.55, 1)
-		U.glass(track, {
-			Radius = 15,
-			TopTransparency = 0.6,
-			BottomTransparency = 0.6,
-			LeftTransparency = 0.92,
-			RightTransparency = 0.82,
-		})
 		U.frame(track, {
 			BackgroundColor3 = Color3.new(1, 1, 1),
 			BackgroundTransparency = 0.92,
@@ -4500,21 +4065,12 @@ local function createPage(window, host, tab, config)
 		local textWidth = U.measure(switchConfig.Text or "", 11, Fonts.Regular).X
 		local root = U.frame(headerControls, {
 			BackgroundColor3 = Theme.FieldDeep,
-			BackgroundTransparency = 0.18,
+			BackgroundTransparency = 0,
 			BorderSizePixel = 0,
 			Size = UDim2.fromOffset(12 + 32 + 8 + textWidth + 12, 26),
 		})
 		U.corner(root, 13)
 		U.stroke(root, Theme.Stroke, 0.45, 1)
-		U.glass(root, {
-			Radius = 13,
-			Corners = true,
-			CornerInset = 4,
-			CornerLength = 5,
-			CornerTransparency = 0.5,
-			TopTransparency = 0.55,
-			BottomTransparency = 0.55,
-		})
 		root.LayoutOrder = 1
 
 		local toggle = toggleWidget(root, switchConfig.Default, function(value)
@@ -5272,7 +4828,7 @@ end
 	local account = U.frame(sidebar, {
 		AnchorPoint = Vector2.new(0, 1),
 		BackgroundColor3 = Theme.Surface,
-		BackgroundTransparency = 0.15,
+		BackgroundTransparency = 0.08,
 		BorderSizePixel = 0,
 		Position = UDim2.new(0, 8, 1, -8),
 		Size = UDim2.new(1, -16, 0, 46),
@@ -5280,15 +4836,6 @@ end
 	})
 	U.corner(account, 8)
 	U.stroke(account, Theme.Stroke, 0.65, 1)
-	U.glass(account, {
-		Radius = 8,
-		Corners = true,
-		CornerInset = 3,
-		CornerLength = 5,
-		CornerTransparency = 0.55,
-		TopTransparency = 0.55,
-		BottomTransparency = 0.55,
-	})
 	window.Account = account
 
 	local avatar = U.frame(account, {
@@ -5300,7 +4847,6 @@ end
 		ClipsDescendants = true,
 	})
 	U.corner(avatar, 15)
-	U.stroke(avatar, Theme.White, 0.65, 1)
 	window.AccountAvatar = avatar
 	local avatarIcon = U.icon(avatar, "person-standing", 15, Theme.Muted, {
 		TextTransparency = 0.35,
@@ -5429,7 +4975,7 @@ end
 	local modeSaveGroup = U.frame(topBar, {
 		AnchorPoint = Vector2.new(1, 0.5),
 		BackgroundColor3 = Theme.FieldDeep,
-		BackgroundTransparency = 0.15,
+		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		Position = UDim2.new(1, -SAVE_GROUP_RIGHT, 0.5, 0),
 		Size = UDim2.fromOffset(modeWidth + SAVE_WIDTH, MODE_SAVE_HEIGHT),
@@ -5440,13 +4986,6 @@ end
 	})
 	U.corner(modeSaveGroup, 7)
 	U.stroke(modeSaveGroup, Theme.Muted, 0.55, 1)
-	U.glass(modeSaveGroup, {
-		Radius = 7,
-		TopTransparency = 0.55,
-		BottomTransparency = 0.55,
-		LeftTransparency = 0.9,
-		RightTransparency = 0.8,
-	})
 
 	local modeChip = U.frame(modeSaveGroup, {
 		BackgroundTransparency = 1,
@@ -5480,7 +5019,6 @@ end
 
 	local saveButton = U.frame(modeSaveGroup, {
 		BackgroundColor3 = Theme.Primary,
-		BackgroundTransparency = 0.18,
 		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(modeWidth, 0),
 		Size = UDim2.fromOffset(SAVE_WIDTH, MODE_SAVE_HEIGHT),
@@ -5489,21 +5027,8 @@ end
 	-- Round the right side into the group outline; the narrow connector
 	-- squares the left side so the mode and Save areas share one straight seam.
 	U.corner(saveButton, 7)
-	U.stroke(saveButton, Theme.White, 0.55, 1)
-	U.glass(saveButton, {
-		Radius = 7,
-		Corners = true,
-		CornerInset = 3,
-		CornerLength = 5,
-		CornerTransparency = 0.45,
-		TopTransparency = 0.35,
-		BottomTransparency = 0.5,
-		LeftTransparency = 0.9,
-		RightTransparency = 0.7,
-	})
 	local saveConnector = U.frame(saveButton, {
 		BackgroundColor3 = Theme.Primary,
-		BackgroundTransparency = 0.18,
 		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(0, 0),
 		Size = UDim2.fromOffset(7, MODE_SAVE_HEIGHT),
@@ -5529,23 +5054,14 @@ end
 	local search = U.frame(topBar, {
 		AnchorPoint = Vector2.new(1, 0.5),
 		BackgroundColor3 = Theme.FieldDeep,
-		BackgroundTransparency = 0.12,
+		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		Position = UDim2.new(1, -54, 0.5, 0),
 		Size = UDim2.fromOffset(226, 30),
 		ZIndex = 4,
 	})
 	U.corner(search, 8)
-	local searchStroke = U.stroke(search, Theme.Stroke, 0.65, 1)
-	U.glass(search, {
-		Radius = 8,
-		Corners = true,
-		CornerInset = 3,
-		CornerLength = 5,
-		CornerTransparency = 0.5,
-		TopTransparency = 0.55,
-		BottomTransparency = 0.55,
-	})
+	local searchStroke = U.stroke(search, Theme.Stroke, 1, 1)
 	local searchIcon = U.icon(search, "magnifying-glass", 13, Theme.Muted, {
 		Position = UDim2.fromOffset(10, 0),
 		Size = UDim2.fromOffset(14, 30),
@@ -5605,7 +5121,6 @@ end
 	local shieldButton = U.frame(topBar, {
 		AnchorPoint = Vector2.new(1, 0.5),
 		BackgroundColor3 = Theme.FieldDeep,
-		BackgroundTransparency = 0.12,
 		BorderSizePixel = 0,
 		Position = UDim2.new(1, -16, 0.5, 0),
 		Size = UDim2.fromOffset(28, 28),
@@ -5613,15 +5128,6 @@ end
 	})
 	U.corner(shieldButton, 7)
 	local shieldStroke = U.stroke(shieldButton, Theme.Stroke, 0.7, 1)
-	U.glass(shieldButton, {
-		Radius = 7,
-		Corners = true,
-		CornerInset = 3,
-		CornerLength = 4,
-		CornerTransparency = 0.5,
-		TopTransparency = 0.55,
-		BottomTransparency = 0.55,
-	})
 	local shieldIcon = U.icon(shieldButton, "shield-check", 14, Theme.Muted, {
 		TextTransparency = 0.3,
 		Size = UDim2.fromScale(1, 1),
@@ -5665,12 +5171,12 @@ end
 	end)
 	U.connect(searchBox.Focused, function()
 		U.tween(search, TWEEN.Fast, { BackgroundColor3 = Theme.FieldHover })
-		searchStroke.Transparency = 0.3
+		searchStroke.Transparency = 0.5
 		searchIcon.TextTransparency = 0.05
 	end)
 	U.connect(searchBox.FocusLost, function(enterPressed)
 		U.tween(search, TWEEN.Fast, { BackgroundColor3 = Theme.FieldDeep })
-		searchStroke.Transparency = 0.65
+		searchStroke.Transparency = 1
 		searchIcon.TextTransparency = 0.3
 	end)
 	U.connect(searchBox:GetPropertyChangedSignal("Text"), function()
@@ -5708,10 +5214,7 @@ end
 	function window:RenderTab(tab)
 		local selected = self.SelectedTab == tab
 		if selected then
-			U.tween(tab.Button, TWEEN.Default, { BackgroundTransparency = 0.18, BackgroundColor3 = Theme.Selected })
-			if tab.Glass then
-				tab.Glass:SetVisible(true)
-			end
+			U.tween(tab.Button, TWEEN.Default, { BackgroundTransparency = 0, BackgroundColor3 = Theme.Selected })
 			tab.Stroke.Transparency = 0.85
 			if tab.Indicator then
 				U.tween(tab.Indicator, TWEEN.Fast, { BackgroundTransparency = 0 })
@@ -5720,9 +5223,6 @@ end
 			U.tween(tab.Label, TWEEN.Default, { TextColor3 = Theme.Text, TextTransparency = 0.05 })
 		else
 			U.tween(tab.Button, TWEEN.Default, { BackgroundTransparency = 1 })
-			if tab.Glass then
-				tab.Glass:SetVisible(false)
-			end
 			tab.Stroke.Transparency = 1
 			if tab.Indicator then
 				tab.Indicator.BackgroundTransparency = 1
@@ -6076,19 +5576,6 @@ end
 
 		local tabStroke = U.stroke(button, Theme.Stroke, 1, 1)
 		tab.Stroke = tabStroke
-		tab.Glass = U.glass(button, {
-			Radius = 7,
-			Corners = true,
-			CornerInset = 3,
-			CornerLength = 5,
-			CornerTransparency = 0.45,
-			TopTransparency = 0.55,
-			BottomTransparency = 0.55,
-			Glow = true,
-			GlowTransparency = 0.92,
-			GlowBlur = 8,
-		})
-		tab.Glass:SetVisible(false)
 
 		-- Active marker on the left edge of the parent pill (reference "I" bar).
 		local tabIndicator = U.frame(button, {
