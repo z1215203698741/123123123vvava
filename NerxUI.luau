@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.3.3
+	Nerx UI Library · v1.3.4
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.3.3"
+Nerx.Version = "1.3.4"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -2534,6 +2534,9 @@ local function createSection(page, config)
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 	})
+	-- Room for the header action pills, which are taller than the label row.
+	-- Without this the first section in the scroll gets its actions clipped flat.
+	U.padding(root, 4, 0, 0, 0)
 	root.LayoutOrder = page.BlockIndex + 1000
 	page.BlockIndex = page.BlockIndex + 1
 
@@ -3392,11 +3395,12 @@ local function createSection(page, config)
 		local extra = action.Dot and 10 or 0
 		local root = U.frame(section.Actions, {
 			BackgroundColor3 = Theme.Field,
-			BackgroundTransparency = 1,
+			BackgroundTransparency = 0.55,
 			BorderSizePixel = 0,
 			Size = UDim2.fromOffset((action.Icon and 26 or 22) + textWidth + extra, 18),
 		})
 		U.corner(root, 9)
+		local actionStroke = U.stroke(root, Theme.Stroke, 0.60, 1)
 		if action.Icon then
 			U.icon(root, action.Icon, 9, Theme.Muted, {
 				Position = UDim2.fromOffset(7, 0),
@@ -3435,14 +3439,22 @@ local function createSection(page, config)
 		function entry:SetSelected(value, silent)
 			self.Selected = value == true
 			if self.Selected then
-				U.tween(root, TWEEN.Fast, { BackgroundTransparency = 0.1 })
-				U.tween(label, TWEEN.Fast, { TextColor3 = Theme.Text, TextTransparency = 0.05 })
+				U.tween(root, TWEEN.Fast, {
+					BackgroundColor3 = Theme.SurfaceRaised,
+					BackgroundTransparency = 0.15,
+				})
+				U.tween(label, TWEEN.Fast, { TextColor3 = Theme.Text, TextTransparency = 0.02 })
+				U.tween(actionStroke, TWEEN.Fast, { Color = Theme.Accent, Transparency = 0.35 })
 				if dot then
 					U.tween(dot, TWEEN.Fast, { BackgroundTransparency = 0 })
 				end
 			else
-				U.tween(root, TWEEN.Fast, { BackgroundTransparency = 1 })
-				U.tween(label, TWEEN.Fast, { TextColor3 = Theme.Muted, TextTransparency = 0.35 })
+				U.tween(root, TWEEN.Fast, {
+					BackgroundColor3 = Theme.Field,
+					BackgroundTransparency = 0.55,
+				})
+				U.tween(label, TWEEN.Fast, { TextColor3 = Theme.Muted, TextTransparency = 0.22 })
+				U.tween(actionStroke, TWEEN.Fast, { Color = Theme.Stroke, Transparency = 0.60 })
 				if dot then
 					U.tween(dot, TWEEN.Fast, { BackgroundTransparency = 0.1 })
 				end
