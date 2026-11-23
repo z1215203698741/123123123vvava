@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.3.13
+	Nerx UI Library · v1.3.14
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.3.13"
+Nerx.Version = "1.3.14"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -657,14 +657,14 @@ function U.bevel(parent, options)
 			Name = "NerxBevelMark",
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Position = UDim2.new(0, -(options.PadLeft or 0), 1, (options.PadBottom or 0) - 5),
+			Position = UDim2.new(0, 3 - (options.PadLeft or 0), 1, (options.PadBottom or 0) - 6),
 			Size = UDim2.fromOffset(3, 3),
 			ZIndex = (parent.ZIndex or 1) + 2,
 		})
 		U.frame(mark, {
 			Name = "NerxBevelMarkH",
 			BackgroundColor3 = options.DotColor or Theme.Text,
-			BackgroundTransparency = 0.25,
+			BackgroundTransparency = 0.55,
 			BorderSizePixel = 0,
 			Position = UDim2.fromOffset(0, 2),
 			Size = UDim2.fromOffset(3, 1),
@@ -673,7 +673,7 @@ function U.bevel(parent, options)
 		U.frame(mark, {
 			Name = "NerxBevelMarkV",
 			BackgroundColor3 = options.DotColor or Theme.Text,
-			BackgroundTransparency = 0.25,
+			BackgroundTransparency = 0.55,
 			BorderSizePixel = 0,
 			Size = UDim2.fromOffset(1, 3),
 			ZIndex = (parent.ZIndex or 1) + 3,
