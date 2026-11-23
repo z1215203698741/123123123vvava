@@ -1937,7 +1937,7 @@ local function createChip(parent, rawItem, options)
 	local root = U.frame(parent, {
 		AnchorPoint = Vector2.new(0, 0),
 		BackgroundColor3 = Theme.Field,
-		BackgroundTransparency = 0.35,
+		BackgroundTransparency = options.Segment and 1 or 0.35,
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(width, height),
 	})
@@ -2003,16 +2003,28 @@ local function createChip(parent, rawItem, options)
 
 	local function render()
 		local selected = api.Selected
-		-- Frost-safe: every chip keeps a translucent fill so it never merges
-		-- into the white wash; the selected one only steps one tone higher.
-		U.tween(root, TWEEN.Fast, {
-			BackgroundColor3 = selected and Theme.ChipSelected or Theme.Field,
-			BackgroundTransparency = selected and 0.10 or 0.45,
-		})
-		U.tween(stroke, TWEEN.Fast, {
-			Transparency = selected and 0.35 or 0.60,
-			Color = selected and Theme.Accent or Theme.Stroke,
-		})
+		if options.Segment then
+			-- Segment inside a shared track: only the active one draws a thumb.
+			U.tween(root, TWEEN.Fast, {
+				BackgroundColor3 = selected and Theme.SurfaceRaised or Theme.White,
+				BackgroundTransparency = selected and 0.12 or 1,
+			})
+			U.tween(stroke, TWEEN.Fast, {
+				Transparency = selected and 0.35 or 1,
+				Color = selected and Theme.Accent or Theme.Stroke,
+			})
+		else
+			-- Frost-safe: every chip keeps a translucent fill so it never merges
+			-- into the white wash; the selected one only steps one tone higher.
+			U.tween(root, TWEEN.Fast, {
+				BackgroundColor3 = selected and Theme.ChipSelected or Theme.Field,
+				BackgroundTransparency = selected and 0.10 or 0.45,
+			})
+			U.tween(stroke, TWEEN.Fast, {
+				Transparency = selected and 0.35 or 0.60,
+				Color = selected and Theme.Accent or Theme.Stroke,
+			})
+		end
 
 		if textLabel then
 			U.tween(textLabel, TWEEN.Fast, {
@@ -3591,8 +3603,8 @@ local function createPage(window, host, tab, config)
 	local chipHolder = U.frame(chipBar, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(0, 2),
-		Size = UDim2.new(1, 0, 0, 26),
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.new(1, 0, 0, 30),
 		ZIndex = 3,
 	})
 	page.ChipFlow = U.flow(chipHolder, 6, 6)
@@ -3818,6 +3830,7 @@ local function createPage(window, host, tab, config)
 				IconGap = 7,
 				PaddingX = 12,
 				Radio = true,
+				Segment = true,
 				DotSide = "right",
 				OnSelect = function(selectedChip)
 					if api.Value == valueOf(selectedChip.Item) then
@@ -3837,8 +3850,41 @@ local function createPage(window, host, tab, config)
 			end
 			chip:SetSelected(item.Selected == true, true)
 			table.insert(chips, chip)
-			self.ChipFlow:Add(chip.Root, chip.Width, chip.Height)
 		end
+
+		-- One shared track behind the whole selector row (plan B): the active
+		-- segment draws a raised thumb instead of every chip having its own pill.
+		local gap = 6
+		local trackWidth = 8
+		for _, chip in ipairs(chips) do
+			trackWidth = trackWidth + chip.Width + gap
+		end
+		trackWidth = math.max(60, trackWidth - gap)
+		local track = U.frame(chipHolder, {
+			BackgroundColor3 = Theme.Field,
+			BackgroundTransparency = 0.45,
+			BorderSizePixel = 0,
+			Size = UDim2.fromOffset(trackWidth, 30),
+			ZIndex = 3,
+		})
+		U.corner(track, 15)
+		U.stroke(track, Theme.Stroke, 0.55, 1)
+		U.frame(track, {
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BackgroundTransparency = 0.92,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(12, 1),
+			Size = UDim2.new(1, -24, 0, 1),
+			ZIndex = 3,
+		})
+		local cursor = 4
+		for _, chip in ipairs(chips) do
+			chip.Root.Parent = track
+			chip.Root.Position = UDim2.fromOffset(cursor, 2)
+			chip.Root.ZIndex = 4
+			cursor = cursor + chip.Width + gap
+		end
+		self.ChipTrack = track
 
 		function api:SetValue(value, silent)
 			for _, chip in ipairs(chips) do
