@@ -2481,8 +2481,8 @@ local function createSection(page, config)
 	local labelRow = U.frame(root, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(flat and 10 or 0, 0),
-		Size = UDim2.new(1, flat and -20 or 0, 0, 15),
+		Position = UDim2.fromOffset(10, 0),
+		Size = UDim2.new(1, -20, 0, 15),
 	})
 	local labelText = string.upper(name)
 	local label = U.label(labelRow, {
@@ -2497,14 +2497,6 @@ local function createSection(page, config)
 	})
 	local labelWidth = U.measure(labelText, 10, Fonts.Bold).X
 	label.Size = UDim2.fromOffset(labelWidth + 2, 15)
-	U.frame(labelRow, {
-		AnchorPoint = Vector2.new(0, 0.5),
-		BackgroundColor3 = Theme.Divider,
-		BackgroundTransparency = 0.4,
-		BorderSizePixel = 0,
-		Position = UDim2.new(0, labelWidth + 10, 0.5, 0),
-		Size = UDim2.new(1, -(labelWidth + 10), 0, 1),
-	})
 	local actions = U.frame(labelRow, {
 		AnchorPoint = Vector2.new(1, 0.5),
 		BackgroundTransparency = 1,
@@ -2517,46 +2509,17 @@ local function createSection(page, config)
 
 	local card = U.frame(root, {
 		BackgroundColor3 = useCard and Theme.Surface or Theme.White,
-		BackgroundTransparency = useCard and 0.01 or 1,
+		-- Neverlose-style depth: a half-transparent fill plus one flat hairline.
+		-- No gradient rim, so switching palettes can never produce jagged edges.
+		BackgroundTransparency = useCard and 0.5 or 1,
 		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(0, 18),
-		Size = UDim2.new(1, 0, 0, 0),
+		Position = UDim2.fromOffset(useCard and 4 or 0, 20),
+		Size = UDim2.new(1, useCard and -8 or 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		ClipsDescendants = useCard,
 	})
-	U.corner(card, 8)
-	-- Theme.Text works as a rim on both palettes (near-white on dark, near-black
-	-- on light) and is remapped when the theme changes.
-	local cardStroke = U.stroke(card, useCard and Theme.Text or Theme.Stroke, useCard and 0.55 or 1, 1)
-	if useCard then
-		-- Reference look: the frame reads as a lit rim instead of a flat line —
-		-- brighter along the top edge, fading toward the bottom.
-		local edgeGradient = Instance.new("UIGradient")
-		edgeGradient.Rotation = 90
-		edgeGradient.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.50),
-			NumberSequenceKeypoint.new(0.35, 0.68),
-			NumberSequenceKeypoint.new(1, 0.86),
-		})
-		edgeGradient.Parent = cardStroke
-
-		-- Hairline specular just inside the top edge, fading out at both ends.
-		local topLight = U.frame(root, {
-			BackgroundColor3 = Color3.new(1, 1, 1),
-			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(14, 19),
-			Size = UDim2.new(1, -28, 0, 1),
-			ZIndex = 3,
-		})
-		local topLightGradient = Instance.new("UIGradient")
-		topLightGradient.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 1),
-			NumberSequenceKeypoint.new(0.32, 0.74),
-			NumberSequenceKeypoint.new(0.7, 0.84),
-			NumberSequenceKeypoint.new(1, 1),
-		})
-		topLightGradient.Parent = topLight
-	end
+	U.corner(card, useCard and 10 or 8)
+	local cardStroke = U.stroke(card, Theme.Stroke, useCard and 0.65 or 1, 1)
 	U.padding(card, useCard and 2 or 0, 0, useCard and 2 or 0, 0)
 	U.list(card, 0)
 
