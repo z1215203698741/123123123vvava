@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.3.7
+	Nerx UI Library · v1.3.5
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.3.7"
+Nerx.Version = "1.4.0"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -624,165 +624,6 @@ function U.shadow(parent, strength)
 	local stroke = U.stroke(parent, Theme.Black, 0.8, 1)
 	stroke.Name = "NerxShadowFallback"
 	return stroke
-end
-
--- Solid-control decoration. "button" keeps the crisp pseudo-3D edges, four L
--- corner marks and an optional 3px dot on the left; fields (the default) only
--- get one bottom rim line that fades from the lower-left, so they read as a
--- lit lip instead of bracket marks. Colours are neutral and the fill is never
--- touched, so the rest of the menu keeps its original look.
-function U.bevel(parent, options)
-	options = options or {}
-	local padTop = options.PadTop or 0
-	local padRight = options.PadRight or 0
-	local padBottom = options.PadBottom or 0
-	local padLeft = options.PadLeft or 0
-	local baseZ = parent.ZIndex or 1
-	local parentCorner = parent:FindFirstChildOfClass("UICorner")
-	local edge = options.EdgeInset or math.max(6, parentCorner and parentCorner.CornerRadius.Offset or 6)
-	local layers = {}
-
-	local function addLine(name, position, size, color, transparency, zIndex)
-		local line = U.frame(parent, {
-			Name = name,
-			BackgroundColor3 = color,
-			BackgroundTransparency = transparency or 0,
-			BorderSizePixel = 0,
-			Position = position,
-			Size = size,
-			ZIndex = zIndex or (baseZ + 1),
-			Active = false,
-		})
-		layers[#layers + 1] = line
-		return line
-	end
-
-	if options.Style ~= "button" then
-		local rim = addLine(
-			"NerxBevelRim",
-			UDim2.new(0, edge - padLeft, 1, padBottom - 1),
-			UDim2.new(1, padLeft + padRight - edge * 2, 0, 1),
-			Theme.White,
-			0,
-			baseZ + 1
-		)
-		local rimFade = Instance.new("UIGradient")
-		rimFade.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.58),
-			NumberSequenceKeypoint.new(0.42, 0.88),
-			NumberSequenceKeypoint.new(1, 1),
-		})
-		rimFade.Parent = rim
-		return layers
-	end
-
-	local top = addLine(
-		"NerxBevelTop",
-		UDim2.new(0, edge - padLeft, 0, -padTop),
-		UDim2.new(1, padLeft + padRight - edge * 2, 0, 1),
-		Theme.White,
-		0
-	)
-	local topFade = Instance.new("UIGradient")
-	topFade.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 1),
-		NumberSequenceKeypoint.new(0.5, 0.72),
-		NumberSequenceKeypoint.new(1, 1),
-	})
-	topFade.Parent = top
-
-	local bottom = addLine(
-		"NerxBevelBottom",
-		UDim2.new(0, edge - padLeft, 1, padBottom - 1),
-		UDim2.new(1, padLeft + padRight - edge * 2, 0, 1),
-		Theme.Black,
-		0
-	)
-	local bottomFade = Instance.new("UIGradient")
-	bottomFade.Color = ColorSequence.new(Theme.Black)
-	bottomFade.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 1),
-		NumberSequenceKeypoint.new(0.5, 0.5),
-		NumberSequenceKeypoint.new(1, 1),
-	})
-	bottomFade.Parent = bottom
-
-	addLine(
-		"NerxBevelLeft",
-		UDim2.new(0, -padLeft, 0, edge - padTop),
-		UDim2.new(0, 1, 1, padTop + padBottom - edge * 2),
-		Theme.White,
-		0.9
-	)
-	addLine(
-		"NerxBevelRight",
-		UDim2.new(1, padRight - 1, 0, edge - padTop),
-		UDim2.new(0, 1, 1, padTop + padBottom - edge * 2),
-		Theme.Black,
-		0.72
-	)
-
-	if options.Corners ~= false then
-		local inset = options.CornerInset or 3
-		local length = options.CornerLength or 5
-		local color = options.CornerColor or Theme.Text
-		local transparency = options.CornerTransparency or 0.6
-		local leftX = inset - padLeft
-		local rightX = padRight - inset - length
-		local rightXOne = padRight - inset - 1
-		local topY = inset - padTop
-		local bottomY = padBottom - inset - 1
-		local bottomYLen = padBottom - inset - length
-
-		local function h(xScale, xOffset, yScale, yOffset)
-			addLine(
-				"NerxBevelCornerH",
-				UDim2.new(xScale, xOffset, yScale, yOffset),
-				UDim2.fromOffset(length, 1),
-				color,
-				transparency,
-				baseZ + 2
-			)
-		end
-		local function v(xScale, xOffset, yScale, yOffset)
-			addLine(
-				"NerxBevelCornerV",
-				UDim2.new(xScale, xOffset, yScale, yOffset),
-				UDim2.fromOffset(1, length),
-				color,
-				transparency,
-				baseZ + 2
-			)
-		end
-
-		h(0, leftX, 0, topY)
-		v(0, leftX, 0, topY)
-		h(1, rightX, 0, topY)
-		v(1, rightXOne, 0, topY)
-		h(0, leftX, 1, bottomY)
-		v(0, leftX, 1, bottomYLen)
-		h(1, rightX, 1, bottomY)
-		v(1, rightXOne, 1, bottomYLen)
-	end
-
-	if options.Cap then
-		local dotColor = options.CapColor or Theme.Text
-		local dot = U.frame(parent, {
-			Name = "NerxBevelDot",
-			BackgroundColor3 = dotColor,
-			BackgroundTransparency = 0.35,
-			BorderSizePixel = 0,
-			AnchorPoint = Vector2.new(0, 0.5),
-			Position = UDim2.new(0, 6 - padLeft, 0.5, 0),
-			Size = UDim2.fromOffset(3, 3),
-			ZIndex = baseZ + 2,
-			Active = false,
-		})
-		U.corner(dot, 1.5)
-		layers[#layers + 1] = dot
-	end
-
-	return layers
 end
 
 function U.ripple(center, color, options)
@@ -1968,8 +1809,6 @@ local function dropdownField(parent, width, disabled)
 		Size = UDim2.fromOffset(width or 132, 24),
 	})
 	U.corner(field, 5)
-	U.stroke(field, Theme.Stroke, 0.55, 1)
-	U.bevel(field)
 
 	local label = U.label(field, {
 		Text = "",
@@ -2045,15 +1884,6 @@ local function smallButton(parent, text, callback, disabled)
 		Size = UDim2.fromOffset(74, 24),
 	})
 	U.corner(root, 5)
-	U.stroke(root, Theme.Stroke, 0.55, 1)
-	U.bevel(root, {
-		Style = "button",
-		PadRight = 6,
-		PadLeft = 6,
-		CornerInset = 3,
-		CornerLength = 5,
-		Cap = true,
-	})
 	U.padding(root, 0, 6, 0, 6)
 	local label = U.label(root, {
 		Text = text or "Button",
@@ -2102,14 +1932,6 @@ local function primaryButton(parent, text, width, height, callback)
 	})
 	U.corner(root, 6)
 	U.stroke(root, Theme.Stroke, 0.45, 1)
-	U.bevel(root, {
-		Style = "button",
-		PadRight = 7,
-		PadLeft = 7,
-		CornerInset = 3,
-		CornerLength = 6,
-		Cap = true,
-	})
 	U.padding(root, 0, 7, 0, 7)
 	local fitSize = 11
 	local innerWidth = math.max(1, (width or 84) - 14)
@@ -2456,7 +2278,6 @@ local function segmentedWidget(parent, config)
 		})
 		U.corner(thumb, 6)
 		U.stroke(thumb, Theme.Accent, 0.55, 1)
-		U.bevel(thumb)
 	end
 
 	local function fitLabel(button)
@@ -2598,7 +2419,6 @@ local function inputWidget(parent, config)
 	})
 	U.corner(root, 6)
 	local stroke = U.stroke(root, Theme.Stroke, 0.7, 1)
-	U.bevel(root)
 	local iconOffset = 0
 	if config.Icon then
 		U.icon(root, config.Icon, 12, Theme.Muted, {
@@ -3248,8 +3068,6 @@ local function createSection(page, config)
 			Size = UDim2.fromOffset(108, 24),
 		})
 		U.corner(field, 5)
-		U.stroke(field, Theme.Stroke, 0.55, 1)
-		U.bevel(field)
 		local text = U.label(field, {
 			Text = key and U.keyName(key) or "click to set",
 			TextSize = key and 10 or 9.5,
@@ -3373,8 +3191,6 @@ local function createSection(page, config)
 			Size = UDim2.fromOffset(142, 24),
 		})
 		U.corner(field, 5)
-		U.stroke(field, Theme.Stroke, 0.55, 1)
-		U.bevel(field)
 		local box = U.new("TextBox", {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
@@ -5211,7 +5027,6 @@ end
 	-- Round the right side into the group outline; the narrow connector
 	-- squares the left side so the mode and Save areas share one straight seam.
 	U.corner(saveButton, 7)
-	U.bevel(saveButton, { Style = "button", CornerInset = 3, CornerLength = 5, Cap = true })
 	local saveConnector = U.frame(saveButton, {
 		BackgroundColor3 = Theme.Primary,
 		BorderSizePixel = 0,
@@ -5246,8 +5061,7 @@ end
 		ZIndex = 4,
 	})
 	U.corner(search, 8)
-	local searchStroke = U.stroke(search, Theme.Stroke, 0.55, 1)
-	U.bevel(search)
+	local searchStroke = U.stroke(search, Theme.Stroke, 1, 1)
 	local searchIcon = U.icon(search, "magnifying-glass", 13, Theme.Muted, {
 		Position = UDim2.fromOffset(10, 0),
 		Size = UDim2.fromOffset(14, 30),
@@ -5314,7 +5128,6 @@ end
 	})
 	U.corner(shieldButton, 7)
 	local shieldStroke = U.stroke(shieldButton, Theme.Stroke, 0.7, 1)
-	U.bevel(shieldButton, { Style = "button", CornerInset = 3, CornerLength = 4 })
 	local shieldIcon = U.icon(shieldButton, "shield-check", 14, Theme.Muted, {
 		TextTransparency = 0.3,
 		Size = UDim2.fromScale(1, 1),
@@ -5358,12 +5171,12 @@ end
 	end)
 	U.connect(searchBox.Focused, function()
 		U.tween(search, TWEEN.Fast, { BackgroundColor3 = Theme.FieldHover })
-		searchStroke.Transparency = 0.25
+		searchStroke.Transparency = 0.5
 		searchIcon.TextTransparency = 0.05
 	end)
 	U.connect(searchBox.FocusLost, function(enterPressed)
 		U.tween(search, TWEEN.Fast, { BackgroundColor3 = Theme.FieldDeep })
-		searchStroke.Transparency = 0.55
+		searchStroke.Transparency = 1
 		searchIcon.TextTransparency = 0.3
 	end)
 	U.connect(searchBox:GetPropertyChangedSignal("Text"), function()
@@ -6962,6 +6775,40 @@ do
 					if replacement then
 						pcall(function()
 							object.Color = replacement
+						end)
+					end
+				end
+			elseif object:IsA("UIShadow") then
+				local ok, current = pcall(function()
+					return object.Color
+				end)
+				if ok and current then
+					local replacement = mapping[colorKey(current)]
+					if replacement then
+						pcall(function()
+							object.Color = replacement
+						end)
+					end
+				end
+			elseif object:IsA("UIGradient") then
+				local ok, sequence = pcall(function()
+					return object.Color
+				end)
+				if ok and sequence then
+					local changed = false
+					local keypoints = {}
+					for _, keypoint in ipairs(sequence.Keypoints) do
+						local color = keypoint.Value
+						local replacement = mapping[colorKey(color)]
+						if replacement then
+							color = replacement
+							changed = true
+						end
+						keypoints[#keypoints + 1] = ColorSequenceKeypoint.new(keypoint.Time, color)
+					end
+					if changed then
+						pcall(function()
+							object.Color = ColorSequence.new(keypoints)
 						end)
 					end
 				end
