@@ -1937,7 +1937,7 @@ local function createChip(parent, rawItem, options)
 	local root = U.frame(parent, {
 		AnchorPoint = Vector2.new(0, 0),
 		BackgroundColor3 = Theme.Field,
-		BackgroundTransparency = 0.1,
+		BackgroundTransparency = 0.35,
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(width, height),
 	})
@@ -2003,19 +2003,21 @@ local function createChip(parent, rawItem, options)
 
 	local function render()
 		local selected = api.Selected
+		-- Frost-safe: every chip keeps a translucent fill so it never merges
+		-- into the white wash; the selected one only steps one tone higher.
 		U.tween(root, TWEEN.Fast, {
-			BackgroundColor3 = selected and Theme.ChipSelected or Theme.Window,
-			BackgroundTransparency = selected and 0 or 0.25,
+			BackgroundColor3 = selected and Theme.ChipSelected or Theme.Field,
+			BackgroundTransparency = selected and 0.10 or 0.45,
 		})
 		U.tween(stroke, TWEEN.Fast, {
-			Transparency = selected and 0.3 or 0.55,
-			Color = selected and Theme.Accent or Theme.StrokeSoft,
+			Transparency = selected and 0.35 or 0.60,
+			Color = selected and Theme.Accent or Theme.Stroke,
 		})
 
 		if textLabel then
 			U.tween(textLabel, TWEEN.Fast, {
 				TextColor3 = selected and Theme.Text or Theme.Muted,
-				TextTransparency = selected and 0.02 or 0.35,
+				TextTransparency = selected and 0.02 or 0.20,
 			})
 		end
 		if iconLabel then
@@ -2152,13 +2154,22 @@ local function segmentedWidget(parent, config)
 
 	local root = U.frame(parent, {
 		BackgroundColor3 = container and Theme.Field or Theme.White,
-		BackgroundTransparency = container and 0 or 1,
+		BackgroundTransparency = container and 0.45 or 1,
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(width, height),
 	})
-	U.corner(root, 6)
+	U.corner(root, 8)
 	if container then
-		U.stroke(root, Theme.Stroke, 0.7, 1)
+		U.stroke(root, Theme.Stroke, 0.55, 1)
+		-- 1px specular along the top of the track: the "3D" hint, no gradient.
+		U.frame(root, {
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BackgroundTransparency = 0.92,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(10, 1),
+			Size = UDim2.new(1, -20, 0, 1),
+			ZIndex = 0,
+		})
 	end
 
 	local buttons = {}
@@ -2166,6 +2177,21 @@ local function segmentedWidget(parent, config)
 	local count = math.max(1, #items)
 	local segmentWidth = width / count
 	local api = { Root = root, Value = value, Width = width }
+
+	local thumb
+	if container then
+		thumb = U.frame(root, {
+			BackgroundColor3 = Theme.SurfaceRaised,
+			BackgroundTransparency = 0.18,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(2, 2),
+			Size = UDim2.fromOffset(math.max(1, segmentWidth - 4), height - 4),
+			Visible = false,
+			ZIndex = 0,
+		})
+		U.corner(thumb, 6)
+		U.stroke(thumb, Theme.Accent, 0.55, 1)
+	end
 
 	local function fitLabel(button)
 		local labelSize = config.TextSize or 10
@@ -2178,16 +2204,31 @@ local function segmentedWidget(parent, config)
 	end
 
 	local function render(animate)
-		local info = TWEEN.Fast
+		local info = animate and TWEEN.Default or TWEEN.Fast
+		local activeX
+		for index, button in ipairs(buttons) do
+			if button.Name == value then
+				activeX = (index - 1) * segmentWidth
+				break
+			end
+		end
+		if thumb then
+			thumb.Visible = activeX ~= nil
+			if activeX then
+				U.tween(thumb, info, { Position = UDim2.fromOffset(activeX + 2, 2) })
+			end
+		end
 		for _, button in ipairs(buttons) do
 			local active = button.Name == value
-			U.tween(button.Root, info, {
-				BackgroundColor3 = active and selectedColor or Theme.White,
-				BackgroundTransparency = active and 0 or 1,
-			})
+			if not thumb then
+				U.tween(button.Root, info, {
+					BackgroundColor3 = active and Theme.ChipSelected or Theme.Field,
+					BackgroundTransparency = active and 0.15 or 0.65,
+				})
+			end
 			U.tween(button.Label, info, {
 				TextColor3 = active and selectedText or Theme.Muted,
-				TextTransparency = active and 0.05 or 0.35,
+				TextTransparency = active and 0.02 or 0.22,
 			})
 		end
 	end
@@ -2272,6 +2313,10 @@ local function segmentedWidget(parent, config)
 			button.Root.Size = UDim2.fromOffset(segmentWidth, height)
 			fitLabel(button)
 		end
+		if thumb then
+			thumb.Size = UDim2.fromOffset(math.max(1, segmentWidth - 4), height - 4)
+		end
+		render(false)
 	end
 
 	render(false)
@@ -3538,14 +3583,17 @@ local function createPage(window, host, tab, config)
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(20, 52),
-		Size = UDim2.new(1, -40, 0, 26),
+		Size = UDim2.new(1, -40, 0, 30),
 		Visible = false,
+		ZIndex = 3,
 	})
 	page.ChipBar = chipBar
 	local chipHolder = U.frame(chipBar, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Size = UDim2.fromScale(1, 1),
+		Position = UDim2.fromOffset(0, 2),
+		Size = UDim2.new(1, 0, 0, 26),
+		ZIndex = 3,
 	})
 	page.ChipFlow = U.flow(chipHolder, 6, 6)
 
@@ -3706,7 +3754,7 @@ local function createPage(window, host, tab, config)
 		if self.Custom then
 			return
 		end
-		local top = 18 + 24 + (self.HasChips and 36 or 0) + 14
+		local top = 18 + 24 + (self.HasChips and 40 or 0) + 14
 		local bottom = 32 + (hint.Visible and 16 or 0)
 		local rightWidth = self.RightWidth
 
@@ -3815,7 +3863,7 @@ local function createPage(window, host, tab, config)
 		chipBar.Visible = true
 		-- Keep the page actions on the selector row so the header reads as one line
 		-- (title above, filter chips + actions below).
-		headerControls.Position = UDim2.new(1, -20, 0, 52)
+		headerControls.Position = UDim2.new(1, -20, 0, 54)
 		self:Relayout()
 		return api
 	end
