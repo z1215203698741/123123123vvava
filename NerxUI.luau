@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.3.4
+	Nerx UI Library · v1.3.5
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.3.4"
+Nerx.Version = "1.3.5"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -624,6 +624,81 @@ function U.shadow(parent, strength)
 	local stroke = U.stroke(parent, Theme.Black, 0.8, 1)
 	stroke.Name = "NerxShadowFallback"
 	return stroke
+end
+
+function U.ripple(center, color, options)
+	-- Shockwave used when the palette changes: a stack of concentric strokes
+	-- expands from the clicked control and fades out. Layered thicknesses fake
+	-- the bloom of the reference without image assets or extra render passes.
+	options = options or {}
+	local host = Nerx.PopupHost
+	if not host then
+		for _, win in ipairs(Nerx.Windows or {}) do
+			if win.PopupHost then
+				host = win.PopupHost
+				break
+			end
+		end
+	end
+	if not host or not host.Parent then
+		return nil
+	end
+	if center == nil then
+		center = U.viewport() * 0.5
+	elseif typeof(center) == "Instance" then
+		center = center.AbsolutePosition + center.AbsoluteSize * 0.5
+	end
+	local scale = U.parentScale(host)
+	local origin = host.AbsolutePosition
+	local width = math.max(1, host.AbsoluteSize.X / scale)
+	local height = math.max(1, host.AbsoluteSize.Y / scale)
+	local radius = options.Radius or (math.sqrt(width * width + height * height) * 1.08)
+	local duration = options.Duration or 0.62
+	local tint = color or Theme.Accent
+	local holder = U.frame(host, {
+		Name = "NerxRipple",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromOffset((center.X - origin.X) / scale, (center.Y - origin.Y) / scale),
+		Size = UDim2.fromOffset(2, 2),
+		ZIndex = options.ZIndex or 950,
+	})
+	local layers = {
+		{ Thickness = 24, Transparency = 0.94 },
+		{ Thickness = 14, Transparency = 0.88 },
+		{ Thickness = 8, Transparency = 0.70 },
+		{ Thickness = 3.5, Transparency = 0.34 },
+		{ Thickness = 1.5, Transparency = 0.08 },
+	}
+	local finishAt = 0
+	for index, layer in ipairs(layers) do
+		local ring = U.frame(holder, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromOffset(2, 2),
+			ZIndex = holder.ZIndex,
+		})
+		U.new("UICorner", { CornerRadius = UDim.new(1, 0) }, ring)
+		local ringStroke = U.stroke(ring, tint, layer.Transparency, layer.Thickness)
+		ringStroke.Name = "NerxRippleStroke"
+		local span = duration - (index - 1) * 0.012
+		U.tween(ring, TweenInfo.new(span, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out), {
+			Size = UDim2.fromOffset(radius * 2, radius * 2),
+		})
+		U.tween(ringStroke, TweenInfo.new(duration * 0.98, Enum.EasingStyle.Linear), {
+			Transparency = 1,
+		})
+		finishAt = math.max(finishAt, span)
+	end
+	task.delay(finishAt + 0.08, function()
+		if holder.Parent then
+			holder:Destroy()
+		end
+	end)
+	return holder
 end
 
 function U.drag(inputFrame, moveFrame, speed)
@@ -2582,6 +2657,26 @@ local function createSection(page, config)
 	})
 	U.corner(card, useCard and 10 or 8)
 	local cardStroke = U.stroke(card, Theme.Stroke, useCard and 0.65 or 1, 1)
+	if useCard then
+		-- Raised glass plate: a fading 1 px reflection along the top edge. The
+		-- fill stays half-transparent, so no drop shadow is drawn underneath it
+		-- (a blurred shadow would show through the glass and muddy the card).
+		local topLight = U.frame(root, {
+			Name = "NerxCardTopLight",
+			BackgroundColor3 = Theme.White,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(16, 21),
+			Size = UDim2.new(1, -32, 0, 1),
+			ZIndex = 2,
+		})
+		local lightFade = Instance.new("UIGradient")
+		lightFade.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1),
+			NumberSequenceKeypoint.new(0.5, 0.68),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		lightFade.Parent = topLight
+	end
 	U.padding(card, useCard and 2 or 0, 0, useCard and 2 or 0, 0)
 	U.list(card, 0)
 
@@ -4200,6 +4295,22 @@ function Nerx:CreateWindow(config)
 	})
 	U.corner(root, 12)
 	U.stroke(root, Theme.Stroke, 0.55, 1)
+	U.shadow(root, "soft")
+	local windowLight = U.frame(root, {
+		Name = "NerxWindowTopLight",
+		BackgroundColor3 = Theme.White,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(14, 1),
+		Size = UDim2.new(1, -28, 0, 1),
+		ZIndex = 6,
+	})
+	local windowLightFade = Instance.new("UIGradient")
+	windowLightFade.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(0.5, 0.62),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	windowLightFade.Parent = windowLight
 	window.Root = root
 	window.Content = root
 	window.Library = Nerx
