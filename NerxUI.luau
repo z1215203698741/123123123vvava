@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.3.25"
+Nerx.Version = "1.3.26"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -13233,7 +13233,7 @@ Locale:RegisterPairs({
 	{ "底色浓度", "Base tint" },
 	{ "背景柔化", "Background softening" },
 	{ "暗度越高文字越清晰；Roblox 无法对 UI 背景做真模糊，柔化会降低图片不透明度。",
-		"Higher dim keeps text readable; Roblox cannot truly blur UI backgrounds, so softening lowers the image opacity." },
+		"Higher dim = clearer text. Softening lowers image opacity." },
 	{ "保存到「我的主题」", "Save to My Themes" },
 	{ "给这套背景起个名字", "Name this background" },
 	{ "请先填写主题名称", "Enter a theme name first" },
@@ -13260,12 +13260,12 @@ Locale:RegisterPairs({
 	{ "输入名称...", "Type a name..." },
 	{ "筛选...", "Filter..." },
 	{ "在此粘贴导出的 JSON...", "Paste exported JSON here..." },
-	{ "自定义背景图", "Custom background" },
+	{ "自定义背景图", "Background" },
 	{ "毛玻璃模式", "Frosted mode" },
 	{ "同步到 Hotkeys", "Sync to Hotkeys" },
 	{ "同步到头像 HUD", "Sync to avatar HUD" },
 	{ "毛玻璃参数", "Frosted parameters" },
-	{ "拖动实时生效", "Live update while dragging" },
+	{ "拖动实时生效", "Live preview" },
 	{ "画面模糊(全局)", "Scene blur (global)" },
 	{ "玻璃浓度", "Glass density" },
 	{ "玻璃色调", "Glass tint" },
@@ -14674,7 +14674,7 @@ function ConfigPage.Build(page, config)
 	local renderConfigList
 	local refreshBanner
 
-	titleText(configs, "Configs", nil, "local storage")
+	titleText(configs, "Configs")
 	local configFilter = filterField(configs, 100, 0, 154, "Filter configs...")
 	local configSort = W.Segmented(configs, {
 		Width = 116,
@@ -14824,6 +14824,23 @@ function ConfigPage.Build(page, config)
 			Size = UDim2.new(1, 0, 0, 92),
 			ClipsDescendants = true,
 		})
+		-- UICorner only rounds the card's own background; a full-bleed child
+		-- keeps square corners and pokes out past the rounded outline. Round
+		-- the cover too and square its bottom edge with a straight filler.
+		U.corner(cover, 7)
+		local coverFill = U.frame(parent, {
+			BackgroundColor3 = colorB,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(0, 85),
+			Size = UDim2.new(1, 0, 0, 7),
+		})
+		local fillGradient = Instance.new("UIGradient")
+		fillGradient.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, colorA:Lerp(colorB, 85 / 92)),
+			ColorSequenceKeypoint.new(1, colorB),
+		})
+		fillGradient.Rotation = 90
+		fillGradient.Parent = coverFill
 		local gradient = Instance.new("UIGradient")
 		gradient.Color = ColorSequence.new({
 			ColorSequenceKeypoint.new(0, colorA),
