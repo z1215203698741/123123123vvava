@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v2.0.0
+	Nerx UI Library · v2.1.0
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "2.0.0"
+Nerx.Version = "2.1.0"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -1177,8 +1177,12 @@ function U.popup(anchor, width, height, builder, alignRight, placement)
 	U.stroke(card, Theme.Stroke, 0.45, 1)
 	U.shadow(card)
 
-	local absolute = anchor.AbsolutePosition
-	local size = anchor.AbsoluteSize
+	-- `anchor` may legitimately be nil (a stale closure or a button that has
+	-- already been rebuilt). Reading AbsolutePosition on nil used to throw
+	-- after the card had been created, leaving an empty dark card at (0,0)
+	-- that no outside handler could ever dismiss.
+	local absolute = anchor and anchor.AbsolutePosition or Vector2.new(-10000, -10000)
+	local size = anchor and anchor.AbsoluteSize or Vector2.zero
 	local anchorX = (absolute.X - originX) / scale
 	local anchorY = (absolute.Y - originY) / scale
 	local anchorWidth = size.X / scale
@@ -1189,7 +1193,8 @@ function U.popup(anchor, width, height, builder, alignRight, placement)
 	-- anchor the popup to the pointer instead of dropping it in the middle.
 	if host then
 		local hostSize = host.AbsoluteSize
-		local valid = absolute.X >= originX - 2
+		local valid = anchor ~= nil
+			and absolute.X >= originX - 2
 			and absolute.Y >= originY - 2
 			and absolute.X <= originX + hostSize.X + 2
 			and absolute.Y <= originY + hostSize.Y + 2
@@ -1249,7 +1254,18 @@ function U.popup(anchor, width, height, builder, alignRight, placement)
 		Size = UDim2.fromOffset(width, height),
 	})
 
-	builder(card)
+	-- Build inside pcall: a failing builder must never leave a half-built card
+	-- (dark rounded block) on screen without the outside/Escape handlers.
+	local built, buildError = pcall(builder, card)
+	if not built then
+		if overlay and overlay.Parent then
+			overlay:Destroy()
+		end
+		if card and card.Parent then
+			card:Destroy()
+		end
+		error(buildError, 0)
+	end
 
 	-- Popups are separate roots, so frost them explicitly when the mode is on.
 	if Nerx.Frosted and Nerx.Frosted.Enabled then
@@ -15757,12 +15773,31 @@ local function musicNormalizeData(decoded)
 	for key, value in pairs(rawTracks) do
 		if type(value) == "table" then
 			local id = tostring(value.id or key)
-			local source = value.source == "netease" and "netease" or "local"
+			local source = "local"
+			if value.source == "netease" then
+				source = "netease"
+			elseif value.source == "kugou" then
+				source = "kugou"
+			elseif value.source == "qq" then
+				source = "qq"
+			end
 			local soundId = musicNormalizeSoundId(value.soundId) or tostring(value.soundId or ""):gsub("%s", "")
 			local netId = nil
 			if source == "netease" then
 				netId = tostring(value.netId or id:gsub("^ne_", ""))
 				if not netId:match("^%d+$") then
+					source = "local"
+					netId = nil
+				end
+			elseif source == "kugou" then
+				netId = tostring(value.kugouHash or value.netId or "")
+				if not netId:match("^[A-Fa-f0-9]{32}$") then
+					source = "local"
+					netId = nil
+				end
+			elseif source == "qq" then
+				netId = tostring(value.qqMid or value.netId or "")
+				if not netId:match("^[%w]+$") then
 					source = "local"
 					netId = nil
 				end
@@ -15777,7 +15812,8 @@ local function musicNormalizeData(decoded)
 			end
 			local album = musicTrim(value.album)
 			if album == "" then
-				album = source == "netease" and "网易云音乐" or "本地曲库"
+				album = source == "netease" and "网易云音乐"
+					or (source == "kugou" and "酷狗音乐" or (source == "qq" and "QQ 音乐" or "本地曲库"))
 			end
 			local c1, c2 = musicArtColors(name .. artist .. tostring(netId or soundId))
 			value.id = id
@@ -15840,10 +15876,16 @@ local function musicNormalizeData(decoded)
 			end
 			local netId = tostring(value.netId or ""):match("^%d+$") and tostring(value.netId) or nil
 			local kind = "custom"
-			if value.kind == "netease" or netId then
+			if value.kind == "netease" then
 				kind = "netease"
+			elseif value.kind == "kugou" then
+				kind = "kugou"
+			elseif value.kind == "qq" then
+				kind = "qq"
 			elseif value.kind == "saved" then
 				kind = "saved"
+			elseif netId then
+				kind = "netease"
 			end
 			if kind == "netease" and netId == nil then
 				local extracted = tostring(value.id or ""):match("^ne_pl_(%d+)$")
@@ -15932,7 +15974,18 @@ local function musicNormalizeData(decoded)
 			and settings.bgPreset or "aurora",
 		bgThemeLink = settings.bgThemeLink ~= false,
 		bgDim = math.clamp(tonumber(settings.bgDim) or 55, 0, 100),
-		provider = settings.provider == "kugou" and "kugou" or "netease",
+		provider = (settings.provider == "kugou" or settings.provider == "qq") and settings.provider or "netease",
+		kugouCookie = type(settings.kugouCookie) == "string" and settings.kugouCookie or "",
+		kugouUserId = tostring(settings.kugouUserId or ""),
+		kugouToken = type(settings.kugouToken) == "string" and settings.kugouToken or "",
+		kugouNickname = type(settings.kugouNickname) == "string" and settings.kugouNickname or "",
+		kugouDevice = type(settings.kugouDevice) == "string" and settings.kugouDevice or "",
+		kugouMid = type(settings.kugouMid) == "string" and settings.kugouMid or "",
+		qqCookie = type(settings.qqCookie) == "string" and settings.qqCookie or "",
+		qqUin = tostring(settings.qqUin or ""),
+		qqKey = type(settings.qqKey) == "string" and settings.qqKey or "",
+		qqNickname = type(settings.qqNickname) == "string" and settings.qqNickname or "",
+		qqGuid = type(settings.qqGuid) == "string" and settings.qqGuid or "",
 		songCard = settings.songCard ~= false,
 		songCardScale = math.clamp(tonumber(settings.songCardScale) or 1, 0.7, 1.4),
 		songCardPaused = settings.songCardPaused ~= false,
@@ -16007,6 +16060,8 @@ function Music:Init()
 	self.Settings = data.settings
 	self.Order = data.order
 	self.Recommended = data.recommended or {}
+	self.RecommendedCache = {}
+	self.ChartsCache = {}
 	self.MyPlaylists = {}
 	self.Artists = {}
 	self.CloudIds = {}
@@ -16063,7 +16118,7 @@ function Music:Save()
 	-- only the ones that are still referenced, so music.json does not grow forever.
 	local keep = {}
 	for id, track in pairs(self.Tracks) do
-		if (track.source ~= "netease" and track.source ~= "kugou") or track.liked then
+		if (track.source ~= "netease" and track.source ~= "kugou" and track.source ~= "qq") or track.liked then
 			keep[id] = true
 		end
 	end
@@ -16263,6 +16318,8 @@ end
 function Music:SearchNetease(keyword, callback)
 	if self.Settings.provider == "kugou" then
 		return self:SearchKugou(keyword, callback)
+	elseif self.Settings.provider == "qq" then
+		return self:SearchQq(keyword, callback)
 	end
 	keyword = musicTrim(keyword)
 	if keyword == "" then
@@ -16337,55 +16394,9 @@ function Music:SearchKugou(keyword, callback)
 		local ids = {}
 		if type(items) == "table" then
 			for _, item in ipairs(items) do
-				if type(item) == "table" then
-					local hash = tostring(item.hash or "")
-					if hash ~= "" then
-						local id = "kg_" .. hash
-						local name = tostring(item.songname or item.filename or "未知歌曲")
-						local artist = tostring(item.singername or "")
-						if artist == "" then
-							artist = string.match(tostring(item.filename or ""), "^([^%-]+)%-") or "未知歌手"
-							artist = musicTrim(artist)
-						end
-						local trans = type(item.trans_param) == "table" and item.trans_param or {}
-						local cover = tostring(trans.union_cover or trans.album_img or item.album_img or "")
-						if cover ~= "" then
-							cover = cover:gsub("{size}", "240"):gsub("^http://", "https://")
-						elseif tostring(item.album_id or ""):match("^%d+$") then
-							cover = "https://imge.kugou.com/stdmusic/240/" .. tostring(item.album_id) .. ".jpg"
-						end
-						local c1, c2 = musicArtColors(name .. hash)
-						local track = self.Tracks[id]
-						if not track then
-							track = {
-								id = id,
-								source = "kugou",
-								netId = hash,
-								kugouHash = hash,
-								name = name,
-								artist = artist ~= "" and artist or "未知歌手",
-								album = tostring(item.album_name or "酷狗音乐"),
-								duration = tonumber(item.duration) or 0,
-								fee = (tonumber(item.pay_type) or 0) > 0 and 1 or 0,
-								liked = false,
-								lyrics = "",
-								color1 = c1,
-								color2 = c2,
-								coverUrl = cover,
-							}
-							self.Tracks[id] = track
-						else
-							track.netId = hash
-							track.kugouHash = hash
-							track.name = name
-							track.artist = artist ~= "" and artist or track.artist
-							track.album = tostring(item.album_name or track.album)
-							track.duration = tonumber(item.duration) or track.duration
-							track.coverUrl = cover ~= "" and cover or track.coverUrl
-							track.fee = (tonumber(item.pay_type) or 0) > 0 and 1 or track.fee
-						end
-						ids[#ids + 1] = id
-					end
+				local track = self:ParseKugouSong(item)
+				if track then
+					ids[#ids + 1] = track.id
 				end
 			end
 		end
@@ -16395,6 +16406,406 @@ function Music:SearchKugou(keyword, callback)
 			self.SearchError = "酷狗请求失败"
 		elseif #ids == 0 then
 			self.SearchError = "酷狗没有找到歌曲"
+		end
+		self:_Emit("search")
+		if callback then
+			callback(ids, self.SearchError)
+		end
+	end)
+end
+
+-- =======================================================================================
+-- Multi-provider support (NetEase / Kugou / QQ Music)
+-- Helpers live on the Music table so the huge MusicPage.Build closure stays under
+-- Luau's 200-register limit.
+-- =======================================================================================
+
+function Music:Md5(input)
+	input = tostring(input or "")
+	local shiftTable = {
+		7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,
+		5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,
+		4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,
+		6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21,
+	}
+	local constant = Music._Md5K
+	if not constant then
+		constant = {}
+		for index = 1, 64 do
+			constant[index] = math.floor(math.abs(math.sin(index)) * 4294967296) % 4294967296
+		end
+		Music._Md5K = constant
+	end
+	local length = #input
+	local bits = length * 8
+	local pad = 55 - (length % 64)
+	if pad < 0 then
+		pad = pad + 64
+	end
+	local tail = { string.char(128) }
+	for _ = 1, pad do
+		tail[#tail + 1] = "\0"
+	end
+	for shift = 0, 56, 8 do
+		tail[#tail + 1] = string.char(math.floor(bits / (2 ^ shift)) % 256)
+	end
+	local data = input .. table.concat(tail)
+	local bytes = { string.byte(data, 1, #data) }
+	local a0, b0, c0, d0 = 1732584193, 4023233417, 2562383102, 271733878
+	for offset = 0, #data - 64, 64 do
+		local words = {}
+		for index = 1, 16 do
+			local base = offset + (index - 1) * 4
+			words[index] = bytes[base + 1] + bytes[base + 2] * 256 + bytes[base + 3] * 65536 + bytes[base + 4] * 16777216
+		end
+		local A, B, C, D = a0, b0, c0, d0
+		for index = 1, 64 do
+			local F, g
+			if index <= 16 then
+				F = bit32.bor(bit32.band(B, C), bit32.band(bit32.bnot(B), D))
+				g = index - 1
+			elseif index <= 32 then
+				F = bit32.bor(bit32.band(D, B), bit32.band(bit32.bnot(D), C))
+				g = (5 * (index - 1) + 1) % 16
+			elseif index <= 48 then
+				F = bit32.bxor(bit32.bxor(B, C), D)
+				g = (3 * (index - 1) + 5) % 16
+			else
+				F = bit32.bxor(C, bit32.bor(B, bit32.bnot(D)))
+				g = (7 * (index - 1)) % 16
+			end
+			local total = (F + A + constant[index] + words[g + 1]) % 4294967296
+			local shift = shiftTable[index]
+			local rotated = bit32.bor(bit32.lshift(total, shift), bit32.rshift(total, 32 - shift))
+			A = D
+			D = C
+			C = B
+			B = (B + rotated) % 4294967296
+		end
+		a0 = (a0 + A) % 4294967296
+		b0 = (b0 + B) % 4294967296
+		c0 = (c0 + C) % 4294967296
+		d0 = (d0 + D) % 4294967296
+	end
+	local function hex(value)
+		local out = {}
+		for shift = 0, 24, 8 do
+			out[#out + 1] = string.format("%02x", math.floor(value / (2 ^ shift)) % 256)
+		end
+		return table.concat(out)
+	end
+	return hex(a0) .. hex(b0) .. hex(c0) .. hex(d0)
+end
+
+function Music:HexToDecimal(hex)
+	hex = tostring(hex or "")
+	if not hex:match("^%x+$") then
+		return "0"
+	end
+	local digits = { 0 }
+	for index = 1, #hex do
+		local digit = tonumber(hex:sub(index, index), 16) or 0
+		local carry = digit
+		for position = 1, #digits do
+			local value = digits[position] * 16 + carry
+			digits[position] = value % 10
+			carry = math.floor(value / 10)
+		end
+		while carry > 0 do
+			digits[#digits + 1] = carry % 10
+			carry = math.floor(carry / 10)
+		end
+	end
+	local out = {}
+	for index = #digits, 1, -1 do
+		out[#out + 1] = tostring(digits[index])
+	end
+	return table.concat(out)
+end
+
+function Music:Hash33(text)
+	text = tostring(text or "")
+	local hash = 5381
+	for index = 1, #text do
+		hash = (hash * 33 + string.byte(text, index)) % 2147483648
+	end
+	return hash
+end
+
+function Music:KgSign(params, salt, body)
+	local keys = {}
+	for key in pairs(params) do
+		keys[#keys + 1] = key
+	end
+	table.sort(keys)
+	local parts = {}
+	for _, key in ipairs(keys) do
+		parts[#parts + 1] = tostring(key) .. "=" .. tostring(params[key])
+	end
+	return self:Md5(salt .. table.concat(parts) .. tostring(body or "") .. salt)
+end
+
+function Music:ProviderName()
+	local provider = self.Settings.provider
+	if provider == "kugou" then
+		return "酷狗"
+	elseif provider == "qq" then
+		return "QQ 音乐"
+	end
+	return "网易云"
+end
+
+function Music:ProviderPlaceholder()
+	local provider = self.Settings.provider
+	if provider == "kugou" then
+		return "搜索酷狗歌曲..."
+	elseif provider == "qq" then
+		return "搜索 QQ 音乐..."
+	end
+	return "搜索网易云歌曲、歌手..."
+end
+
+function Music:ProviderLoggedIn()
+	local provider = self.Settings.provider
+	if provider == "kugou" then
+		return self.Settings.kugouToken ~= "" and self.Settings.kugouUserId ~= ""
+	elseif provider == "qq" then
+		return self.Settings.qqKey ~= "" and self.Settings.qqUin ~= ""
+	end
+	return musicTrim(self.Settings.cookie) ~= ""
+end
+
+function Music:ProviderAccountName()
+	local provider = self.Settings.provider
+	if provider == "kugou" then
+		if self.Settings.kugouNickname ~= "" then
+			return self.Settings.kugouNickname
+		end
+		return self.Settings.kugouUserId ~= "" and ("酷狗 " .. self.Settings.kugouUserId) or ""
+	elseif provider == "qq" then
+		if self.Settings.qqNickname ~= "" then
+			return self.Settings.qqNickname
+		end
+		return self.Settings.qqUin ~= "" and ("QQ " .. self.Settings.qqUin) or ""
+	end
+	return self.Settings.nickname
+end
+
+function Music:KugouDevice()
+	local value = tostring(self.Settings.kugouDevice or ""):lower()
+	if #value == 32 and value:match("^%x+$") then
+		return value
+	end
+	local alphabet = "0123456789abcdef"
+	local out = {}
+	for index = 1, 32 do
+		local position = math.random(1, 16)
+		out[index] = alphabet:sub(position, position)
+	end
+	value = table.concat(out)
+	self.Settings.kugouDevice = value
+	self:Save()
+	return value
+end
+
+function Music:QqGuid()
+	local value = tostring(self.Settings.qqGuid or "")
+	if value:match("^%d+$") and #value >= 6 then
+		return value
+	end
+	value = tostring(math.random(100000000, 999999999))
+	self.Settings.qqGuid = value
+	self:Save()
+	return value
+end
+
+-- ---------- track parsers ----------
+
+function Music:ParseKugouSong(item)
+	if type(item) ~= "table" then
+		return nil
+	end
+	local hash = tostring(item.hash or item.Hash or item.filehash or "")
+		:upper()
+	if not hash:match("^[A-F0-9]{32}$") then
+		return nil
+	end
+	local id = "kg_" .. hash
+	local filename = tostring(item.filename or item.FileName or "")
+	local name = tostring(item.songname or item.SongName or item.name or "")
+	if name == "" then
+		name = musicTrim(string.match(filename, "%-%s*(.+)$") or filename)
+	end
+	if name == "" then
+		name = "未知歌曲"
+	end
+	local artist = tostring(item.singername or item.singername or "")
+	if artist == "" then
+		artist = musicTrim(string.match(filename, "^(.+)%s%-%s") or "")
+	end
+	if artist == "" then
+		artist = "未知歌手"
+	end
+	local trans = type(item.trans_param) == "table" and item.trans_param or {}
+	local cover = tostring(trans.union_cover or item.imgurl or item.album_img or "")
+	if cover ~= "" then
+		cover = cover:gsub("{size}", "240"):gsub("^http://", "https://")
+	elseif tostring(item.album_id or ""):match("^%d+$") then
+		cover = "https://imge.kugou.com/stdmusic/240/" .. tostring(item.album_id) .. ".jpg"
+	end
+	local album = tostring(item.album_name or item.remark or "酷狗音乐")
+	local c1, c2 = musicArtColors(name .. hash)
+	local track = self.Tracks[id]
+	if not track then
+		track = {
+			id = id,
+			source = "kugou",
+			netId = hash,
+			kugouHash = hash,
+			name = name,
+			artist = artist,
+			album = album,
+			duration = tonumber(item.duration or item.timeLength) or 0,
+			fee = (tonumber(item.pay_type) or 0) > 0 and 1 or 0,
+			liked = false,
+			lyrics = "",
+			color1 = c1,
+			color2 = c2,
+			coverUrl = cover,
+		}
+		self.Tracks[id] = track
+	else
+		track.netId = hash
+		track.kugouHash = hash
+		track.name = name
+		track.artist = artist
+		track.album = album
+		track.duration = tonumber(item.duration or item.timeLength) or track.duration
+		track.coverUrl = cover ~= "" and cover or track.coverUrl
+		track.fee = (tonumber(item.pay_type) or 0) > 0 and 1 or track.fee
+	end
+	return track
+end
+
+function Music:ParseQqSong(item)
+	if type(item) ~= "table" then
+		return nil
+	end
+	local mid = tostring(item.songmid or item.mid or "")
+	if not mid:match("^[%w]+$") then
+		return nil
+	end
+	local media = tostring(
+		item.strMediaMid
+			or item.media_mid
+			or item.mediaMid
+			or (type(item.file) == "table" and item.file.media_mid)
+			or ""
+	)
+	if not media:match("^[%w]+$") then
+		media = mid
+	end
+	local album = type(item.album) == "table" and item.album or {}
+	local albumMid = tostring(item.albummid or album.mid or "")
+	local singerNames = {}
+	local singers = item.singer or item.singers
+	if type(singers) == "table" then
+		for _, singer in ipairs(singers) do
+			if type(singer) == "table" and tostring(singer.name or "") ~= "" then
+				singerNames[#singerNames + 1] = tostring(singer.name)
+			end
+		end
+	end
+	local artist = #singerNames > 0 and table.concat(singerNames, "、") or tostring(item.singername or "未知歌手")
+	local name = tostring(item.songname or item.name or item.title or "")
+	if name == "" then
+		name = "未知歌曲"
+	end
+	local albumName = tostring(item.albumname or album.name or "QQ 音乐")
+	local duration = tonumber(item.interval or item.duration) or 0
+	local cover = albumMid ~= "" and ("https://y.gtimg.cn/music/photo_new/T002R300x300M000" .. albumMid .. ".jpg") or ""
+	local pay = type(item.pay) == "table" and item.pay or nil
+	local id = "qq_" .. mid
+	local c1, c2 = musicArtColors(name .. mid)
+	local track = self.Tracks[id]
+	if not track then
+		track = {
+			id = id,
+			source = "qq",
+			netId = mid,
+			qqMid = mid,
+			qqMediaMid = media,
+			name = name,
+			artist = artist,
+			album = albumName,
+			duration = duration,
+			fee = (tonumber(pay and pay.pay_play) or 0) > 0 and 1 or 0,
+			liked = false,
+			lyrics = "",
+			color1 = c1,
+			color2 = c2,
+			coverUrl = cover,
+		}
+		self.Tracks[id] = track
+	else
+		track.netId = mid
+		track.qqMid = mid
+		track.qqMediaMid = media
+		track.name = name
+		track.artist = artist
+		track.album = albumName
+		track.duration = duration > 0 and duration or track.duration
+		track.coverUrl = cover ~= "" and cover or track.coverUrl
+	end
+	return track
+end
+
+function Music:SearchQq(keyword, callback)
+	keyword = musicTrim(keyword)
+	self.SearchQuery = keyword
+	self.Searching = true
+	self.SearchError = nil
+	self.SearchIds = {}
+	self:_Emit("search")
+	if keyword == "" then
+		self.Searching = false
+		self:_Emit("search")
+		if callback then
+			callback({})
+		end
+		return
+	end
+	task.spawn(function()
+		local url = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&p=1&n=40&w=" .. musicUrlEncode(keyword)
+		local response = musicHttp({
+			Url = url,
+			Method = "GET",
+			Headers = {
+				["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
+				["Referer"] = "https://y.qq.com/",
+				["Accept"] = "application/json",
+			},
+		}, 15)
+		if self.SearchQuery ~= keyword then
+			return
+		end
+		local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
+		local songs = data and data.data and data.data.song and data.data.song.list
+		local ids = {}
+		if type(songs) == "table" then
+			for _, item in ipairs(songs) do
+				local track = self:ParseQqSong(item)
+				if track then
+					ids[#ids + 1] = track.id
+				end
+			end
+		end
+		self.Searching = false
+		self.SearchIds = ids
+		if not data then
+			self.SearchError = "QQ 音乐请求失败"
+		elseif #ids == 0 then
+			self.SearchError = "QQ 音乐没有找到歌曲"
 		end
 		self:_Emit("search")
 		if callback then
@@ -16489,11 +16900,529 @@ function Music:SearchPlaylists(keyword, callback)
 	end)
 end
 
+-- ---------- provider catalogs ----------
+
+function Music:_GetJson(url, headers, timeout)
+	local response = musicHttp({ Url = url, Method = "GET", Headers = headers }, timeout or 15)
+	if not response or not response.body then
+		return nil, response
+	end
+	return Nerx.Storage:Decode(response.body), response
+end
+
+function Music:_QqApi(module, method, param, timeout)
+	local comm = { ct = 19, cv = 2201 }
+	local key = tostring(self.Settings.qqKey or "")
+	local uin = tostring(self.Settings.qqUin or "")
+	if key ~= "" and uin ~= "" then
+		comm.uin = uin
+		comm.authst = key
+		comm["g_tk"] = self:Hash33(key)
+		comm.tmeLoginType = 2
+	end
+	local body = Nerx.Storage:Encode({
+		comm = comm,
+		req_0 = {
+			module = module,
+			method = method,
+			param = type(param) == "table" and param or {},
+		},
+	})
+	if type(body) ~= "string" or body == "" then
+		return nil
+	end
+	local response = musicHttp({
+		Url = "https://u.y.qq.com/cgi-bin/musicu.fcg",
+		Method = "POST",
+		Body = body,
+		Headers = {
+			["Content-Type"] = "application/json",
+			["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
+			["Referer"] = "https://y.qq.com/",
+			["Accept"] = "application/json",
+		},
+	}, timeout or 15)
+	if not response or not response.body then
+		return nil
+	end
+	local root = Nerx.Storage:Decode(response.body)
+	if type(root) ~= "table" then
+		return nil
+	end
+	local block = type(root.req_0) == "table" and root.req_0 or nil
+	if not block or tonumber(block.code or 0) ~= 0 then
+		return nil
+	end
+	return type(block.data) == "table" and block.data or nil
+end
+
+function Music:_EnsureProviderPlaylist(id, kind, meta)
+	meta = meta or {}
+	local playlist = self:GetPlaylist(id)
+	if not playlist then
+		local name = tostring(meta.name or "在线歌单")
+		local c1, c2 = musicArtColors(name .. id)
+		playlist = {
+			id = id,
+			kind = kind,
+			netId = tostring(meta.netId or ""),
+			name = name,
+			creator = tostring(meta.creator or (kind == "kugou" and "酷狗音乐" or "QQ 音乐")),
+			count = tonumber(meta.count) or 0,
+			playCount = tonumber(meta.playCount) or 0,
+			color1 = meta.color1 or c1,
+			color2 = meta.color2 or c2,
+			coverUrl = tostring(meta.coverUrl or ""),
+			trackIds = {},
+			loaded = false,
+			loading = false,
+			error = nil,
+		}
+		table.insert(self.Playlists, 1, playlist)
+	else
+		if meta.name then
+			playlist.name = tostring(meta.name)
+		end
+		if meta.coverUrl and meta.coverUrl ~= "" then
+			playlist.coverUrl = tostring(meta.coverUrl)
+		end
+		if meta.creator then
+			playlist.creator = tostring(meta.creator)
+		end
+	end
+	return playlist
+end
+
+function Music:LoadKugouCharts()
+	local data = self:_GetJson("https://mobilecdn.kugou.com/api/v3/rank/list?plat=2&withsong=1&parentid=0", {
+		["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+		["Referer"] = "https://m.kugou.com/",
+	}, 20)
+	local info = data and data.data and data.data.info
+	local out = {}
+	if type(info) == "table" then
+			for _, item in ipairs(info) do
+				local rankId = type(item) == "table" and tostring(item.rankid or "") or ""
+				if rankId:match("^%d+$") then
+				local name = tostring(item.rankname or "酷狗榜单")
+				local c1, c2 = musicArtColors(name .. rankId)
+				out[#out + 1] = {
+					source = "kugou",
+					kind = "kugouRank",
+					netId = rankId,
+					name = name,
+					tag = "酷狗榜单",
+					creator = "酷狗音乐",
+					count = tonumber(item.songcount) or 0,
+					playCount = tonumber(item.play_times) or 0,
+					coverUrl = tostring(item.imgurl or ""):gsub("{size}", "300"),
+					color1 = c1,
+					color2 = c2,
+				}
+			end
+		end
+	end
+	return out
+end
+
+function Music:LoadQqCharts()
+	local data = self:_QqApi("music.musicToplist.Toplist", "GetAll", {}, 20)
+	local groups = data and data.group or {}
+	local out = {}
+	if type(groups) == "table" then
+		for _, group in ipairs(groups) do
+			local list = type(group) == "table" and group.toplist or nil
+			if type(list) == "table" then
+				for _, item in ipairs(list) do
+					local topId = type(item) == "table" and tostring(item.topId or "") or ""
+					if topId:match("^%d+$") then
+						local name = tostring(item.title or "QQ 榜单")
+						local c1, c2 = musicArtColors(name .. topId)
+						out[#out + 1] = {
+							source = "qq",
+							kind = "qqChart",
+							netId = topId,
+							name = name,
+							tag = "QQ 榜单",
+							creator = "QQ 音乐",
+							count = tonumber(item.totalNum) or 0,
+							playCount = 0,
+							coverUrl = tostring(item.frontPicUrl or item.headPicUrl or ""):gsub("^http://", "https://"),
+							color1 = c1,
+							color2 = c2,
+						}
+					end
+				end
+			end
+		end
+	end
+	return out
+end
+
+function Music:LoadKugouHome(force, callback)
+	if self.RecommendedLoading and not force then
+		return
+	end
+	self.RecommendedLoading = true
+	self.RecommendedError = nil
+	self:_Emit("recommended")
+	task.spawn(function()
+		local data = self:_GetJson("https://m.kugou.com/plist/index?json=true&page=" .. tostring(math.random(1, 6)), {
+			["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+			["Referer"] = "https://m.kugou.com/",
+		}, 20)
+		local info = data and data.plist and data.plist.list and data.plist.list.info
+		local out = {}
+		if type(info) == "table" then
+			for _, item in ipairs(info) do
+				local specialId = type(item) == "table" and tostring(item.specialid or "") or ""
+				if specialId:match("^%d+$") then
+					local name = tostring(item.specialname or "酷狗歌单")
+					local cover = tostring(item.imgurl or ""):gsub("{size}", "300"):gsub("^http://", "https://")
+					local c1, c2 = musicArtColors(name .. specialId)
+					out[#out + 1] = {
+						source = "kugou",
+						kind = "kugouPlaylist",
+						netId = specialId,
+						name = name,
+						tag = "酷狗歌单",
+						creator = (tostring(item.username or "") ~= "" and tostring(item.username) or "酷狗音乐"),
+						count = tonumber(item.songcount) or 0,
+						playCount = tonumber(item.playcount) or 0,
+						coverUrl = cover,
+						color1 = c1,
+						color2 = c2,
+					}
+				end
+			end
+		end
+		if #out == 0 then
+			out = self:LoadKugouCharts()
+		end
+		self.RecommendedLoading = false
+		self.RecommendedCache = self.RecommendedCache or {}
+		self.RecommendedCache.kugou = out
+		if self.Settings.provider == "kugou" then
+			self.Recommended = out
+		end
+		if #out == 0 then
+			self.RecommendedError = "酷狗推荐获取失败"
+		end
+		self:_Emit("recommended")
+		if callback then
+			callback(out, self.RecommendedError)
+		end
+	end)
+end
+
+function Music:LoadQqHome(force, callback)
+	if self.RecommendedLoading and not force then
+		return
+	end
+	self.RecommendedLoading = true
+	self.RecommendedError = nil
+	self:_Emit("recommended")
+	task.spawn(function()
+		local data = self:_QqApi("music.playlist.PlaylistSquare", "GetRecommendFeed", { From = 0, Size = 30 }, 20)
+		local list = data and data.List or {}
+		local out = {}
+		if type(list) == "table" then
+			for _, item in ipairs(list) do
+				local basic = type(item) == "table"
+					and type(item.Playlist) == "table"
+					and type(item.Playlist.basic) == "table"
+					and item.Playlist.basic
+					or nil
+				if basic then
+					local tid = tostring(basic.tid or "")
+					if tid:match("^%d+$") then
+						local name = tostring(basic.title or "QQ 音乐歌单")
+						local cover = type(basic.cover) == "table"
+							and tostring(basic.cover.medium_url or basic.cover.small_url or basic.cover.default_url or "")
+							or ""
+						local c1, c2 = musicArtColors(name .. tid)
+						local creator = type(basic.creator) == "table"
+							and tostring(basic.creator.nick or basic.creator.name or "")
+							or tostring(basic.creator or "")
+						if creator == "" then
+							creator = "QQ 音乐"
+						end
+						out[#out + 1] = {
+							source = "qq",
+							kind = "qqPlaylist",
+							netId = tid,
+							name = name,
+							tag = "QQ 歌单",
+							creator = creator,
+							count = tonumber(basic.song_cnt or basic.songnum) or 0,
+							playCount = tonumber(basic.play_cnt or basic.listen_num) or 0,
+							coverUrl = cover:gsub("^http://", "https://"),
+							color1 = c1,
+							color2 = c2,
+						}
+					end
+				end
+			end
+		end
+		if #out == 0 then
+			-- The recommend feed can be empty for guests; official charts are public.
+			out = self:LoadQqCharts()
+		end
+		self.RecommendedLoading = false
+		self.RecommendedCache = self.RecommendedCache or {}
+		self.RecommendedCache.qq = out
+		if self.Settings.provider == "qq" then
+			self.Recommended = out
+		end
+		if #out == 0 then
+			self.RecommendedError = "QQ 音乐推荐获取失败"
+		end
+		self:_Emit("recommended")
+		if callback then
+			callback(out, self.RecommendedError)
+		end
+	end)
+end
+
+function Music:LoadProviderHome(force, callback)
+	local provider = self.Settings.provider
+	if provider == "kugou" then
+		return self:LoadKugouHome(force, callback)
+	elseif provider == "qq" then
+		return self:LoadQqHome(force, callback)
+	end
+	return self:LoadRecommended(force, callback)
+end
+
+function Music:LoadProviderCharts(force, callback)
+	local provider = self.Settings.provider
+	if provider ~= "kugou" and provider ~= "qq" then
+		return self:LoadCharts(force, callback)
+	end
+	if self.ChartsLoading and not force then
+		return
+	end
+	self.ChartsLoading = true
+	self:_Emit("charts")
+	task.spawn(function()
+		local out
+		if provider == "kugou" then
+			out = self:LoadKugouCharts()
+		else
+			out = self:LoadQqCharts()
+		end
+		-- The listener may have switched providers while the request was in
+		-- flight; never overwrite the new provider's grid.
+		if self.Settings.provider ~= provider then
+			return
+		end
+		self.Charts = out
+		self.ChartsError = #out == 0 and (self:ProviderName() .. "榜单获取失败") or nil
+		self.ChartsCache = self.ChartsCache or {}
+		self.ChartsCache[provider] = out
+		self.ChartsLoading = false
+		self:_Emit("charts")
+		if callback then
+			callback(out)
+		end
+	end)
+end
+
+function Music:OpenKugouRank(rankId, meta, callback, force)
+	rankId = tostring(rankId or "")
+	if not rankId:match("^%d+$") then
+		return nil
+	end
+	meta = meta or {}
+	local playlist = self:_EnsureProviderPlaylist("kg_rank_" .. rankId, "kugou", {
+		netId = rankId,
+		name = meta.name or "酷狗榜单",
+		coverUrl = meta.coverUrl,
+		creator = meta.creator or "酷狗音乐",
+		count = meta.count,
+		color1 = meta.color1,
+		color2 = meta.color2,
+	})
+	playlist.netId = rankId
+	if playlist.loaded and not force then
+		return playlist
+	end
+	if playlist.loading then
+		return playlist
+	end
+	playlist.loading = true
+	playlist.error = nil
+	self:_Emit("library", playlist)
+	task.spawn(function()
+		local data = self:_GetJson("https://mobilecdn.kugou.com/api/v3/rank/song?rankid=" .. rankId .. "&page=1&pagesize=100", {
+			["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+			["Referer"] = "https://m.kugou.com/",
+		}, 20)
+		local info = data and data.data and data.data.info
+		local ids = {}
+		if type(info) == "table" then
+			for _, item in ipairs(info) do
+				local track = self:ParseKugouSong(item)
+				if track then
+					ids[#ids + 1] = track.id
+				end
+			end
+		end
+		playlist.trackIds = ids
+		playlist.loaded = #ids > 0
+		playlist.loading = false
+		playlist.count = math.max(tonumber(playlist.count) or 0, #ids)
+		if #ids == 0 then
+			playlist.error = "酷狗榜单暂时无法读取（可换一个榜单）"
+		end
+		self:_Emit("library", playlist)
+		if callback then
+			callback(playlist)
+		end
+	end)
+	return playlist
+end
+
+function Music:OpenQqChart(topId, meta, callback, force)
+	topId = tostring(topId or "")
+	if not topId:match("^%d+$") then
+		return nil
+	end
+	meta = meta or {}
+	local playlist = self:_EnsureProviderPlaylist("qq_chart_" .. topId, "qq", {
+		netId = topId,
+		name = meta.name or "QQ 榜单",
+		coverUrl = meta.coverUrl,
+		creator = meta.creator or "QQ 音乐",
+		count = meta.count,
+		color1 = meta.color1,
+		color2 = meta.color2,
+	})
+	playlist.netId = topId
+	if playlist.loaded and not force then
+		return playlist
+	end
+	if playlist.loading then
+		return playlist
+	end
+	playlist.loading = true
+	playlist.error = nil
+	self:_Emit("library", playlist)
+	task.spawn(function()
+		local data = self:_QqApi("music.musicToplist.Toplist", "GetDetail", {
+			topId = tonumber(topId),
+			offset = 0,
+			num = 100,
+		}, 20)
+		local songs = data and data.songInfoList or {}
+		local ids = {}
+		if type(songs) == "table" then
+			for _, item in ipairs(songs) do
+				local track = self:ParseQqSong(item)
+				if track then
+					ids[#ids + 1] = track.id
+				end
+			end
+		end
+		playlist.trackIds = ids
+		playlist.loaded = #ids > 0
+		playlist.loading = false
+		playlist.count = math.max(tonumber(playlist.count) or 0, #ids)
+		if #ids == 0 then
+			playlist.error = "QQ 榜单暂时无法读取（可换一个榜单）"
+		end
+		self:_Emit("library", playlist)
+		if callback then
+			callback(playlist)
+		end
+	end)
+	return playlist
+end
+
+function Music:OpenQqPlaylist(dissId, meta, callback, force)
+	dissId = tostring(dissId or "")
+	if not dissId:match("^%d+$") then
+		return nil
+	end
+	meta = meta or {}
+	local playlist = self:_EnsureProviderPlaylist("qq_pl_" .. dissId, "qq", {
+		netId = dissId,
+		name = meta.name or "QQ 音乐歌单",
+		coverUrl = meta.coverUrl,
+		creator = meta.creator or "QQ 音乐",
+		count = meta.count,
+		color1 = meta.color1,
+		color2 = meta.color2,
+	})
+	playlist.netId = dissId
+	if playlist.loaded and not force then
+		return playlist
+	end
+	if playlist.loading then
+		return playlist
+	end
+	playlist.loading = true
+	playlist.error = nil
+	self:_Emit("library", playlist)
+	task.spawn(function()
+		local data = self:_QqApi("music.srfDissInfo.DissInfo", "CgiGetDiss", {
+			disstid = tonumber(dissId),
+			dirid = 0,
+			song_begin = 0,
+			song_num = 100,
+			userinfo = true,
+			tag = true,
+			orderlist = true,
+		}, 20)
+		local songs = data and data.songlist or {}
+		local ids = {}
+		if type(songs) == "table" then
+			for _, item in ipairs(songs) do
+				local track = self:ParseQqSong(item)
+				if track then
+					ids[#ids + 1] = track.id
+				end
+			end
+		end
+		playlist.trackIds = ids
+		playlist.loaded = #ids > 0
+		playlist.loading = false
+		playlist.count = math.max(tonumber(playlist.count) or 0, #ids)
+		if #ids == 0 then
+			playlist.error = "QQ 音乐歌单暂时无法读取（可能需要登录或歌单已失效）"
+		end
+		self:_Emit("library", playlist)
+		if callback then
+			callback(playlist)
+		end
+	end)
+	return playlist
+end
+
+function Music:OpenProviderEntry(entry, callback)
+	if type(entry) ~= "table" then
+		return nil
+	end
+	if entry.source == "kugou" then
+		if entry.kind == "kugouRank" then
+			return self:OpenKugouRank(entry.netId, entry, callback)
+		end
+		return self:OpenKugouPlaylist(entry.netId, entry, callback)
+	elseif entry.source == "qq" then
+		if entry.kind == "qqChart" then
+			return self:OpenQqChart(entry.netId, entry, callback)
+		end
+		return self:OpenQqPlaylist(entry.netId, entry, callback)
+	end
+	return self:OpenNeteasePlaylist(entry.netId, entry, callback)
+end
+
 function Music:LoadCharts(force, callback)
 	if self.ChartsLoading and not force then
 		return
 	end
 	self.ChartsLoading = true
+	self.ChartsError = nil
 	self:_Emit("charts")
 	task.spawn(function()
 		-- Fill the whole chart grid first; detail requests update each card.
@@ -16528,6 +17457,8 @@ function Music:LoadCharts(force, callback)
 			task.wait(0.32)
 		end
 		self.ChartsLoading = false
+		self.ChartsCache = self.ChartsCache or {}
+		self.ChartsCache.netease = entries
 		self:_Emit("charts")
 		if callback then
 			callback(self.Charts)
@@ -16739,7 +17670,12 @@ function Music:LoadRecommended(force, callback)
 					out[index], out[swap] = out[swap], out[index]
 				end
 			end
+			if self.Settings.provider ~= "netease" then
+				return
+			end
 			self.Recommended = out
+			self.RecommendedCache = self.RecommendedCache or {}
+			self.RecommendedCache.netease = out
 			self.RecommendedError = nil
 			self:Save()
 		else
@@ -17061,6 +17997,35 @@ function Music:SetCookie(cookie)
 	self:_Emit("settings")
 end
 
+-- Public NeteaseCloudMusicApi deployments. Executors frequently strip
+-- Set-Cookie from response headers, so the official QR check cannot hand back
+-- MUSIC_U. These mirrors call the same official endpoints but fold the login
+-- cookie into the JSON body (`cookie` field), which every executor's HTTP
+-- layer preserves.
+Music.QrMirrors = {
+	"https://ncm-api.vercel.app",
+	"https://netease-cloud-music-api-psi-seven.vercel.app",
+}
+
+local function musicMirrorJson(base, path, timeout)
+	local response = musicHttp({
+		Url = base .. path,
+		Method = "GET",
+		Headers = {
+			["Accept"] = "application/json",
+			["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
+		},
+	}, timeout or 12)
+	if not response or not response.body then
+		return nil
+	end
+	return Nerx.Storage:Decode(response.body)
+end
+
+local function musicTimestamp()
+	return tostring(math.floor(os.time() * 1000))
+end
+
 function Music:VerifyCookie(callback)
 	if musicTrim(self.Settings.cookie) == "" then
 		self.Settings.nickname = ""
@@ -17076,6 +18041,19 @@ function Music:VerifyCookie(callback)
 	task.spawn(function()
 		local data = self:_ApiGet("/account", 60, true)
 		local profile = data and (data.profile or (data.data and data.data.profile))
+		if not profile then
+			-- Direct /account can be blocked in some executors; the mirror reads
+			-- the same cookie from the query string and returns the profile.
+			for _, base in ipairs(Music.QrMirrors) do
+				local mirror = musicMirrorJson(base, "/user/account?cookie=" .. musicUrlEncode(self.Settings.cookie), 15)
+				local accountProfile = mirror and (mirror.profile or (mirror.data and mirror.data.profile))
+				if type(accountProfile) == "table"
+					and (tonumber(accountProfile.userId or accountProfile.userid or 0) or 0) > 0 then
+					profile = accountProfile
+					break
+				end
+			end
+		end
 		if not profile then
 			self.Settings.nickname = ""
 			self.Settings.uid = ""
@@ -17099,18 +18077,49 @@ function Music:VerifyCookie(callback)
 end
 
 function Music:QrLoginStart(callback)
+	if self.Settings.provider == "kugou" then
+		return self:KugouQrStart(callback)
+	elseif self.Settings.provider == "qq" then
+		if callback then
+			callback(false, nil, nil, "QQ 音乐暂不支持扫码，请使用 Cookie 登录")
+		end
+		return
+	end
 	task.spawn(function()
-		local response = musicHttp({
-			Url = "https://music.163.com/api/login/qrcode/unikey?type=1",
-			Method = "POST",
-			Headers = musicNcmHeaders(""),
-			Body = "",
-		}, 20)
-		local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
-		local key = data and tostring(data.unikey or "") or ""
-		if not string.match(key, "^[%w%-]+$") then
+		local key = ""
+		local failure
+		-- Mirror first: its QR check returns MUSIC_U inside the JSON body.
+		for _, base in ipairs(Music.QrMirrors) do
+			local mirror = musicMirrorJson(base, "/login/qr/key?timestamp=" .. musicTimestamp(), 15)
+			local candidate = type(mirror) == "table"
+				and tostring((type(mirror.data) == "table" and mirror.data.unikey) or mirror.unikey or "")
+				or ""
+			if string.match(candidate, "^[%w%-]+$") then
+				key = candidate
+				break
+			end
+			if type(mirror) == "table" then
+				failure = mirror.message or mirror.msg or failure
+			end
+		end
+		if key == "" then
+			local response = musicHttp({
+				Url = "https://music.163.com/api/login/qrcode/unikey?type=1",
+				Method = "POST",
+				Headers = musicNcmHeaders(""),
+				Body = "",
+			}, 20)
+			local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
+			local candidate = data and tostring(data.unikey or "") or ""
+			if string.match(candidate, "^[%w%-]+$") then
+				key = candidate
+			else
+				failure = (data and (data.message or data.msg)) or (response and response.error) or failure
+			end
+		end
+		if key == "" then
 			if callback then
-				callback(false, nil, nil, (data and (data.message or data.msg)) or (response and response.error) or "二维码创建失败")
+				callback(false, nil, nil, failure or "二维码创建失败")
 			end
 			return
 		end
@@ -17150,6 +18159,14 @@ function Music:QrLoginStart(callback)
 end
 
 function Music:QrLoginPoll(key, callback)
+	if self.Settings.provider == "kugou" then
+		return self:KugouQrPoll(key, callback)
+	elseif self.Settings.provider == "qq" then
+		if callback then
+			callback("failed", "QQ 音乐暂不支持扫码，请使用 Cookie 登录")
+		end
+		return
+	end
 	key = tostring(key or "")
 	if key == "" then
 		if callback then
@@ -17158,71 +18175,94 @@ function Music:QrLoginPoll(key, callback)
 		return
 	end
 	task.spawn(function()
-		local response = musicHttp({
-			Url = "https://music.163.com/api/login/qrcode/client/login?key=" .. musicUrlEncode(key) .. "&type=1",
-			Method = "GET",
-			Headers = musicNcmHeaders(""),
-		}, 15)
-		local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
-		local code = tonumber(data and data.code) or 801
-		if code == 803 then
-			local token = self:_CookieFromHeaders(response and response.cookies)
-			if not token then
-				token = self:_CookieFromHeaders(response and response.headers)
-			end
-			if not token and data then
-				local nested = type(data.data) == "table" and data.data or {}
-				token = string.match(
-					tostring(data.cookie or data.cookies or data.session or nested.cookie or nested.cookies or ""),
-					"MUSIC_U=([^;%s\"}]+)"
-				)
-				if not token and type(data.data) == "string" then
-					token = string.match(data.data, "MUSIC_U=([^;%s\"}]+)")
+		local code, token
+		-- 1) Mirror check: the JSON body carries the whole cookie string, so
+		--    MUSIC_U arrives even when the executor drops Set-Cookie.
+		for _, base in ipairs(Music.QrMirrors) do
+			local data = musicMirrorJson(
+				base,
+				"/login/qr/check?key=" .. musicUrlEncode(key) .. "&timestamp=" .. musicTimestamp(),
+				12
+			)
+			if type(data) == "table" and tonumber(data.code) then
+				code = tonumber(data.code)
+				token = string.match(tostring(data.cookie or data.cookies or ""), "MUSIC_U=([^;%s\"}]+)")
+				if not token and type(data.data) == "table" then
+					token = string.match(tostring(data.data.cookie or ""), "MUSIC_U=([^;%s\"}]+)")
 				end
+				break
 			end
-			if not token and response and response.body then
-				token = string.match(tostring(response.body), "MUSIC_U=([^;%s\"}]+)")
-			end
-			if not token then
-				-- Some executors drop Set-Cookie on the first 803 response;
-				-- asking once more often returns the cookie header again.
-				task.wait(0.5)
-				local retry = musicHttp({
-					Url = "https://music.163.com/api/login/qrcode/client/login?key=" .. musicUrlEncode(key) .. "&type=1",
-					Method = "GET",
-					Headers = musicNcmHeaders(""),
-				}, 15)
-				token = self:_CookieFromHeaders(retry and retry.cookies)
+		end
+		-- 2) Official endpoint fallback for networks where the mirror is down.
+		if not code then
+			local response = musicHttp({
+				Url = "https://music.163.com/api/login/qrcode/client/login?key=" .. musicUrlEncode(key) .. "&type=1",
+				Method = "GET",
+				Headers = musicNcmHeaders(""),
+			}, 15)
+			local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
+			code = tonumber(data and data.code) or 801
+			if code == 803 then
+				token = self:_CookieFromHeaders(response and response.cookies)
 				if not token then
-					token = self:_CookieFromHeaders(retry and retry.headers)
+					token = self:_CookieFromHeaders(response and response.headers)
 				end
-				if not token and retry and retry.body then
-					token = string.match(tostring(retry.body), "MUSIC_U=([^;%s\"}]+)")
+				if not token and data then
+					local nested = type(data.data) == "table" and data.data or {}
+					token = string.match(
+						tostring(data.cookie or data.cookies or data.session or nested.cookie or nested.cookies or ""),
+						"MUSIC_U=([^;%s\"}]+)"
+					)
+					if not token and type(data.data) == "string" then
+						token = string.match(data.data, "MUSIC_U=([^;%s\"}]+)")
+					end
+				end
+				if not token and response and response.body then
+					token = string.match(tostring(response.body), "MUSIC_U=([^;%s\"}]+)")
+				end
+				if not token then
+					-- Some executors drop Set-Cookie on the first 803 response;
+					-- asking once more often returns the cookie header again.
+					task.wait(0.5)
+					local retry = musicHttp({
+						Url = "https://music.163.com/api/login/qrcode/client/login?key=" .. musicUrlEncode(key) .. "&type=1",
+						Method = "GET",
+						Headers = musicNcmHeaders(""),
+					}, 15)
+					token = self:_CookieFromHeaders(retry and retry.cookies)
+					if not token then
+						token = self:_CookieFromHeaders(retry and retry.headers)
+					end
+					if not token and retry and retry.body then
+						token = string.match(tostring(retry.body), "MUSIC_U=([^;%s\"}]+)")
+					end
+				end
+				if not token and type(altRequest) == "function" then
+					local ok, alt = pcall(altRequest, {
+						Url = "https://music.163.com/api/login/qrcode/client/login?key=" .. musicUrlEncode(key) .. "&type=1",
+						Method = "GET",
+						Headers = musicNcmHeaders(""),
+					})
+					if ok and type(alt) == "table" then
+						token = self:_CookieFromHeaders(alt.Cookies)
+						if not token then
+							token = self:_CookieFromHeaders(alt.cookies)
+						end
+						if not token then
+							token = self:_CookieFromHeaders(alt.Headers)
+						end
+						if not token then
+							token = self:_CookieFromHeaders(alt.headers)
+						end
+						local body = alt.Body or alt.body
+						if not token and body then
+							token = string.match(tostring(body), "MUSIC_U=([^;%s\"}]+)")
+						end
+					end
 				end
 			end
-			if not token and type(altRequest) == "function" then
-				local ok, alt = pcall(altRequest, {
-					Url = "https://music.163.com/api/login/qrcode/client/login?key=" .. musicUrlEncode(key) .. "&type=1",
-					Method = "GET",
-					Headers = musicNcmHeaders(""),
-				})
-				if ok and type(alt) == "table" then
-					token = self:_CookieFromHeaders(alt.Cookies)
-					if not token then
-						token = self:_CookieFromHeaders(alt.cookies)
-					end
-					if not token then
-						token = self:_CookieFromHeaders(alt.Headers)
-					end
-					if not token then
-						token = self:_CookieFromHeaders(alt.headers)
-					end
-					local body = alt.Body or alt.body
-					if not token and body then
-						token = string.match(tostring(body), "MUSIC_U=([^;%s\"}]+)")
-					end
-				end
-			end
+		end
+		if code == 803 then
 			if token and token ~= "" then
 				self:SetCookie("MUSIC_U=" .. token)
 				self:VerifyCookie(function(ok, message)
@@ -17231,7 +18271,7 @@ function Music:QrLoginPoll(key, callback)
 					end
 				end)
 			elseif callback then
-				callback("failed", "登录成功但没有拿到 MUSIC_U Cookie")
+				callback("failed", "登录成功但没有拿到 MUSIC_U Cookie，可改用 Cookie 登录")
 			end
 			return
 		end
@@ -17257,6 +18297,535 @@ function Music:Logout()
 	self:_Emit("account")
 end
 
+-- ---------- provider accounts ----------
+
+function Music:UrlDecode(text)
+	return (tostring(text or ""):gsub("%%(%x%x)", function(hex)
+		return string.char(tonumber(hex, 16))
+	end))
+end
+
+function Music:_KugouWebRequest(url, values, timeout)
+	local device = self:KugouDevice()
+	local params = {
+		appid = "1014",
+		srcappid = "2919",
+		clientver = "20000",
+		clienttime = tostring(math.floor(os.time() * 1000)),
+		mid = device,
+		uuid = device,
+		dfid = "-",
+	}
+	for key, value in pairs(values or {}) do
+		params[key] = tostring(value)
+	end
+	params.signature = string.upper(self:KgSign(params, "NVPh5oo715z5DIWAeQlhMDsWXXQV4hwt"))
+	local query = {}
+	for key, value in pairs(params) do
+		query[#query + 1] = musicUrlEncode(key) .. "=" .. musicUrlEncode(value)
+	end
+	local response = musicHttp({
+		Url = url .. "?" .. table.concat(query, "&"),
+		Method = "GET",
+		Headers = {
+			["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
+			["Referer"] = "https://www.kugou.com/",
+			["Accept"] = "application/json",
+		},
+	}, timeout or 15)
+	if not response or not response.body then
+		return nil, response
+	end
+	return Nerx.Storage:Decode(response.body), response
+end
+
+function Music:_KugouCloudRequest(path, values, bodyTable, timeout)
+	local device = self:KugouDevice()
+	local mid = tostring(self.Settings.kugouMid or "")
+	if mid == "" then
+		mid = device
+	end
+	local clienttime = tostring(math.floor(os.time() * 1000))
+	local params = {
+		appid = "1014",
+		srcappid = "2919",
+		clientver = "20000",
+		clienttime = clienttime,
+		mid = mid,
+		uuid = clienttime,
+		dfid = "-",
+		userid = tostring(self.Settings.kugouUserId or ""),
+		token = tostring(self.Settings.kugouToken or ""),
+	}
+	for key, value in pairs(values or {}) do
+		params[key] = tostring(value)
+	end
+	local body = type(bodyTable) == "table" and Nerx.Storage:Encode(bodyTable) or nil
+	params.signature = self:KgSign(params, "NVPh5oo715z5DIWAeQlhMDsWXXQV4hwt", body or "")
+	local query = {}
+	for key, value in pairs(params) do
+		query[#query + 1] = musicUrlEncode(key) .. "=" .. musicUrlEncode(value)
+	end
+	local response = musicHttp({
+		Url = "https://gateway.kugou.com" .. path .. "?" .. table.concat(query, "&"),
+		Method = body and "POST" or "GET",
+		Body = body,
+		Headers = {
+			["User-Agent"] = "Mozilla/5.0",
+			["x-router"] = "cloudlist.service.kugou.com",
+			["mid"] = mid,
+			["clienttime"] = clienttime,
+			["Content-Type"] = "application/json",
+			["Accept"] = "application/json",
+		},
+	}, timeout or 15)
+	if not response or not response.body then
+		return nil
+	end
+	return Nerx.Storage:Decode(response.body)
+end
+
+function Music:KugouQrStart(callback)
+	task.spawn(function()
+		if type(fnMakeFolder) == "function" then
+			pcall(fnMakeFolder, self.CacheDir)
+		end
+		local data = self:_KugouWebRequest("https://login-user.kugou.com/v2/qrcode", {
+			type = "1",
+			plat = "4",
+			clientver = "1000",
+			qrcode_txt = "https://h5.kugou.com/apps/loginQRCode/html/index.html?appid=1014&",
+		}, 20)
+		local info = data and data.data or nil
+		local key = info and tostring(info.qrcode or "") or ""
+		if key == "" then
+			if callback then
+				callback(false, nil, nil, "酷狗二维码创建失败")
+			end
+			return
+		end
+		local path = self.CacheDir .. "/qr_kg_" .. tostring(self:_Hash(key)) .. ".png"
+		local asset = nil
+		if self:_FileExists(path) then
+			asset = self:_Asset(path)
+		end
+		local image = info and tostring(info.qrcode_img or "") or ""
+		if not asset and image:sub(1, 10) == "data:image" then
+			local comma = image:find(",", 1, true)
+			if comma then
+				local bytes = musicBase64Decode(image:sub(comma + 1))
+				if #bytes > 0 and type(fnWrite) == "function" then
+					pcall(fnWrite, path, bytes)
+					asset = self:_Asset(path)
+				end
+			end
+		end
+		if not asset then
+			local encoded = musicUrlEncode("https://h5.kugou.com/apps/loginQRCode/html/index.html?appid=1014&qrcode=" .. key)
+			for _, url in ipairs({
+				"https://api.pwmqr.com/qrcode/create/?url=" .. encoded,
+				"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=" .. encoded,
+			}) do
+				if self:_DownloadFile(url, path, 20) then
+					asset = self:_Asset(path)
+					if asset then
+						break
+					end
+				end
+			end
+		end
+		if callback then
+			callback(true, key, asset, (not asset) and "酷狗二维码图片加载失败，可改用 Cookie 登录" or nil)
+		end
+	end)
+end
+
+function Music:KugouQrPoll(key, callback)
+	task.spawn(function()
+		local data, response = self:_KugouWebRequest("https://login-user.kugou.com/v2/get_userinfo_qrcode", {
+			plat = "4",
+			clientver = "1000",
+			qrcode = key,
+			dev = "web",
+		}, 15)
+		local info = data and data.data or nil
+		if type(info) ~= "table" then
+			if callback then
+				callback("waiting")
+			end
+			return
+		end
+		local status = tonumber(info.status) or 1
+		if status == 2 then
+			if callback then
+				callback("scanned")
+			end
+			return
+		end
+		if status ~= 4 then
+			if callback then
+				callback("waiting")
+			end
+			return
+		end
+		local user = type(info.userinfo) == "table" and info.userinfo
+			or (type(info.user_info) == "table" and info.user_info)
+			or info
+		local userId = tostring(user.userid or info.userid or "")
+		local token = tostring(user.token or info.token or "")
+		local nickname = tostring(user.nickname or info.nickname or "")
+		-- The poll also sets the web session cookies; prefer them when present.
+		for _, source in ipairs({ "cookies", "headers" }) do
+			local raw = response and response[source]
+			if type(raw) == "table" then
+				for name, value in pairs(raw) do
+					local lower = tostring(name):lower()
+					if type(value) == "string" and (lower == "set-cookie" or lower == "cookie") then
+						local cookieToken = string.match(value, "[;%s]t=([^;%s]+)") or string.match(value, "^t=([^;%s]+)")
+						if cookieToken and cookieToken ~= "" then
+							token = cookieToken
+						end
+						if userId == "" then
+							userId = string.match(value, "KugooID=(%d+)") or ""
+						end
+					elseif lower == "t" and type(value) == "string" then
+						token = value
+					elseif lower == "kugooid" and type(value) == "string" then
+						userId = value
+					end
+				end
+			end
+		end
+		if userId == "" or token == "" then
+			if callback then
+				callback("failed", "酷狗登录信息不完整，请改用 Cookie 登录")
+			end
+			return
+		end
+		self.Settings.kugouUserId = userId
+		self.Settings.kugouToken = token
+		self.Settings.kugouNickname = nickname
+		self.Settings.kugouCookie = "userid=" .. userId .. "; token=" .. token
+		self:Save()
+		self:_Emit("account")
+		self:VerifyProviderCookie(function(ok, message)
+			if callback then
+				if ok then
+					callback("success", message or nickname)
+				else
+					-- The scanned App token is enough for browsing/playback, but the
+					-- website session used for personal playlists may need a cookie.
+					callback("success", "已扫码登录酷狗（个人歌单需要 Cookie 登录）")
+				end
+			end
+		end)
+	end)
+end
+
+function Music:SetProviderCookie(text)
+	text = musicTrim(text)
+	local provider = self.Settings.provider
+	if provider == "kugou" then
+		local raw = text
+		local kugoo = raw:match("KuGoo=([^;\r\n]+)")
+		if kugoo then
+			raw = self:UrlDecode(kugoo)
+		end
+		local function value(name)
+			return raw:match("[&;]" .. name .. "=([^&;%s]+)") or raw:match("^" .. name .. "=([^&;%s]+)")
+		end
+		local token = value("t") or value("token") or ""
+		local userId = value("KugooID") or value("userid") or ""
+		self.Settings.kugouCookie = text
+		self.Settings.kugouToken = token
+		self.Settings.kugouUserId = userId
+		if token ~= "" then
+			self.Settings.kugouMid = value("kg_mid") or ""
+		end
+		self:Save()
+		self:_Emit("settings")
+		return
+	end
+	if provider == "qq" then
+		local key = text:match("qqmusic_key=([^;%s]+)")
+			or text:match("qm_keyst=([^;%s]+)")
+			or text:match("musickey=([^;%s]+)")
+		local uin = text:match("qqmusic_uin=(%d+)") or text:match("[;%s]uin=(%d+)") or text:match("^uin=(%d+)")
+		if not key and not text:find("=", 1, true) and #text > 10 then
+			key = text
+		end
+		self.Settings.qqCookie = text
+		self.Settings.qqKey = key or ""
+		self.Settings.qqUin = uin or self.Settings.qqUin
+		self:Save()
+		self:_Emit("settings")
+		return
+	end
+	self:SetCookie(text)
+end
+
+function Music:VerifyProviderCookie(callback)
+	local provider = self.Settings.provider
+	if provider == "netease" then
+		return self:VerifyCookie(callback)
+	end
+	if provider == "kugou" then
+		if self.Settings.kugouUserId == "" or self.Settings.kugouToken == "" then
+			if callback then
+				callback(false, "请填写酷狗 userid 与 token（或粘贴完整 KuGoo Cookie）")
+			end
+			return
+		end
+		task.spawn(function()
+			local data = self:_KugouCloudRequest("/v7/get_all_list", {
+				plat = "1",
+			}, {
+				userid = tonumber(self.Settings.kugouUserId) or self.Settings.kugouUserId,
+				token = self.Settings.kugouToken,
+				total_ver = 0,
+				type = 2,
+				page = 1,
+				pagesize = 50,
+			}, 20)
+			local info = data and data.data and data.data.info
+			if type(info) ~= "table" then
+				if callback then
+					callback(false, "酷狗 Cookie 无效或已过期")
+				end
+				return
+			end
+			local firstName = ""
+			if type(info[1]) == "table" then
+				firstName = tostring(info[1].nickname or info[1].name or "")
+			end
+			if firstName ~= "" then
+				self.Settings.kugouNickname = firstName
+			end
+			local out = {}
+			for _, item in ipairs(info) do
+				if type(item) == "table" and tonumber(item.is_del or 0) ~= 1 then
+					local listId = tostring(item.listid or "")
+					if listId:match("^%d+$") then
+						local name = tostring(item.name or "酷狗歌单")
+						local c1, c2 = musicArtColors(name .. listId)
+						out[#out + 1] = {
+							id = "kg_pl_" .. listId,
+							netId = listId,
+							source = "kugou",
+							name = name,
+							creator = self.Settings.kugouNickname ~= "" and self.Settings.kugouNickname or "酷狗音乐",
+							count = tonumber(item.count) or 0,
+							playCount = 0,
+							coverUrl = tostring(item.pic or ""):gsub("{size}", "300"):gsub("^http://", "https://"),
+							color1 = c1,
+							color2 = c2,
+						}
+					end
+				end
+			end
+			self.MyPlaylists = out
+			self:Save()
+			self:_Emit("account")
+			if callback then
+				callback(true, self.Settings.kugouNickname ~= "" and self.Settings.kugouNickname or ("酷狗 " .. self.Settings.kugouUserId))
+			end
+		end)
+		return
+	end
+	if self.Settings.qqKey == "" or self.Settings.qqUin == "" then
+		if callback then
+			callback(false, "请填写 QQ 音乐 qqmusic_key 与 uin")
+		end
+		return
+	end
+	task.spawn(function()
+		local data = self:_QqApi("music.UserInfo.userInfoServer", "GetLoginUserInfo", {}, 20)
+		local info = data and (data.info or data.userInfo or data) or nil
+		local nickname = ""
+		if type(info) == "table" then
+			nickname = tostring(info.nick or info.nickname or "")
+			if nickname == "" and type(info.base) == "table" then
+				nickname = tostring(info.base.nick or info.base.nickname or "")
+			end
+		end
+		if not data or (nickname == "" and (not info or next(info) == nil)) then
+			if callback then
+				callback(false, "QQ 音乐 Cookie 无效或已过期")
+			end
+			return
+		end
+		self.Settings.qqNickname = nickname
+		local out = {}
+		local listData = self:_QqApi("music.musicasset.PlaylistBaseRead", "GetPlaylistByUin", {
+			uin = self.Settings.qqUin,
+		}, 20)
+		local list = listData and listData.v_playlist
+		if type(list) == "table" then
+			for _, item in ipairs(list) do
+				local tid = type(item) == "table" and tostring(item.tid or "") or ""
+				if tid:match("^%d+$") then
+					local name = tostring(item.dirName or item.title or item.name or "QQ 歌单")
+					local c1, c2 = musicArtColors(name .. tid)
+					out[#out + 1] = {
+						id = "qq_pl_" .. tid,
+						netId = tid,
+						source = "qq",
+						name = name,
+						creator = nickname ~= "" and nickname or "QQ 音乐",
+						count = tonumber(item.song_cnt or item.songNum or item.songnum) or 0,
+						playCount = 0,
+						coverUrl = tostring(item.picurl or item.picUrl or ""):gsub("^http://", "https://"),
+						color1 = c1,
+						color2 = c2,
+					}
+				end
+			end
+		end
+		self.MyPlaylists = out
+		self:Save()
+		self:_Emit("account")
+		if callback then
+			callback(true, nickname ~= "" and nickname or ("QQ " .. self.Settings.qqUin))
+		end
+	end)
+end
+
+function Music:ProviderLogout()
+	local provider = self.Settings.provider
+	if provider == "kugou" then
+		self.Settings.kugouCookie = ""
+		self.Settings.kugouUserId = ""
+		self.Settings.kugouToken = ""
+		self.Settings.kugouNickname = ""
+		self.Settings.kugouMid = ""
+		self.MyPlaylists = {}
+		self:Save()
+		self:_Emit("account")
+		return
+	elseif provider == "qq" then
+		self.Settings.qqCookie = ""
+		self.Settings.qqKey = ""
+		self.Settings.qqUin = ""
+		self.Settings.qqNickname = ""
+		self.MyPlaylists = {}
+		self:Save()
+		self:_Emit("account")
+		return
+	end
+	self:Logout()
+end
+
+function Music:LoadProviderAccountPlaylists(callback)
+	if self.Settings.provider == "netease" then
+		return self:LoadAccountPlaylists(callback)
+	end
+	if callback then
+		callback(self.MyPlaylists or {})
+	end
+end
+
+function Music:OpenKugouPlaylist(listId, meta, callback, force)
+	listId = tostring(listId or "")
+	if not listId:match("^%d+$") then
+		return nil
+	end
+	meta = meta or {}
+	local playlist = self:_EnsureProviderPlaylist("kg_pl_" .. listId, "kugou", {
+		netId = listId,
+		name = meta.name or "酷狗歌单",
+		coverUrl = meta.coverUrl,
+		creator = meta.creator or "酷狗音乐",
+		count = meta.count,
+		color1 = meta.color1,
+		color2 = meta.color2,
+	})
+	playlist.netId = listId
+	if playlist.loaded and not force then
+		return playlist
+	end
+	if playlist.loading then
+		return playlist
+	end
+	playlist.loading = true
+	playlist.error = nil
+	self:_Emit("library", playlist)
+	task.spawn(function()
+		local ids = {}
+		local seen = {}
+		local total = 0
+		local function add(items)
+			for _, item in ipairs(items) do
+				local track = self:ParseKugouSong(item)
+				if track and not seen[track.id] then
+					seen[track.id] = true
+					ids[#ids + 1] = track.id
+					if #ids >= 100 then
+						return true
+					end
+				end
+			end
+			return false
+		end
+		local function page(number)
+			local data = self:_GetJson(
+				"https://m.kugou.com/plist/list/" .. listId .. "?json=true&page=" .. tostring(number),
+				{
+					["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+					["Referer"] = "https://m.kugou.com/",
+				},
+				20
+			)
+			local block = data and data.list and data.list.list
+			return (block and block.info) or {}, tonumber(block and block.total) or 0
+		end
+		local first, reported = page(1)
+		total = reported
+		local full = add(first)
+		local pageNumber = 1
+		while not full and #ids < 100 and (total <= 0 or #ids < total) and pageNumber < 12 do
+			pageNumber = pageNumber + 1
+			task.wait(0.15)
+			local items = page(pageNumber)
+			if #items == 0 then
+				break
+			end
+			full = add(items)
+		end
+		-- Private / newer personal lists are not exposed by the public page;
+		-- fall back to the logged-in cloud list once.
+		if #ids == 0 and self.Settings.kugouUserId ~= "" and self.Settings.kugouToken ~= "" then
+			local data = self:_KugouCloudRequest("/v4/get_list_all_file", nil, {
+				userid = tonumber(self.Settings.kugouUserId) or self.Settings.kugouUserId,
+				token = self.Settings.kugouToken,
+				listid = tonumber(listId) or listId,
+				area_code = 1,
+				show_relate_goods = 0,
+				allplatform = 1,
+				show_cover = 1,
+				type = 0,
+				page = 1,
+				pagesize = 100,
+			}, 20)
+			local info = data and data.data and data.data.info
+			if type(info) == "table" then
+				add(info)
+			end
+		end
+		playlist.trackIds = ids
+		playlist.loaded = #ids > 0
+		playlist.loading = false
+		playlist.count = math.max(tonumber(playlist.count) or 0, total, #ids)
+		if #ids == 0 then
+			playlist.error = "酷狗歌单读取失败（可能需要登录或歌单已失效）"
+		end
+		self:_Emit("library", playlist)
+		if callback then
+			callback(playlist)
+		end
+	end)
+	return playlist
+end
+
 function Music:LoadAccountPlaylists(callback)
 	local uid = tostring(self.Settings.uid or "")
 	if not uid:match("^%d+$") then
@@ -17277,6 +18846,7 @@ function Music:LoadAccountPlaylists(callback)
 						if name ~= "" then
 							local c1, c2 = musicArtColors(name .. netId)
 							out[#out + 1] = {
+								source = "netease",
 								netId = netId,
 								name = name,
 								creator = self.Settings.nickname ~= "" and self.Settings.nickname or "网易云音乐",
@@ -17354,10 +18924,10 @@ end
 
 function Music:_Download(url, path, customHeaders)
 	if type(rawRequest) ~= "function" then
-		return nil, "执行器缺少 request，无法下载网易云音频"
+		return nil, "执行器缺少 request，无法下载音频"
 	end
 	if type(fnWrite) ~= "function" then
-		return nil, "执行器缺少 writefile，无法缓存网易云音频"
+		return nil, "执行器缺少 writefile，无法缓存音频"
 	end
 	if type(fnMakeFolder) == "function" then
 		pcall(fnMakeFolder, self.CacheDir)
@@ -17368,11 +18938,11 @@ function Music:_Download(url, path, customHeaders)
 	end
 	local response = musicHttpFollow({ Url = url, Method = "GET", Headers = headers }, 45)
 	if not response or not response.body then
-		return nil, response and response.error or "网易云音频下载失败"
+		return nil, response and response.error or "音频下载失败"
 	end
 	local body = response.body
 	if #body < 1024 or string.sub(body, 1, 1) == "{" or string.sub(body, 1, 1) == "<" then
-		return nil, "网易云返回的不是音频（可能是 VIP / 版权限制）"
+		return nil, "返回的不是音频（可能是 VIP / 版权限制）"
 	end
 	local ok, err = pcall(fnWrite, path, body)
 	if not ok then
@@ -17394,7 +18964,10 @@ function Music:_DownloadFile(url, path, timeout)
 	if type(fnMakeFolder) == "function" then
 		pcall(fnMakeFolder, self.CacheDir)
 	end
-	local headers = musicNcmHeaders(self.Settings.cookie)
+	-- Only forward the NetEase session cookie to NetEase image hosts; QR
+	-- generators and Kugou/QQ CDNs must never see it.
+	local sameHost = url:find("music.163.com", 1, true) or url:find("126.net", 1, true)
+	local headers = musicNcmHeaders(sameHost and self.Settings.cookie or "")
 	headers["Accept"] = "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
 	local response = musicHttpFollow({ Url = url, Method = "GET", Headers = headers }, timeout or 24)
 	if not response or not response.body or #response.body < 64 then
@@ -17777,6 +19350,21 @@ function Music:_Load(track)
 	if not sound then
 		return
 	end
+	if track.source == "qq" then
+		pcall(function()
+			sound:Stop()
+		end)
+		pcall(function()
+			sound.TimePosition = 0
+		end)
+		self.Playing = true
+		self.Loading = true
+		self:_Emit("state")
+		task.spawn(function()
+			self:_LoadQq(track, token)
+		end)
+		return
+	end
 	if track.source == "kugou" then
 		pcall(function()
 			sound:Stop()
@@ -18022,7 +19610,8 @@ function Music:_LoadKugou(track, token)
 			local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
 			if type(data) == "table" then
 				local url = tostring(data.url or "")
-				if url ~= "" then
+				local ext = string.lower(tostring(data.extName or "mp3"))
+				if url ~= "" and (ext == "" or ext == "mp3") then
 					playUrls[#playUrls + 1] = url
 				end
 				return data, type(data.extra) == "table" and data.extra or {}
@@ -18129,6 +19718,201 @@ function Music:_LoadKugou(track, token)
 			self:_Emit("loadfail", { track = track, message = "酷狗音频加载失败" })
 		end
 		self:_Emit("state")
+	end)
+end
+
+function Music:_LoadQq(track, token)
+	local sound = self.Sound
+	if not sound then
+		return
+	end
+	local mid = tostring(track.qqMid or track.netId or "")
+	local media = tostring(track.qqMediaMid or mid)
+	if not mid:match("^[%w]+$") then
+		self.Loading = false
+		self.Playing = false
+		self:_Emit("state")
+		self:_Emit("loadfail", { track = track, message = "QQ 音乐歌曲缺少 MID" })
+		return
+	end
+	local headers = {
+		["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
+		["Referer"] = "https://y.qq.com/",
+		["Origin"] = "https://y.qq.com",
+		["Accept"] = "*/*",
+	}
+	-- Search results carry strMediaMid, but chart / playlist rows only expose the
+	-- song mid. QQ's vkey wants the media mid (M500<media mid>.mp3), so resolve it
+	-- once instead of silently asking for a non-existent file.
+	if media == mid then
+		local meta = self:_QqApi("music.pf_song_detail_svr", "get_song_detail_yqq", {
+			song_type = 0,
+			song_mid = mid,
+		}, 15)
+		local file = meta and type(meta.track_info) == "table" and meta.track_info.file or nil
+		local candidate = type(file) == "table" and tostring(file.media_mid or "") or ""
+		if candidate:match("^[%w]+$") then
+			media = candidate
+			track.qqMediaMid = media
+		end
+	end
+	local path = self.CacheDir .. "/qq_" .. mid .. ".mp3"
+	local asset = nil
+	if self:_FileExists(path) then
+		asset = self:_Asset(path)
+	end
+	if not asset then
+		local param = {
+			guid = self:QqGuid(),
+			uin = self.Settings.qqUin ~= "" and self.Settings.qqUin or "0",
+			ctx = 0,
+			-- MP3 only: Roblox Sound cannot decode QQ's AAC (C400) files.
+			filename = { "M500" .. media .. ".mp3", "M800" .. media .. ".mp3" },
+			songmid = { mid, mid },
+			songtype = { 0, 0 },
+		}
+		local data = self:_QqApi("music.vkey.GetVkey", "UrlGetVkey", param, 20)
+		local rows = data and data.midurlinfo or {}
+		local playUrl
+		if type(rows) == "table" then
+			for _, row in ipairs(rows) do
+				local purl = tostring(row.purl or "")
+				if purl ~= "" and tonumber(row.result or 0) == 0 then
+					if purl:match("^https?://") then
+						playUrl = purl
+					else
+						playUrl = "https://isure.stream.qqmusic.qq.com/" .. purl
+					end
+					break
+				end
+			end
+		end
+		if not playUrl then
+			self.Loading = false
+			self.Playing = false
+			self:_Emit("state")
+			self:_Emit("loadfail", { track = track, message = "QQ 音乐版权限制：这首需要 VIP，换一首或切回网易云" })
+			return
+		end
+		local ok, err = self:_Download(playUrl, path, headers)
+		if token ~= self.LoadToken then
+			return
+		end
+		if not ok then
+			self.Loading = false
+			self.Playing = false
+			self:_Emit("state")
+			self:_Emit("loadfail", { track = track, message = tostring(err or "QQ 音乐音频下载失败") })
+			return
+		end
+		asset = self:_Asset(path)
+		if not asset then
+			self.Loading = false
+			self.Playing = false
+			self:_Emit("state")
+			self:_Emit("loadfail", { track = track, message = "QQ 音乐音频缓存失败" })
+			return
+		end
+	end
+	if token ~= self.LoadToken then
+		return
+	end
+	track.cachedPath = path
+	sound.SoundId = asset
+	sound.Volume = self.Settings.volume
+	self:ApplySoundEffects()
+	pcall(function()
+		sound.TimePosition = 0
+	end)
+	self.Loading = false
+	if not self.DesiredPlaying then
+		self.Playing = false
+		self:_Emit("state")
+		return
+	end
+	local played = pcall(function()
+		sound:Play()
+	end)
+	if not played then
+		self.Playing = false
+		self:_Emit("state")
+		self:_Emit("loadfail", { track = track, message = "QQ 音乐音频无法交给 Sound 播放" })
+		return
+	end
+	self.Playing = true
+	self:_Emit("state")
+	task.spawn(function()
+		local waited = 0
+		while waited < 8 and self.LoadToken == token do
+			if sound.TimeLength > 0 then
+				break
+			end
+			task.wait(0.1)
+			waited = waited + 0.1
+		end
+		if self.LoadToken ~= token then
+			return
+		end
+		if sound.TimeLength > 0 then
+			local duration = tonumber(sound.TimeLength) or 0
+			if duration > 0 and math.abs((tonumber(track.duration) or 0) - duration) > 0.05 then
+				track.duration = duration
+				self:Save()
+				self:_Emit("library", track)
+			end
+			if self.DesiredPlaying and not sound.IsPlaying then
+				pcall(function()
+					sound:Play()
+				end)
+			end
+			self.Playing = self.DesiredPlaying ~= false
+		else
+			self.Playing = false
+			pcall(function()
+				sound:Stop()
+			end)
+			self:_Emit("loadfail", { track = track, message = "QQ 音乐音频加载失败" })
+		end
+		self:_Emit("state")
+	end)
+end
+
+function Music:FetchQqLyrics(trackId)
+	local track = self.Tracks[tostring(trackId or "")]
+	if not track or track.source ~= "qq" then
+		return
+	end
+	if track.lyricsLoaded or track.lyricsLoading then
+		return
+	end
+	track.lyricsLoading = true
+	track.lyricsError = nil
+	task.spawn(function()
+		local mid = tostring(track.qqMid or track.netId or "")
+		local headers = {
+			["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
+			["Referer"] = "https://y.qq.com/",
+			["Accept"] = "application/json",
+		}
+		local response = musicHttp({
+			Url = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?format=json&nobase64=1&songmid=" .. musicUrlEncode(mid),
+			Method = "GET",
+			Headers = headers,
+		}, 20)
+		local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
+		track.lyricsLoading = false
+		local raw = data and tostring(data.lyric or "") or ""
+		if raw == "" then
+			track.lyricsError = "QQ 音乐暂无歌词"
+			self:_Emit("lyrics", track)
+			return
+		end
+		track.lyrics = raw:gsub("\r\n", "\n")
+		track.yrc = ""
+		track.lyricsLoaded = true
+		track.lyricsError = nil
+		self:Save()
+		self:_Emit("lyrics", track)
 	end)
 end
 
@@ -19299,7 +21083,7 @@ function MusicPage.Build(page, config)
 		elseif state.view.kind == "settings" then
 			return "设置"
 		elseif state.view.kind == "search" then
-			return "搜索结果"
+			return state.query ~= "" and ("搜索 · " .. state.query) or "搜索结果"
 		elseif state.view.kind == "queue" then
 			return "正在播放"
 		elseif state.view.kind == "party" then
@@ -19310,6 +21094,31 @@ function MusicPage.Build(page, config)
 		end
 		local playlist = currentPlaylist()
 		return playlist and playlist.name or "音乐"
+	end
+
+	-- Top bar (window breadcrumb) used to be a fixed "音乐". Show the section
+	-- the listener is browsing and the current song instead, e.g.
+	-- "排行榜 · 晴天" / "搜索 · 周杰伦". The window keeps ownership of the
+	-- breadcrumb, so only write while the Music tab is actually selected.
+	state.updateHudTitle = function()
+		local win = page.Window
+		if not win or not win.Breadcrumb or win.SelectedTab ~= page.Tab then
+			return
+		end
+		local category = viewTitle()
+		if category == "音乐" then
+			category = "首页"
+		end
+		local track = M.CurrentId and M.Tracks[M.CurrentId] or nil
+		local text = category
+		if track and track.name and track.name ~= "" then
+			text = text .. " · " .. tostring(track.name)
+		end
+		local rich = '<font color="#7E7E88">音乐</font>   <font color="#4A4A54">›</font>   <font color="#DCDCE2">'
+			.. M:RichEscape(text) .. "</font>"
+		if win.Breadcrumb.Text ~= rich then
+			win.Breadcrumb.Text = rich
+		end
 	end
 
 	local function pageHeader(parent, eyebrow, title, subtitle)
@@ -19578,7 +21387,7 @@ function MusicPage.Build(page, config)
 		BorderSizePixel = 0,
 		Font = F.Regular,
 		Text = "",
-		PlaceholderText = M.Settings.provider == "kugou" and "搜索酷狗歌曲、歌手..." or "搜索网易云歌曲、歌手...",
+		PlaceholderText = M:ProviderPlaceholder(),
 		PlaceholderColor3 = T.Faint,
 		TextColor3 = T.Text,
 		TextSize = 10.5,
@@ -19597,6 +21406,9 @@ function MusicPage.Build(page, config)
 	end)
 
 	local function switchProvider(value)
+		if value ~= "netease" and value ~= "kugou" and value ~= "qq" then
+			return
+		end
 		if M.Settings.provider == value then
 			return
 		end
@@ -19605,20 +21417,33 @@ function MusicPage.Build(page, config)
 		M:_Emit("settings")
 		M.SearchIds = {}
 		M.SearchQuery = ""
+		M.SearchError = nil
+		state.searchTab = "songs"
 		state.query = ""
 		searchBox.Text = ""
-		searchBox.PlaceholderText = value == "kugou" and "搜索酷狗歌曲、歌手..." or "搜索网易云歌曲、歌手..."
+		searchBox.PlaceholderText = M:ProviderPlaceholder()
 		if state.view.kind == "search" then
 			state.view = { kind = "home" }
 		end
+		M.RecommendedLoading = false
+		M.ChartsLoading = false
+		M.RecommendedError = nil
+		M.ChartsError = nil
+		M.Recommended = (M.RecommendedCache and M.RecommendedCache[value]) or {}
+		M.Charts = (M.ChartsCache and M.ChartsCache[value]) or {}
+		M.MyPlaylists = {}
+		if M:ProviderLoggedIn() then
+			M:VerifyProviderCookie()
+		end
 		renderRail()
 		renderMain()
-		notify("音乐", value == "kugou" and "已切换到酷狗音乐" or "已切换到网易云音乐", "music-note", T.Accent)
+		notify("音乐", "已切换到" .. M:ProviderName(), "music-note", T.Accent)
 	end
 	local function openProviderMenu(anchor)
 		UIHelpers.ContextMenu(anchor, {
-			{ Text = "网易云音乐" .. (M.Settings.provider ~= "kugou" and "  ·  当前" or ""), Callback = function() switchProvider("netease") end },
+			{ Text = "网易云音乐" .. (M.Settings.provider == "netease" and "  ·  当前" or ""), Callback = function() switchProvider("netease") end },
 			{ Text = "酷狗音乐" .. (M.Settings.provider == "kugou" and "  ·  当前" or ""), Callback = function() switchProvider("kugou") end },
+			{ Text = "QQ 音乐" .. (M.Settings.provider == "qq" and "  ·  当前" or ""), Callback = function() switchProvider("qq") end },
 		})
 	end
 
@@ -19656,7 +21481,7 @@ function MusicPage.Build(page, config)
 	U.corner(providerChip, 5)
 	U.stroke(providerChip, T.Stroke, 0.55, 1)
 	railUi.ProviderLabel = U.label(providerChip, {
-		Text = M.Settings.provider == "kugou" and "酷狗" or "网易云",
+		Text = M.Settings.provider == "kugou" and "酷狗" or (M.Settings.provider == "qq" and "QQ" or "网易云"),
 		TextSize = 7.5,
 		TextColor3 = T.Text,
 		TextTransparency = 0.12,
@@ -19762,7 +21587,7 @@ function MusicPage.Build(page, config)
 	U.corner(accountChip, 6)
 	U.stroke(accountChip, T.Stroke, 0.55, 1)
 	railUi.AccountProvider = U.label(accountChip, {
-		Text = M.Settings.provider == "kugou" and "酷狗" or "网易云",
+		Text = M.Settings.provider == "kugou" and "酷狗" or (M.Settings.provider == "qq" and "QQ" or "网易云"),
 		TextSize = 7,
 		TextColor3 = T.Muted,
 		TextTransparency = 0.15,
@@ -19952,7 +21777,10 @@ function MusicPage.Build(page, config)
 		Size = UDim2.fromScale(1, 1),
 	})
 	player.QualityLabel = qualityLabel
-	local qualityInput = U.inputButton(qualityChip, function(anchor)
+	-- Declare first: in Luau a local initialiser cannot see itself, so the
+	-- callback used to capture a nil `qualityInput` and pass a nil anchor.
+	local qualityInput
+	qualityInput = U.inputButton(qualityChip, function(anchor)
 		local items = {}
 		for _, entry in ipairs(M.Qualities) do
 			items[#items + 1] = {
@@ -19962,7 +21790,7 @@ function MusicPage.Build(page, config)
 					M:Save()
 					M:_Emit("settings")
 					renderPlayer()
-					notify("网易云", "音质：" .. entry.name, "music-note", T.Accent)
+					notify(M:ProviderName(), "音质：" .. entry.name, "music-note", T.Accent)
 				end,
 			}
 		end
@@ -20022,7 +21850,7 @@ function MusicPage.Build(page, config)
 			{ Text = "均衡器", Callback = function() openEQ(moreIcon.Parent) end },
 			{ Text = "速度 / 音高", Callback = function() openTune(moreIcon.Parent) end },
 			{ Text = "添加到歌单", Callback = function() openAddToPlaylist(moreIcon.Parent, M.CurrentId) end },
-			{ Text = M.Settings.cookie ~= "" and ("账号：" .. (M.Settings.nickname ~= "" and M.Settings.nickname or "已登录")) or "登录网易云", Callback = function() openLogin() end },
+			{ Text = M:ProviderLoggedIn() and ("账号：" .. (M:ProviderAccountName() ~= "" and M:ProviderAccountName() or "已登录")) or ("登录 " .. M:ProviderName()), Callback = function() openLogin() end },
 		})
 	end)
 	moreIcon.Parent.Position = UDim2.fromOffset(rightX, 3)
@@ -20101,7 +21929,7 @@ function MusicPage.Build(page, config)
 		ZIndex = 62,
 	})
 	island.Artist = U.label(island.Root, {
-		Text = "网易云音乐",
+		Text = "Nerx Music",
 		TextSize = 7.5,
 		TextColor3 = T.Muted,
 		TextTransparency = 0.25,
@@ -20275,22 +22103,24 @@ function MusicPage.Build(page, config)
 			order = order + 1
 			return order
 		end
-		local nickname = tostring(M.Settings.nickname or "")
+		local providerName = M:ProviderName()
+		local nickname = tostring(M:ProviderAccountName() or "")
+		local loggedIn = M:ProviderLoggedIn()
 		if accountNameLabel then
 			accountNameLabel.Text = nickname ~= "" and nickname or "Nerx Music"
 		end
 		if accountSubLabel then
-			accountSubLabel.Text = nickname ~= ""
-				and ((M.Settings.provider == "kugou" and "酷狗" or "网易云") .. " · 已登录")
-				or "扫描 / Cookie 登录"
+			accountSubLabel.Text = loggedIn
+				and (providerName .. " · 已登录")
+				or (M.Settings.provider == "qq" and "Cookie 登录" or "扫描 / Cookie 登录")
 		end
 		if railUi.ProviderLabel then
-			railUi.ProviderLabel.Text = M.Settings.provider == "kugou" and "酷狗" or "网易云"
+			railUi.ProviderLabel.Text = M.Settings.provider == "qq" and "QQ" or providerName
 		end
 		if railUi.AccountProvider then
-			railUi.AccountProvider.Text = M.Settings.provider == "kugou" and "酷狗" or "网易云"
+			railUi.AccountProvider.Text = M.Settings.provider == "qq" and "QQ" or providerName
 		end
-		searchBox.PlaceholderText = M.Settings.provider == "kugou" and "搜索酷狗歌曲、歌手..." or "搜索网易云歌曲、歌手..."
+		searchBox.PlaceholderText = M:ProviderPlaceholder()
 		if accountAvatarLabel then
 			accountAvatarLabel.Text = nickname ~= "" and string.upper(string.sub(nickname, 1, 1)) or "N"
 		end
@@ -20304,9 +22134,11 @@ function MusicPage.Build(page, config)
 		railItem(nextOrder(), "microphone", "一起听", nil, state.view.kind == "party", function()
 			setView({ kind = "party" })
 		end)
-		railItem(nextOrder(), "cloud", "云盘", nil, state.view.kind == "cloud", function()
-			setView({ kind = "cloud" })
-		end)
+		if M.Settings.provider == "netease" then
+			railItem(nextOrder(), "cloud", "云盘", nil, state.view.kind == "cloud", function()
+				setView({ kind = "cloud" })
+			end)
+		end
 
 		railSection(railScroll, "我的歌单", nextOrder(), function(anchor)
 			UIHelpers.InputPrompt(anchor, {
@@ -20370,12 +22202,19 @@ function MusicPage.Build(page, config)
 
 		local accountSeen = {}
 		if #M.MyPlaylists > 0 then
-			railSection(railScroll, "我的网易云", nextOrder())
+			railSection(railScroll, "我的" .. providerName, nextOrder())
 			for _, entry in ipairs(M.MyPlaylists) do
 				accountSeen[entry.netId] = true
-				local id = "ne_pl_" .. entry.netId
+				local id = entry.id or ((entry.source == "kugou" and "kg_pl_" or entry.source == "qq" and "qq_pl_" or "ne_pl_") .. tostring(entry.netId))
 				railItem(nextOrder(), "cloud", entry.name, tonumber(entry.count) or 0, state.view.kind == "playlist" and state.view.id == id, function()
-					local playlist = M:OpenNeteasePlaylist(entry.netId, entry)
+					local playlist
+					if entry.source == "kugou" then
+						playlist = M:OpenKugouPlaylist(entry.netId, entry)
+					elseif entry.source == "qq" then
+						playlist = M:OpenQqPlaylist(entry.netId, entry)
+					else
+						playlist = M:OpenNeteasePlaylist(entry.netId, entry)
+					end
 					if playlist then
 						setView({ kind = "playlist", id = playlist.id })
 					end
@@ -20389,7 +22228,7 @@ function MusicPage.Build(page, config)
 				netList[#netList + 1] = entry
 			end
 		end
-		if #netList > 0 then
+		if M.Settings.provider == "netease" and #netList > 0 then
 			railSection(railScroll, "网易云歌单", nextOrder())
 			for _, entry in ipairs(netList) do
 				local count = #M:PlaylistIds(entry)
@@ -20459,6 +22298,18 @@ function MusicPage.Build(page, config)
 		if playlist then
 			if playlist.kind == "netease" and not playlist.loaded then
 				M:OpenNeteasePlaylist(playlist.netId, playlist)
+			elseif playlist.kind == "kugou" then
+				if id:match("^kg_rank_") then
+					M:OpenKugouRank(playlist.netId, playlist)
+				else
+					M:OpenKugouPlaylist(playlist.netId, playlist)
+				end
+			elseif playlist.kind == "qq" then
+				if id:match("^qq_chart_") then
+					M:OpenQqChart(playlist.netId, playlist)
+				else
+					M:OpenQqPlaylist(playlist.netId, playlist)
+				end
 			end
 			setView({ kind = "playlist", id = id })
 		end
@@ -20530,6 +22381,9 @@ function MusicPage.Build(page, config)
 			buildSearch(viewHost)
 		else
 			buildPlaylist(viewHost)
+		end
+		if state.updateHudTitle then
+			state.updateHudTitle()
 		end
 	end
 
@@ -20905,8 +22759,14 @@ function MusicPage.Build(page, config)
 		})
 		U.list(content, 0)
 		local playlists = M.Recommended or {}
-		local head = pageHeader(content, "NERX MUSIC · NET EASE", "Nerx Music!",
-			"为你推荐 · " .. tostring(#playlists) .. " 个网易云歌单")
+		local provider = M.Settings.provider
+		local isNetease = provider == "netease"
+		local head = pageHeader(content,
+			isNetease and "NERX MUSIC · NET EASE" or (provider == "kugou" and "NERX MUSIC · KUGOU" or "NERX MUSIC · QQ MUSIC"),
+			"Nerx Music!",
+			isNetease and ("为你推荐 · " .. tostring(#playlists) .. " 个网易云歌单")
+				or (provider == "kugou" and ("酷狗精选歌单 · " .. tostring(#playlists) .. " 个")
+					or ("QQ 推荐歌单 · " .. tostring(#playlists) .. " 个")))
 		head.LayoutOrder = 1
 		local chartsButton = textButton(head, 76, 24, "排行榜", "chart-line", false, function()
 			setView({ kind = "charts" })
@@ -20914,8 +22774,8 @@ function MusicPage.Build(page, config)
 		chartsButton.AnchorPoint = Vector2.new(1, 0)
 		chartsButton.Position = UDim2.new(1, -18, 0, 22)
 		local refresh = iconButton(head, 22, "arrow-spin-clockwise", function()
-			M:LoadRecommended(true)
-			notify("网易云", "正在刷新推荐", "arrow-spin-clockwise", T.Accent)
+			M:LoadProviderHome(true)
+			notify(M:ProviderName(), "正在刷新推荐", "arrow-spin-clockwise", T.Accent)
 		end)
 		refresh.Parent.AnchorPoint = Vector2.new(1, 0)
 		refresh.Parent.Position = UDim2.new(1, -102, 0, 23)
@@ -20927,28 +22787,28 @@ function MusicPage.Build(page, config)
 				break
 			end
 		end
-		if needCovers and not state._homeCoverRefresh then
+		if needCovers and not state._homeCoverRefresh and isNetease then
 			state._homeCoverRefresh = true
 			task.defer(function()
 				if canvas.Parent then
-					M:LoadRecommended(true)
+					M:LoadProviderHome(true)
 				end
 			end)
 		end
 		if #playlists == 0 and not M.RecommendedLoading and not M.RecommendedError then
 			task.defer(function()
 				if canvas.Parent and state.view.kind == "home" then
-					M:LoadRecommended()
+					M:LoadProviderHome()
 				end
 			end)
 		end
 
 		if #playlists == 0 then
 			local box = emptyState(content, "cloud",
-				M.RecommendedError and "网易云推荐获取失败" or "正在连接网易云...",
-				M.RecommendedError or "正在获取推荐歌单",
+				M.RecommendedError and (M:ProviderName() .. "推荐获取失败") or ("正在连接 " .. M:ProviderName() .. " ..."),
+				M.RecommendedError or (isNetease and "正在获取推荐歌单" or "正在获取官方榜单"),
 				M.RecommendedError and "重试" or nil,
-				M.RecommendedError and function() M:LoadRecommended(true) end or nil)
+				M.RecommendedError and function() M:LoadProviderHome(true) end or nil)
 			box.LayoutOrder = 2
 			return
 		end
@@ -20958,7 +22818,7 @@ function MusicPage.Build(page, config)
 		local cardW = math.floor((WORK_W - 32 - gap * (columns - 1)) / columns)
 		local cardH = cardW + 40
 		local rows = math.ceil(#playlists / columns)
-		sectionTitle(content, "推荐歌单", 2)
+		sectionTitle(content, isNetease and "推荐歌单" or (provider == "kugou" and "酷狗精选歌单" or "QQ 推荐歌单"), 2)
 		local grid = U.frame(content, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
@@ -21015,7 +22875,7 @@ function MusicPage.Build(page, config)
 				Size = UDim2.fromOffset(cardW - 2, 12),
 			})
 			local input = U.inputButton(card, function()
-				local playlist = M:OpenNeteasePlaylist(entry.netId, entry)
+				local playlist = M:OpenProviderEntry(entry)
 				if playlist then
 					setView({ kind = "playlist", id = playlist.id })
 				end
@@ -21045,26 +22905,36 @@ function MusicPage.Build(page, config)
 			AutomaticSize = Enum.AutomaticSize.Y,
 		})
 		U.list(content, 0)
-		local head = pageHeader(content, "NET EASE · CHARTS", "排行榜", "网易云官方榜单 · 每周更新")
+		local chartsProvider = M.Settings.provider
+		local chartsNetease = chartsProvider == "netease"
+		local head = pageHeader(content,
+			chartsNetease and "NET EASE · CHARTS" or (chartsProvider == "kugou" and "KUGOU · CHARTS" or "QQ MUSIC · CHARTS"),
+			"排行榜",
+			chartsNetease and "网易云官方榜单 · 每周更新"
+				or (chartsProvider == "kugou" and "酷狗官方榜单 · 实时更新" or "QQ 音乐官方榜单 · 实时更新"))
 		head.LayoutOrder = 1
 		local refresh = iconButton(head, 22, "arrow-spin-clockwise", function()
-			M:LoadCharts(true)
-			notify("网易云", "正在刷新排行榜", "arrow-spin-clockwise", T.Accent)
+			M:LoadProviderCharts(true)
+			notify(M:ProviderName(), "正在刷新排行榜", "arrow-spin-clockwise", T.Accent)
 		end)
 		refresh.Parent.AnchorPoint = Vector2.new(1, 0)
 		refresh.Parent.Position = UDim2.new(1, -18, 0, 24)
 
 		if #M.Charts == 0 then
-			if not M.ChartsLoading then
+			if not M.ChartsLoading and not M.ChartsError then
 				task.defer(function()
 					if canvas.Parent then
-						M:LoadCharts()
+						M:LoadProviderCharts()
 					end
 				end)
 			end
-			local box = emptyState(content, "chart-line", "正在获取排行榜...", "飙升榜 / 新歌榜 / 热歌榜 / 原创榜 / ACG / 说唱", "刷新", function()
-				M:LoadCharts(true)
-			end)
+			local box = emptyState(content, "chart-line",
+				M.ChartsError or "正在获取排行榜...",
+				M.ChartsError and "检查网络后重试，或切换音源" or "官方榜单 · 实时更新",
+				"刷新", function()
+					M.ChartsError = nil
+					M:LoadProviderCharts(true)
+				end)
 			box.LayoutOrder = 2
 			return
 		end
@@ -21074,7 +22944,7 @@ function MusicPage.Build(page, config)
 		local cardW = math.floor((WORK_W - 32 - gap * (columns - 1)) / columns)
 		local cardH = cardW + 40
 		local rows = math.ceil(#M.Charts / columns)
-		sectionTitle(content, "官方榜单", 2)
+		sectionTitle(content, chartsNetease and "官方榜单" or (chartsProvider == "kugou" and "酷狗官方榜单" or "QQ 官方榜单"), 2)
 		local grid = U.frame(content, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
@@ -21147,7 +23017,7 @@ function MusicPage.Build(page, config)
 				Size = UDim2.fromOffset(cardW - 2, 12),
 			})
 			local input = U.inputButton(card, function()
-				local playlist = M:OpenNeteasePlaylist(entry.netId, entry)
+				local playlist = M:OpenProviderEntry(entry)
 				if playlist then
 					setView({ kind = "playlist", id = playlist.id })
 				end
@@ -21169,6 +23039,17 @@ function MusicPage.Build(page, config)
 	-- Cloud
 	-- -----------------------------------------------------------------------------------
 	buildCloud = function(parent)
+		if M.Settings.provider ~= "netease" then
+			local box = emptyState(parent, "cloud", "当前音源暂不支持云盘",
+				"云盘仅支持网易云账号，切换回网易云后可用", "切回网易云", function()
+					M.Settings.provider = "netease"
+					M:Save()
+					renderRail()
+					renderMain()
+				end)
+			box.Position = UDim2.fromOffset(0, 80)
+			return
+		end
 		local scroll = newScroll(parent, 0, 0)
 		local content = U.frame(scroll, {
 			BackgroundTransparency = 1,
@@ -21235,7 +23116,15 @@ function MusicPage.Build(page, config)
 		elseif playlist then
 			c1 = playlist.color1 or c1
 			c2 = playlist.color2 or c2
-			subtitle = playlist.kind == "netease" and "网易云歌单" or "自建歌单"
+			if playlist.kind == "netease" then
+				subtitle = "网易云歌单"
+			elseif playlist.kind == "kugou" then
+				subtitle = tostring(playlist.id):match("^kg_rank_") and "酷狗榜单" or "酷狗歌单"
+			elseif playlist.kind == "qq" then
+				subtitle = tostring(playlist.id):match("^qq_chart_") and "QQ 榜单" or "QQ 音乐歌单"
+			else
+				subtitle = "自建歌单"
+			end
 			titleText = playlist.name
 		end
 		local total = 0
@@ -21245,9 +23134,9 @@ function MusicPage.Build(page, config)
 		end
 		if state.view.kind == "liked" then
 			description = tostring(#ids) .. " 首歌曲 · " .. musicFormatTime(total)
-		elseif playlist and playlist.kind == "netease" then
+		elseif playlist and (playlist.kind == "netease" or playlist.kind == "kugou" or playlist.kind == "qq") then
 			if playlist.loading and #ids == 0 then
-				description = "正在从网易云加载歌单..."
+				description = "正在加载 " .. M:ProviderName() .. " 歌单..."
 			elseif #ids == 0 and playlist.error then
 				description = playlist.error
 			else
@@ -21359,7 +23248,7 @@ function MusicPage.Build(page, config)
 			Size = UDim2.new(1, -166, 0, 14),
 		})
 		U.label(head, {
-			Text = playlist and playlist.creator or "Nerx Music · 网易云",
+			Text = playlist and playlist.creator or ("Nerx Music · " .. M:ProviderName()),
 			TextSize = 8.5,
 			TextColor3 = T.Muted,
 			TextTransparency = 0.45,
@@ -21375,13 +23264,13 @@ function MusicPage.Build(page, config)
 		local cursor = 0
 		local function playAll(shuffle)
 			if #ids == 0 then
-				notify("网易云", "这个歌单还没有歌曲", "music-note", T.Muted)
+				notify(M:ProviderName(), "这个歌单还没有歌曲", "music-note", T.Muted)
 				return
 			end
 			if shuffle then
 				M:SetShuffle(true)
 				M:Play(ids[math.random(1, #ids)], ids)
-				notify("网易云", "已开启乱序播放", "two-arrows-switch-right", T.Accent)
+				notify(M:ProviderName(), "已开启乱序播放", "two-arrows-switch-right", T.Accent)
 			else
 				M:Play(ids[1], ids)
 			end
@@ -21398,7 +23287,7 @@ function MusicPage.Build(page, config)
 			searchBox:CaptureFocus()
 		end).Position = UDim2.fromOffset(cursor, 0)
 		cursor = cursor + 72
-		if playlist and playlist.kind ~= "netease" then
+		if playlist and (playlist.kind == "custom" or playlist.kind == "saved") then
 			textButton(actions, 26, 24, "", "plus-small", false, function()
 				openAddTrackPanel(actions, playlist.id)
 			end).Position = UDim2.fromOffset(cursor, 0)
@@ -21415,12 +23304,27 @@ function MusicPage.Build(page, config)
 				Size = UDim2.new(1, -32, 0, 194),
 				Position = UDim2.fromOffset(16, 0),
 			}, 10)
-			local empty = emptyState(emptyCard, playlist and playlist.kind == "netease" and "cloud" or "music-note",
-				playlist and playlist.loading and "正在加载网易云歌单..." or "这里还没有歌曲",
-				playlist and playlist.error or "从网易云搜索歌曲，或导入一个歌单",
-				playlist and playlist.kind == "netease" and "刷新" or nil,
-				playlist and playlist.kind == "netease" and function()
-					M:OpenNeteasePlaylist(playlist.netId, playlist, nil, true)
+			local online = playlist and (playlist.kind == "netease" or playlist.kind == "kugou" or playlist.kind == "qq")
+			local empty = emptyState(emptyCard, online and "cloud" or "music-note",
+				playlist and playlist.loading and ("正在加载" .. M:ProviderName() .. "歌单...") or "这里还没有歌曲",
+				playlist and playlist.error or ("从" .. M:ProviderName() .. "搜索歌曲，或导入一个歌单"),
+				online and "刷新" or nil,
+				online and function()
+					if playlist.kind == "kugou" then
+						if tostring(playlist.id):match("^kg_rank_") then
+							M:OpenKugouRank(playlist.netId, playlist, nil, true)
+						else
+							M:OpenKugouPlaylist(playlist.netId, playlist, nil, true)
+						end
+					elseif playlist.kind == "qq" then
+						if tostring(playlist.id):match("^qq_chart_") then
+							M:OpenQqChart(playlist.netId, playlist, nil, true)
+						else
+							M:OpenQqPlaylist(playlist.netId, playlist, nil, true)
+						end
+					else
+						M:OpenNeteasePlaylist(playlist.netId, playlist, nil, true)
+					end
 				end or nil)
 			empty.Position = UDim2.fromOffset(0, 4)
 			empty.Size = UDim2.new(1, 0, 0, 180)
@@ -21458,12 +23362,21 @@ function MusicPage.Build(page, config)
 	-- Search
 	-- -----------------------------------------------------------------------------------
 	buildSearch = function(parent)
-		local head = pageHeader(parent, "NET EASE · SEARCH", "搜索结果", '“' .. tostring(state.query) .. '”')
-		local tabs = segmented(parent, 216, 24, {
-			{ Value = "songs", Label = "歌曲" },
-			{ Value = "artists", Label = "歌手" },
-			{ Value = "playlists", Label = "歌单" },
-		}, state.searchTab, function(value)
+		if M.Settings.provider ~= "netease" and state.searchTab ~= "songs" then
+			state.searchTab = "songs"
+		end
+		local head = pageHeader(parent,
+			M.Settings.provider == "netease" and "NET EASE · SEARCH"
+				or (M.Settings.provider == "kugou" and "KUGOU · SEARCH" or "QQ MUSIC · SEARCH"),
+			"搜索结果", '“' .. tostring(state.query) .. '”')
+		local tabs = segmented(parent, 216, 24,
+			M.Settings.provider == "netease" and {
+				{ Value = "songs", Label = "歌曲" },
+				{ Value = "artists", Label = "歌手" },
+				{ Value = "playlists", Label = "歌单" },
+			} or {
+				{ Value = "songs", Label = "歌曲" },
+			}, state.searchTab, function(value)
 			state.searchTab = value
 			renderMain()
 			if state.query ~= "" then
@@ -21491,14 +23404,15 @@ function MusicPage.Build(page, config)
 			end)
 		end
 		if state.query == "" then
-			emptyState(parent, "magnifying-glass", "输入关键词开始搜索", "可以搜索歌曲、歌手或歌单").Position = UDim2.fromOffset(0, 110)
+			emptyState(parent, "magnifying-glass", "输入关键词开始搜索",
+				M.Settings.provider == "netease" and "可以搜索网易云歌曲、歌手或歌单" or ("可以搜索" .. M:ProviderName() .. "歌曲")).Position = UDim2.fromOffset(0, 110)
 			return
 		end
 		if state.searchTab == "songs" then
 			local ids = currentIds()
 			if #ids == 0 then
-				local detail = M.Searching and ("正在搜索" .. (M.Settings.provider == "kugou" and "酷狗" or "网易云") .. "...") or (M.SearchError or "没有找到匹配的歌曲")
-				emptyState(parent, "cloud", M.Searching and ("正在搜索" .. (M.Settings.provider == "kugou" and "酷狗" or "网易云") .. "...") or "没有找到匹配的歌曲", detail,
+				local detail = M.Searching and ("正在搜索 " .. M:ProviderName() .. " ...") or (M.SearchError or "没有找到匹配的歌曲")
+				emptyState(parent, "cloud", M.Searching and ("正在搜索 " .. M:ProviderName() .. " ...") or "没有找到匹配的歌曲", detail,
 					M.Searching and nil or "重试", M.Searching and nil or function() M:SearchNetease(state.query) end).Position = UDim2.fromOffset(0, 104)
 				return
 			end
@@ -22390,10 +24304,12 @@ function MusicPage.Build(page, config)
 	end
 
 	buildSettings = function(parent)
-		local head = pageHeader(parent, "MUSIC · SETTINGS", "设置", "歌词、播放、HUD 与网易云账号")
-		local loginButton = textButton(parent, M.Settings.cookie ~= "" and 124 or 104, 26,
-			M.Settings.cookie ~= "" and (M.Settings.nickname ~= "" and M.Settings.nickname or "已登录") or "登录网易云",
-			"person-standing", M.Settings.cookie == "", function()
+		local head = pageHeader(parent, "MUSIC · SETTINGS", "设置", "歌词、播放、HUD 与音源账号")
+		local settingsLogged = M:ProviderLoggedIn()
+		local settingsName = M:ProviderAccountName()
+		local loginButton = textButton(parent, settingsLogged and 124 or 104, 26,
+			settingsLogged and (settingsName ~= "" and settingsName or "已登录") or ("登录 " .. M:ProviderName()),
+			"person-standing", not settingsLogged, function()
 				openLogin()
 			end)
 		loginButton.AnchorPoint = Vector2.new(1, 0)
@@ -22543,7 +24459,7 @@ function MusicPage.Build(page, config)
 			}, function(value)
 				M:SetMode(value)
 			end)
-			segRow(card, addRow, "音质", "网易云音质", "quality", {
+			segRow(card, addRow, "音质", "当前音源音质", "quality", {
 				{ Value = "standard", Label = "标准" },
 				{ Value = "hq", Label = "HQ" },
 				{ Value = "lossless", Label = "无损" },
@@ -22578,44 +24494,38 @@ function MusicPage.Build(page, config)
 			hotkeyRow(card4, addRow4, "音量 -", "volDown")
 			hotkeyRow(card4, addRow4, "歌词", "lyrics")
 
-			local card5, addRow5 = settingsCard(leftContent, "音源与账号", "网易云 / 酷狗搜索来源、账号、推荐、缓存与导入。", 3)
+			local card5, addRow5 = settingsCard(leftContent, "音源与账号", "网易云 / 酷狗 / QQ 音乐搜索来源、账号、推荐、缓存与导入。", 3)
 			segRow(card5, addRow5, "音源", "搜索与播放来源", "provider", {
 				{ Value = "netease", Label = "网易云" },
 				{ Value = "kugou", Label = "酷狗" },
+				{ Value = "qq", Label = "QQ" },
 			}, function(value)
-				M.SearchIds = {}
-				M.SearchQuery = ""
-				state.query = ""
-				searchBox.Text = ""
-				searchBox.PlaceholderText = value == "kugou" and "搜索酷狗歌曲、歌手..." or "搜索网易云歌曲、歌手..."
-				if state.view.kind == "search" then
-					state.view = { kind = "home" }
-				end
-				renderRail()
-				renderMain()
+				switchProvider(value)
 			end)
-			buttonRow(card5, addRow5, "账号", M.Settings.cookie ~= "" and ("已登录：" .. (M.Settings.nickname ~= "" and M.Settings.nickname or "Cookie")) or "未登录", {
-				{ Text = M.Settings.cookie ~= "" and "切换账号" or "登录", Icon = "person-standing", Primary = true, Callback = function() openLogin() end },
+			buttonRow(card5, addRow5, "账号", M:ProviderLoggedIn() and ("已登录：" .. (M:ProviderAccountName() ~= "" and M:ProviderAccountName() or "Cookie")) or "未登录", {
+				{ Text = M:ProviderLoggedIn() and "切换账号" or "登录", Icon = "person-standing", Primary = true, Callback = function() openLogin() end },
 				{ Text = "退出", Icon = "x-small", Callback = function()
-					M:Logout()
+					M:ProviderLogout()
 					renderRail()
 					renderMain()
-					notify("网易云", "已退出登录", "x-small", T.Muted)
+					notify(M:ProviderName(), "已退出登录", "x-small", T.Muted)
 				end },
 			})
 			buttonRow(card5, addRow5, "推荐与缓存", "刷新推荐 / 清空音频缓存", {
 				{ Text = "刷新推荐", Icon = "arrow-spin-clockwise", Callback = function()
-					M:LoadRecommended(true)
-					notify("网易云", "正在刷新推荐歌单", "arrow-spin-clockwise", T.Accent)
+					M:LoadProviderHome(true)
+					notify(M:ProviderName(), "正在刷新推荐", "arrow-spin-clockwise", T.Accent)
 				end },
 				{ Text = "清空缓存", Icon = "trash-can", Callback = function()
 					local removed = M:ClearCache()
-					notify("网易云", "已清理 " .. tostring(removed) .. " 个音频缓存", "trash-can", T.Green)
+					notify(M:ProviderName(), "已清理 " .. tostring(removed) .. " 个音频缓存", "trash-can", T.Green)
 				end },
 			})
-			buttonRow(card5, addRow5, "导入歌单", "歌单 ID 或网易云链接", {
-				{ Text = "导入", Icon = "cloud-arrow-down", Callback = function(anchor) openImportPlaylist(anchor) end },
-			})
+			if M.Settings.provider == "netease" then
+				buttonRow(card5, addRow5, "导入歌单", "歌单 ID 或网易云链接", {
+					{ Text = "导入", Icon = "cloud-arrow-down", Callback = function(anchor) openImportPlaylist(anchor) end },
+				})
+			end
 			U.label(card5, {
 				Text = "存储：" .. Nerx.Storage:Path(MUSIC_STORE_FILE) .. " · 音频缓存：" .. tostring(M.CacheDir),
 				TextSize = 7.5,
@@ -22717,7 +24627,7 @@ function MusicPage.Build(page, config)
 
 			local card4, addRow4 = settingsCard(rightContent, "关于", "Nerx Music · " .. tostring(Nerx.Version), 2)
 			U.label(card4, {
-				Text = "数据源：网易云音乐 · 播放：Sound + 本地缓存 · 歌词：LRC / YRC 逐字",
+				Text = "数据源：网易云 / 酷狗 / QQ 音乐 · 播放：Sound + 本地缓存 · 歌词：LRC / YRC 逐字",
 				TextSize = 7.5,
 				TextColor3 = T.Muted,
 				TextTransparency = 0.45,
@@ -22751,7 +24661,7 @@ function MusicPage.Build(page, config)
 		end
 		player.Title.Text = track and track.name or "未播放"
 		if track then
-			player.Artist.Text = M.Loading and "正在从网易云加载音频..." or (track.artist .. " — " .. track.album)
+			player.Artist.Text = M.Loading and ("正在从" .. M:ProviderName() .. "加载音频...") or (track.artist .. " — " .. track.album)
 		else
 			player.Artist.Text = "选择一首歌曲开始"
 		end
@@ -22798,6 +24708,9 @@ function MusicPage.Build(page, config)
 		end
 		if player.RemainingTime then
 			player.RemainingTime.Text = "-" .. musicFormatTime(math.max(0, duration - position))
+		end
+		if state.updateHudTitle then
+			state.updateHudTitle()
 		end
 	end
 
@@ -23543,12 +25456,29 @@ function MusicPage.Build(page, config)
 				lyrics.Hint.Visible = true
 				return
 			end
+		elseif track.source == "qq" then
+			if track.lyrics == "" and not track.lyricsLoaded and not track.lyricsLoading then
+				M:FetchQqLyrics(track.id)
+			end
+			if track.lyricsLoading then
+				lyrics.Dots.Visible = true
+				lyrics.Hint.Text = "正在获取 QQ 音乐歌词..."
+				lyrics.Hint.Visible = true
+				return
+			end
+			if track.lyrics == "" and track.lyricsError then
+				lyrics.Dots.Visible = false
+				lyrics.Hint.Text = "QQ 音乐歌词获取失败：" .. tostring(track.lyricsError)
+				lyrics.Hint.Visible = true
+				return
+			end
 		end
 		local entries = M:ParseLyrics(track)
 		if #entries == 0 then
 			lyrics.Dots.Visible = false
 			lyrics.Hint.Text = (track.source == "netease" and "网易云暂无歌词")
 				or (track.source == "kugou" and "酷狗暂无歌词")
+				or (track.source == "qq" and "QQ 音乐暂无歌词")
 				or "暂无歌词 · 关闭后可右键歌曲导入 LRC"
 			lyrics.Hint.Visible = true
 			return
@@ -23888,6 +25818,8 @@ function MusicPage.Build(page, config)
 			M:FetchNeteaseLyrics(track.id)
 		elseif track.source == "kugou" and track.lyrics == "" and not track.lyricsLoaded and not track.lyricsLoading then
 			M:FetchKugouLyrics(track.id)
+		elseif track.source == "qq" and track.lyrics == "" and not track.lyricsLoaded and not track.lyricsLoading then
+			M:FetchQqLyrics(track.id)
 		end
 		local entries = M:ParseLyrics(track)
 		local trackChanged = world.TrackId ~= track.id
@@ -24424,8 +26356,8 @@ function MusicPage.Build(page, config)
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 46),
 	})
-	U.label(login.Header, {
-		Text = "登录网易云音乐",
+	login.Title = U.label(login.Header, {
+		Text = "登录 " .. M:ProviderName(),
 		Font = F.Bold,
 		TextSize = 14,
 		TextColor3 = T.Text,
@@ -24475,7 +26407,19 @@ function MusicPage.Build(page, config)
 			return
 		end
 		login.Body:ClearAllChildren()
+		if login.Title then
+			login.Title.Text = "登录 " .. M:ProviderName()
+		end
 		if state.loginTab == "qr" then
+			if M.Settings.provider == "qq" then
+				local box = emptyState(login.Body, "lock-closed", "QQ 音乐请使用 Cookie 登录",
+					"粘贴 qqmusic_key 与 uin 后保存验证", "切换到 Cookie", function()
+						state.loginTab = "cookie"
+						renderLogin()
+					end)
+				box.Position = UDim2.fromOffset(0, 16)
+				return
+			end
 			local qrHolder = U.frame(login.Body, {
 				BackgroundColor3 = T.White,
 				BackgroundTransparency = 0.96,
@@ -24513,7 +26457,7 @@ function MusicPage.Build(page, config)
 				})
 			end
 			U.label(login.Body, {
-				Text = "打开网易云音乐 App → 扫一扫",
+				Text = M.Settings.provider == "kugou" and "打开酷狗音乐 App → 扫一扫" or "打开网易云音乐 App → 扫一扫",
 				Font = F.Bold,
 				TextSize = 11,
 				TextColor3 = T.Text,
@@ -24522,7 +26466,7 @@ function MusicPage.Build(page, config)
 				Size = UDim2.new(1, -190, 0, 16),
 			})
 			U.label(login.Body, {
-				Text = state.qrStatus ~= "" and state.qrStatus or "二维码有效期约 2 分钟",
+				Text = state.qrStatus ~= "" and state.qrStatus or ("二维码有效期约 2 分钟 · " .. M:ProviderName()),
 				TextSize = 8.5,
 				TextColor3 = T.Faint,
 				TextTransparency = 0.25,
@@ -24545,7 +26489,8 @@ function MusicPage.Build(page, config)
 			})
 		else
 			U.label(login.Body, {
-				Text = "粘贴 MUSIC_U Cookie",
+				Text = M.Settings.provider == "kugou" and "粘贴酷狗 Cookie 或 token"
+					or (M.Settings.provider == "qq" and "粘贴 QQ 音乐 Cookie" or "粘贴 MUSIC_U Cookie"),
 				Font = F.Bold,
 				TextSize = 10,
 				TextColor3 = T.Text,
@@ -24554,7 +26499,11 @@ function MusicPage.Build(page, config)
 				Size = UDim2.new(1, 0, 0, 16),
 			})
 			U.label(login.Body, {
-				Text = "浏览器登录 music.163.com → 开发者工具 → Application → Cookies → 复制 MUSIC_U 的值。",
+				Text = M.Settings.provider == "kugou"
+					and "浏览器登录 kugou.com → 开发者工具 → Application → Cookies → 复制 KuGoo（或 userid=...; token=...）。"
+					or (M.Settings.provider == "qq"
+						and "浏览器登录 y.qq.com → 开发者工具 → Application → Cookies → 复制 qqmusic_key 与 uin（可整段粘贴）。"
+						or "浏览器登录 music.163.com → 开发者工具 → Application → Cookies → 复制 MUSIC_U 的值。"),
 				TextSize = 8,
 				TextColor3 = T.Faint,
 				TextTransparency = 0.25,
@@ -24568,7 +26517,9 @@ function MusicPage.Build(page, config)
 				BorderSizePixel = 0,
 				Font = F.Regular,
 				Text = "",
-				PlaceholderText = M.Settings.cookie ~= "" and "已保存 Cookie，输入新值覆盖" or "MUSIC_U=...",
+				PlaceholderText = M:ProviderLoggedIn() and "已保存 Cookie，输入新值覆盖"
+					or (M.Settings.provider == "kugou" and "KuGoo=... 或 userid=...; token=..."
+						or (M.Settings.provider == "qq" and "qqmusic_key=...; uin=..." or "MUSIC_U=...")),
 				PlaceholderColor3 = T.Faint,
 				TextColor3 = T.Text,
 				TextSize = 9,
@@ -24581,21 +26532,21 @@ function MusicPage.Build(page, config)
 			local save = textButton(login.Body, 90, 30, "保存并验证", "circle-check", true, function()
 				local value = musicTrim(cookieBox.Text)
 				if value == "" then
-					notify("网易云", "请先粘贴 MUSIC_U Cookie", "triangle-exclamation", T.Amber)
+					notify(M:ProviderName(), "请先粘贴 Cookie", "triangle-exclamation", T.Amber)
 					return
 				end
-				M:SetCookie(value)
+				M:SetProviderCookie(value)
 				cookieBox.Text = ""
 				state.qrStatus = "正在验证 Cookie..."
 				renderLogin()
-				M:VerifyCookie(function(ok, message)
+				M:VerifyProviderCookie(function(ok, message)
 					if ok then
-						notify("网易云", "已登录：" .. tostring(message), "circle-check", T.Green)
+						notify(M:ProviderName(), "已登录：" .. tostring(message), "circle-check", T.Green)
 						closeLogin()
 						renderRail()
 					else
 						state.qrStatus = "Cookie 验证失败：" .. tostring(message)
-						notify("网易云", state.qrStatus, "triangle-exclamation", T.Amber)
+						notify(M:ProviderName(), state.qrStatus, "triangle-exclamation", T.Amber)
 						renderLogin()
 					end
 				end)
@@ -24614,8 +26565,10 @@ function MusicPage.Build(page, config)
 		if login.Footer then
 			login.Footer:ClearAllChildren()
 		end
-		local accountText = M.Settings.cookie ~= ""
-			and ("当前账号：" .. (M.Settings.nickname ~= "" and M.Settings.nickname or "已登录") .. (M.Settings.uid ~= "" and (" · UID " .. M.Settings.uid) or ""))
+		local accountName = M:ProviderAccountName()
+		local accountText = M:ProviderLoggedIn()
+			and ("当前账号：" .. (accountName ~= "" and accountName or "已登录")
+				.. (M.Settings.provider == "netease" and M.Settings.uid ~= "" and (" · UID " .. M.Settings.uid) or ""))
 			or "当前未登录"
 		U.label(login.Footer, {
 			Text = accountText,
@@ -24625,12 +26578,12 @@ function MusicPage.Build(page, config)
 			Position = UDim2.fromOffset(0, 6),
 			Size = UDim2.new(1, -90, 0, 14),
 		})
-		if M.Settings.cookie ~= "" then
+		if M:ProviderLoggedIn() then
 			local logout = textButton(login.Footer, 70, 22, "退出登录", "x-small", false, function()
-				M:Logout()
+				M:ProviderLogout()
 				closeLogin()
 				renderRail()
-				notify("网易云", "已退出登录", "x-small", T.Muted)
+				notify(M:ProviderName(), "已退出登录", "x-small", T.Muted)
 			end)
 			logout.AnchorPoint = Vector2.new(1, 0)
 			logout.Position = UDim2.new(1, 0, 0, 2)
@@ -24657,7 +26610,7 @@ function MusicPage.Build(page, config)
 						state.qrKey = nil
 					elseif status == "success" then
 						state.qrStatus = "登录成功"
-						notify("网易云", "登录成功：" .. tostring(message or M.Settings.nickname), "circle-check", T.Green)
+						notify(M:ProviderName(), "登录成功：" .. tostring(message or M:ProviderAccountName()), "circle-check", T.Green)
 						closeLogin()
 						renderRail()
 						return
@@ -24702,6 +26655,9 @@ function MusicPage.Build(page, config)
 		state.qrStatus = ""
 		state.qrKey = nil
 		state.qrAsset = nil
+		if M.Settings.provider == "qq" then
+			state.loginTab = "cookie"
+		end
 		login.Root.Visible = true
 		renderLogin()
 		if state.loginTab == "qr" then
@@ -25083,6 +27039,23 @@ function MusicPage.Build(page, config)
 			}
 		else
 			items[#items + 1] = {
+				Text = "重新获取歌词",
+				Callback = function()
+					track.lyrics = ""
+					track.yrc = ""
+					track.lyricsLoaded = false
+					track.lyricsError = nil
+					if track.source == "qq" then
+						M:FetchQqLyrics(trackId)
+					elseif track.source == "kugou" then
+						M:FetchKugouLyrics(trackId)
+					else
+						M:FetchNeteaseLyrics(trackId)
+					end
+					notify(M:ProviderName(), "正在重新获取歌词", "document-list-heart", T.Accent)
+				end,
+			}
+			items[#items + 1] = {
 				Text = "导入歌词 (LRC)",
 				Callback = function()
 					UIHelpers.ImportPrompt(anchor, {
@@ -25101,7 +27074,7 @@ function MusicPage.Build(page, config)
 				end,
 			}
 		end
-		if playlist and playlist.kind ~= "netease" then
+		if playlist and (playlist.kind == "custom" or playlist.kind == "saved") then
 			local contains = false
 			for _, id in ipairs(playlist.trackIds or {}) do
 				if id == trackId then
@@ -25393,9 +27366,9 @@ function MusicPage.Build(page, config)
 			local track = payload and payload.track or payload
 			local message = payload and payload.message
 			local name = track and track.name or "音频"
-			notify("网易云播放失败", message or ("无法播放「" .. tostring(name) .. "」"), "triangle-exclamation", T.Amber)
+			notify(M:ProviderName() .. "播放失败", message or ("无法播放「" .. tostring(name) .. "」"), "triangle-exclamation", T.Amber)
 		elseif kind == "fallback" then
-			notify("网易云音质", "当前音质无法解码，已自动回退标准音质", "music-note", T.Amber)
+			notify("音质", "当前音质无法解码，已自动回退标准音质", "music-note", T.Amber)
 		end
 	end)
 
@@ -25523,8 +27496,8 @@ function MusicPage.Build(page, config)
 		renderIsland(M.Tracks[M.CurrentId], true)
 	end
 	syncWorld(true)
-	if M.Settings.cookie ~= "" then
-		M:VerifyCookie()
+	if M:ProviderLoggedIn() then
+		M:VerifyProviderCookie()
 	end
 	task.spawn(function()
 		while canvas.Parent do
