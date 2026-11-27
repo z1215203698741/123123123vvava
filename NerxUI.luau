@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.3.18
+	Nerx UI Library · v1.3.20
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.3.18"
+Nerx.Version = "1.3.20"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -11271,8 +11271,11 @@ local function applyPalette(record)
 	local base = record.base or Theme.Main
 	local accent = record.accent or Theme.Accent
 	local panel = base:Lerp(Theme.White, 0.08)
-	Nerx.Themes:ApplyColors(base, panel, accent, "Custom", { noPersist = true })
-	local palette = Nerx.Themes:CapturePalette()
+	local palette = Nerx.Themes:BuildPalette({
+		Base = base,
+		Panel = panel,
+		Accent = accent,
+	})
 	local text = record.text or Theme.Text
 	palette.Text = text
 	palette.Muted = text:Lerp(base, 0.38)
@@ -11324,7 +11327,7 @@ local bgUrlInput, bgApplyAction, bgFitSeg
 local bgColorSetters = {}
 local bgSliders = {}
 local bgSummary = {}
-local bgNameInput, bgSaveConfig
+local bgNameInput, bgSaveConfig, bgConfigLabel
 local cropOverlay, cropCard, cropStage, cropImage, cropMini, cropMiniImage, cropZoom, cropZoomLabel
 local cropApply, cropCancel, cropReset, cropFitSeg
 local cropBackup
@@ -11505,6 +11508,9 @@ local function openWizard(window)
 	end
 	if bgSaveConfig then
 		bgSaveConfig:SetValue(true, true)
+	end
+	if bgConfigLabel then
+		bgConfigLabel.Text = "同时保存到当前配置（" .. tostring(Nerx.Configs.ActiveName or "Default") .. "）"
 	end
 	setPreviewAsset()
 	setStep(1, true)
@@ -11934,8 +11940,8 @@ local function buildWizard(window)
 	bgNameInput.Box.ClipsDescendants = true
 	bgSaveConfig = Nerx.Widgets.Toggle(bgSteps[3], true, nil, false)
 	bgSaveConfig.Root.Position = UDim2.fromOffset(0, 176)
-	U.label(bgSteps[3], {
-		Text = "同时保存当前配置（配置名与主题名一致）",
+	bgConfigLabel = U.label(bgSteps[3], {
+		Text = "同时保存到当前配置",
 		TextSize = 9.5,
 		TextColor3 = Theme.Muted,
 		Position = UDim2.fromOffset(40, 176),
@@ -11962,7 +11968,7 @@ local function buildWizard(window)
 			soft = bgState.soft,
 			w = bgState.w,
 			h = bgState.h,
-			config = bgSaveConfig:GetValue() and name or nil,
+			config = bgSaveConfig:GetValue() and (Nerx.Configs.ActiveName or "Default") or nil,
 			savedAt = os.time(),
 		}
 		bgStore.customs[name] = record
@@ -11973,7 +11979,7 @@ local function buildWizard(window)
 		Nerx.Themes:SaveCustom(name)
 		if bgSaveConfig:GetValue() then
 			pcall(function()
-				Nerx.Configs:Save(name)
+				Nerx.Configs:SaveActive()
 			end)
 		end
 		closeWizard()
