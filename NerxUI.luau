@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.3.16
+	Nerx UI Library · v1.3.17
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.3.16"
+Nerx.Version = "1.3.17"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -11070,7 +11070,8 @@ local function layoutImage(label, cw, ch, state)
 		label.ScaleType = Enum.ScaleType.Tile
 		label.Size = UDim2.fromScale(1, 1)
 		label.Position = UDim2.fromScale(0.5, 0.5)
-		label.TileSize = UDim2.fromOffset(240, 240)
+		label.ImageRectSize = Vector2.new(0, 0)
+		label.ImageRectOffset = Vector2.new(0, 0)
 		return 0, 0
 	end
 	if w and h and w > 0 and h > 0 then
@@ -11087,6 +11088,13 @@ local function layoutImage(label, cw, ch, state)
 		label.ScaleType = Enum.ScaleType.Stretch
 		label.Size = UDim2.fromOffset(lw, lh)
 		label.Position = UDim2.new(0.5, ox * rx, 0.5, oy * ry)
+		if fit == "mirror" then
+			label.ImageRectSize = Vector2.new(-w, h)
+			label.ImageRectOffset = Vector2.new(w, 0)
+		else
+			label.ImageRectSize = Vector2.new(0, 0)
+			label.ImageRectOffset = Vector2.new(0, 0)
+		end
 		return rx, ry
 	end
 	if fit == "contain" then
@@ -11098,6 +11106,8 @@ local function layoutImage(label, cw, ch, state)
 	label.ScaleType = Enum.ScaleType.Crop
 	label.Size = UDim2.fromScale(zoom, zoom)
 	label.Position = UDim2.fromScale(0.5, 0.5)
+	label.ImageRectSize = Vector2.new(0, 0)
+	label.ImageRectOffset = Vector2.new(0, 0)
 	return 0, 0
 end
 
@@ -11273,8 +11283,8 @@ local bgState = {
 	tint = 55,
 	soft = 0,
 }
-local fitValueToLabel = { cover = "填充", contain = "适应", tile = "平铺" }
-local fitLabelToValue = { ["填充"] = "cover", ["适应"] = "contain", ["平铺"] = "tile" }
+local fitValueToLabel = { cover = "填充", contain = "适应", mirror = "镜像", tile = "平铺" }
+local fitLabelToValue = { ["填充"] = "cover", ["适应"] = "contain", ["镜像"] = "mirror", ["平铺"] = "tile" }
 
 local wizard = { built = false, open = false, step = 1, pickerOpen = false, window = nil }
 local bgOverlay, bgPanel, bgPanelScale, bgSteps, bgPills, bgClose
@@ -11673,9 +11683,9 @@ local function buildWizard(window)
 		Size = UDim2.fromOffset(70, 14),
 	})
 	bgFitSeg = Nerx.Widgets.Segmented(bgSteps[1], {
-		Width = 220,
+		Width = 280,
 		Height = 26,
-		Items = { "填充", "适应", "平铺" },
+		Items = { "填充", "适应", "镜像", "平铺" },
 		Selected = "填充",
 		Callback = function(value)
 			bgState.fit = fitLabelToValue[value] or "cover"
@@ -12231,9 +12241,9 @@ local function buildWizard(window)
 	cropReset.Root.Position = UDim2.fromOffset(16, 330)
 	cropReset.Root.Size = UDim2.fromOffset(92, 26)
 	cropFitSeg = Nerx.Widgets.Segmented(cropCard, {
-		Width = 220,
+		Width = 280,
 		Height = 26,
-		Items = { "填充", "适应", "平铺" },
+		Items = { "填充", "适应", "镜像", "平铺" },
 		Selected = fitValueToLabel[bgState.fit] or "填充",
 		Callback = function(value)
 			bgState.fit = fitLabelToValue[value] or "cover"
