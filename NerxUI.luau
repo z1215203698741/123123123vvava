@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.3.17
+	Nerx UI Library · v1.3.18
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.3.17"
+Nerx.Version = "1.3.18"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -11215,6 +11215,24 @@ function Background:GetAsset(url)
 	return info and info.asset or nil
 end
 
+function Background:Layout(label, cw, ch, record)
+	record = record or {}
+	if (not record.w or not record.h) and record.url and record.url ~= "" then
+		local info = resolveInfo(record.url)
+		if info then
+			record = {
+				fit = record.fit,
+				zoom = record.zoom,
+				ox = record.ox,
+				oy = record.oy,
+				w = info.w,
+				h = info.h,
+			}
+		end
+	end
+	return layoutImage(label, cw, ch, record)
+end
+
 function Background:ApplyForTheme(name)
 	local record = type(name) == "string" and bgStore.customs[name] or nil
 	if record then
@@ -11260,6 +11278,18 @@ local function applyPalette(record)
 	palette.Muted = text:Lerp(base, 0.38)
 	palette.Faint = text:Lerp(base, 0.6)
 	Nerx.Themes:ApplyPalette(palette, "Custom", { noPersist = true })
+end
+
+local function nextBackgroundName()
+	local base = "我的背景"
+	if not bgStore.customs[base] then
+		return base
+	end
+	local index = 2
+	while bgStore.customs[base .. " " .. index] do
+		index = index + 1
+	end
+	return base .. " " .. index
 end
 
 local function shortenUrl(value)
@@ -11471,7 +11501,7 @@ local function openWizard(window)
 		setter(bgState[key])
 	end
 	if bgNameInput then
-		bgNameInput:SetValue("我的背景", true)
+		bgNameInput:SetValue(nextBackgroundName(), true)
 	end
 	if bgSaveConfig then
 		bgSaveConfig:SetValue(true, true)
