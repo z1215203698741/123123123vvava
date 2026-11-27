@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.3.15
+	Nerx UI Library · v1.3.16
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.3.15"
+Nerx.Version = "1.3.16"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -10928,6 +10928,43 @@ local function bgNotify(text, color)
 end
 
 local bgAssetCache = {}
+local function parseImageSize(body)
+	if body:sub(1, 8) == "\137PNG\r\n\26\n" then
+		local function u32(pos)
+			local a, b, c, d = body:byte(pos, pos + 3)
+			if not a then
+				return nil
+			end
+			return ((a * 256 + b) * 256 + c) * 256 + d
+		end
+		return u32(17), u32(21)
+	end
+	if body:sub(1, 3) == "\255\216\255" then
+		local index = 3
+		while index < #body - 8 do
+			if body:byte(index) ~= 255 then
+				index = index + 1
+			else
+				local marker = body:byte(index + 1)
+				if marker == 0xD8 or marker == 0xD9 or (marker >= 0xD0 and marker <= 0xD7) then
+					index = index + 2
+				elseif marker == 0xDA then
+					break
+				else
+					local length = body:byte(index + 2) * 256 + body:byte(index + 3)
+					if marker >= 0xC0 and marker <= 0xCF and marker ~= 0xC4 and marker ~= 0xC8 and marker ~= 0xCC then
+						local h = body:byte(index + 5) * 256 + body:byte(index + 6)
+						local w = body:byte(index + 7) * 256 + body:byte(index + 8)
+						return w, h
+					end
+					index = index + 2 + length
+				end
+			end
+		end
+	end
+	return nil, nil
+end
+
 local function downloadAsset(url)
 	local requestFn = (syn and syn.request) or (http and http.request) or http_request
 		or (fluxus and fluxus.request) or request
@@ -10957,6 +10994,7 @@ local function downloadAsset(url)
 	else
 		return nil
 	end
+	local imgW, imgH = parseImageSize(body)
 	local hash = 5381
 	for index = 1, #url do
 		hash = (hash * 33 + url:byte(index)) % 2147483647
@@ -10980,44 +11018,87 @@ local function downloadAsset(url)
 		end
 		local ok, path = pcall(custom, fileName)
 		if ok and type(path) == "string" and path ~= "" then
-			return path
+			return path, imgW, imgH
 		end
 		if type(getworkspace) == "function" then
 			local wsOk, folder = pcall(getworkspace)
 			if wsOk and type(folder) == "string" then
 				local ok2, path2 = pcall(custom, folder .. "/" .. fileName)
 				if ok2 and type(path2) == "string" and path2 ~= "" then
-					return path2
+					return path2, imgW, imgH
 				end
 			end
 		end
 	end
 	local ok3, direct = pcall(custom, url)
 	if ok3 and type(direct) == "string" and direct ~= "" then
-		return direct
+		return direct, imgW, imgH
 	end
 	return nil
 end
 
-local function resolveAsset(value)
+local function resolveInfo(value)
 	value = tostring(value or "")
 	if value == "" then
 		return nil
 	end
 	if value:match("^rbxassetid://") or value:match("^rbxasset://")
 		or value:match("^http://www.roblox.com/asset") or value:match("^https://www.roblox.com/asset") then
-		return value
+		return { asset = value }
 	end
 	local cached = bgAssetCache[value]
 	if cached ~= nil then
 		return cached or nil
 	end
 	if value:match("^https?://") then
-		local asset = downloadAsset(value)
-		bgAssetCache[value] = asset or false
-		return asset
+		local asset, imgW, imgH = downloadAsset(value)
+		local info = asset and { asset = asset, w = imgW, h = imgH } or false
+		bgAssetCache[value] = info
+		return info or nil
 	end
-	return value
+	return { asset = value }
+end
+
+local function layoutImage(label, cw, ch, state)
+	local fit = state.fit or "cover"
+	local zoom = math.clamp(tonumber(state.zoom) or 1, 1, 3)
+	local ox = math.clamp(tonumber(state.ox) or 0, -1, 1)
+	local oy = math.clamp(tonumber(state.oy) or 0, -1, 1)
+	local w = tonumber(state.w)
+	local h = tonumber(state.h)
+	if fit == "tile" then
+		label.ScaleType = Enum.ScaleType.Tile
+		label.Size = UDim2.fromScale(1, 1)
+		label.Position = UDim2.fromScale(0.5, 0.5)
+		label.TileSize = UDim2.fromOffset(240, 240)
+		return 0, 0
+	end
+	if w and h and w > 0 and h > 0 then
+		local base
+		if fit == "contain" then
+			base = math.min(cw / w, ch / h)
+		else
+			base = math.max(cw / w, ch / h)
+		end
+		local scale = base * zoom
+		local lw, lh = w * scale, h * scale
+		local rx = math.max(0, (lw - cw) * 0.5)
+		local ry = math.max(0, (lh - ch) * 0.5)
+		label.ScaleType = Enum.ScaleType.Stretch
+		label.Size = UDim2.fromOffset(lw, lh)
+		label.Position = UDim2.new(0.5, ox * rx, 0.5, oy * ry)
+		return rx, ry
+	end
+	if fit == "contain" then
+		label.ScaleType = Enum.ScaleType.Fit
+		label.Size = UDim2.fromScale(1, 1)
+		label.Position = UDim2.fromScale(0.5, 0.5)
+		return 0, 0
+	end
+	label.ScaleType = Enum.ScaleType.Crop
+	label.Size = UDim2.fromScale(zoom, zoom)
+	label.Position = UDim2.fromScale(0.5, 0.5)
+	return 0, 0
 end
 
 local layerHost, layerImage, layerTint, layerDim, layerWindow
@@ -11076,26 +11157,26 @@ local function applyRecord(record)
 		return
 	end
 	record = record or {}
-	local asset = resolveAsset(record.url)
+	local info = record.url ~= nil and record.url ~= "" and resolveInfo(record.url) or nil
+	local asset = info and info.asset or nil
 	local hasImage = type(asset) == "string" and asset ~= ""
 	layerHost.Visible = hasImage
 	layerImage.Image = hasImage and asset or ""
 	layerImage.ImageTransparency = hasImage and math.clamp((record.soft or 0) / 100 * 0.55, 0, 0.55) or 1
-	local zoom = math.clamp(tonumber(record.zoom) or 1, 1, 3)
-	local ox = math.clamp(tonumber(record.ox) or 0, -(zoom - 1) * 0.5, (zoom - 1) * 0.5)
-	local oy = math.clamp(tonumber(record.oy) or 0, -(zoom - 1) * 0.5, (zoom - 1) * 0.5)
-	if record.fit == "contain" then
-		layerImage.ScaleType = Enum.ScaleType.Fit
-		layerImage.Size = UDim2.fromScale(1, 1)
-		layerImage.Position = UDim2.fromScale(0.5, 0.5)
-	elseif record.fit == "tile" then
-		layerImage.ScaleType = Enum.ScaleType.Tile
-		layerImage.Size = UDim2.fromScale(1, 1)
-		layerImage.Position = UDim2.fromScale(0.5, 0.5)
-	else
-		layerImage.ScaleType = Enum.ScaleType.Crop
-		layerImage.Size = UDim2.fromScale(zoom, zoom)
-		layerImage.Position = UDim2.new(0.5 + ox, 0, 0.5 + oy, 0)
+	if hasImage then
+		local cw, ch = 1024, 700
+		if layerWindow and layerWindow.Root then
+			cw = math.max(1, layerWindow.Root.Size.X.Offset)
+			ch = math.max(1, layerWindow.Root.Size.Y.Offset)
+		end
+		layoutImage(layerImage, cw, ch, {
+			fit = record.fit,
+			zoom = record.zoom,
+			ox = record.ox,
+			oy = record.oy,
+			w = record.w or (info and info.w),
+			h = record.h or (info and info.h),
+		})
 	end
 	layerTint.BackgroundColor3 = record.base or Theme.Main
 	layerTint.BackgroundTransparency = 1 - math.clamp((record.tint or 55) / 100, 0, 0.92)
@@ -11120,7 +11201,8 @@ function Background:GetCustom(name)
 end
 
 function Background:GetAsset(url)
-	return resolveAsset(url)
+	local info = resolveInfo(url)
+	return info and info.asset or nil
 end
 
 function Background:ApplyForTheme(name)
@@ -11170,6 +11252,14 @@ local function applyPalette(record)
 	Nerx.Themes:ApplyPalette(palette, "Custom", { noPersist = true })
 end
 
+local function shortenUrl(value)
+	value = tostring(value or "")
+	if #value <= 42 then
+		return value
+	end
+	return value:sub(1, 26) .. "..." .. value:sub(-12)
+end
+
 local bgState = {
 	url = "",
 	fit = "cover",
@@ -11196,28 +11286,23 @@ local bgSliders = {}
 local bgSummary = {}
 local bgNameInput, bgSaveConfig
 local cropOverlay, cropCard, cropStage, cropImage, cropMini, cropMiniImage, cropZoom, cropZoomLabel
-local cropApply, cropCancel, cropReset
+local cropApply, cropCancel, cropReset, cropFitSeg
 local cropBackup
 
 local function cropBounds(zoom)
 	return math.max(0, (zoom - 1) * 0.5)
 end
 
+local cropRanges = { x = 0, y = 0 }
 local function renderCropViews()
 	if cropImage and cropStage then
-		local b = cropBounds(bgState.zoom)
-		bgState.ox = math.clamp(bgState.ox, -b, b)
-		bgState.oy = math.clamp(bgState.oy, -b, b)
-		cropImage.Size = UDim2.fromScale(bgState.zoom, bgState.zoom)
-		cropImage.Position = UDim2.new(0.5 + bgState.ox, 0, 0.5 + bgState.oy, 0)
+		cropRanges.x, cropRanges.y = layoutImage(cropImage, 432, 243, bgState)
 	end
 	if bgPreviewImage then
-		bgPreviewImage.Size = UDim2.fromScale(bgState.zoom, bgState.zoom)
-		bgPreviewImage.Position = UDim2.new(0.5 + bgState.ox, 0, 0.5 + bgState.oy, 0)
+		layoutImage(bgPreviewImage, 236, 132, bgState)
 	end
 	if cropMiniImage and cropMini then
-		cropMiniImage.Size = UDim2.fromScale(bgState.zoom, bgState.zoom)
-		cropMiniImage.Position = UDim2.new(0.5 + bgState.ox, 0, 0.5 + bgState.oy, 0)
+		layoutImage(cropMiniImage, 200, 118, bgState)
 	end
 	if cropZoom and cropZoomLabel then
 		cropZoomLabel.Text = string.format("%.2fx", bgState.zoom)
@@ -11225,7 +11310,12 @@ local function renderCropViews()
 end
 
 local function setPreviewAsset()
-	local asset = resolveAsset(bgState.url)
+	local info = bgState.url ~= "" and resolveInfo(bgState.url) or nil
+	local asset = info and info.asset or nil
+	if info then
+		bgState.w = info.w or bgState.w
+		bgState.h = info.h or bgState.h
+	end
 	local hasImage = type(asset) == "string" and asset ~= ""
 	if bgPreviewImage then
 		bgPreviewImage.Image = hasImage and asset or ""
@@ -11319,7 +11409,10 @@ local function openCrop()
 	if not cropOverlay then
 		return
 	end
-	cropBackup = { zoom = bgState.zoom, ox = bgState.ox, oy = bgState.oy }
+	cropBackup = { zoom = bgState.zoom, ox = bgState.ox, oy = bgState.oy, fit = bgState.fit }
+	if cropFitSeg then
+		cropFitSeg:SetValue(fitValueToLabel[bgState.fit] or "填充", true)
+	end
 	cropOverlay.Visible = true
 	setPreviewAsset()
 end
@@ -11329,6 +11422,7 @@ local function cancelCrop()
 		bgState.zoom = cropBackup.zoom
 		bgState.ox = cropBackup.ox
 		bgState.oy = cropBackup.oy
+		bgState.fit = cropBackup.fit or bgState.fit
 		cropBackup = nil
 	end
 	closeCrop()
@@ -11352,8 +11446,10 @@ local function openWizard(window)
 	bgState.dim = tonumber(source.dim) or 42
 	bgState.tint = tonumber(source.tint) or 55
 	bgState.soft = tonumber(source.soft) or 0
+	bgState.w = tonumber(source.w)
+	bgState.h = tonumber(source.h)
 	if bgUrlInput then
-		bgUrlInput:SetValue(bgState.url, true)
+		bgUrlInput:SetValue(shortenUrl(bgState.url), true)
 	end
 	if bgFitSeg then
 		bgFitSeg:SetValue(fitValueToLabel[bgState.fit] or "填充", true)
@@ -11553,6 +11649,12 @@ local function buildWizard(window)
 	bgUrlInput.Root.Position = UDim2.fromOffset(0, 162)
 	bgUrlInput.Root.ClipsDescendants = true
 	bgUrlInput.Box.ClipsDescendants = true
+	pcall(function()
+		bgUrlInput.Box.TextTruncate = Enum.TextTruncate.AtEnd
+	end)
+	U.connect(bgUrlInput.Box.Focused, function()
+		bgUrlInput:SetValue(bgState.url, true)
+	end)
 	local applyButton = Nerx.Widgets.Button(bgSteps[1], "应用", function()
 		if bgApplyAction then
 			bgApplyAction()
@@ -11561,7 +11663,6 @@ local function buildWizard(window)
 	applyButton.Root.Position = UDim2.fromOffset(368, 162)
 	applyButton.Root.Size = UDim2.fromOffset(80, 30)
 	bgApplyAction = function()
-		bgState.url = tostring(bgUrlInput.Box.Text or "")
 		setPreviewAsset()
 	end
 	U.label(bgSteps[1], {
@@ -11578,11 +11679,16 @@ local function buildWizard(window)
 		Selected = "填充",
 		Callback = function(value)
 			bgState.fit = fitLabelToValue[value] or "cover"
+			if cropFitSeg then
+				cropFitSeg:SetValue(value, true)
+			end
+			renderCropViews()
 		end,
 	})
 	bgFitSeg.Root.Position = UDim2.fromOffset(72, 198)
 	U.connect(bgUrlInput.Box.FocusLost, function()
 		bgState.url = tostring(bgUrlInput.Box.Text or "")
+		bgUrlInput:SetValue(shortenUrl(bgState.url), true)
 		setPreviewAsset()
 	end)
 
@@ -11611,13 +11717,15 @@ local function buildWizard(window)
 		U.corner(swatch, 5)
 		U.stroke(swatch, Theme.White, 0.82, 1)
 		U.inputButton(swatch, function()
+			local previousHost = Nerx.PopupHost
+			Nerx.PopupHost = bgPanel
 			U.colorPicker(swatch, bgState[key], function(color)
 				bgState[key] = color
 				swatch.BackgroundColor3 = color
 				hex.Text = U.hex(color)
 			end)
-			local host = Nerx.PopupHost
-			local popup = host and host:FindFirstChild("NerxPopup")
+			Nerx.PopupHost = previousHost
+			local popup = bgPanel and bgPanel:FindFirstChild("NerxPopup")
 			if popup then
 				wizard.pickerOpen = true
 				popup.Destroying:Connect(function()
@@ -11812,6 +11920,8 @@ local function buildWizard(window)
 			dim = bgState.dim,
 			tint = bgState.tint,
 			soft = bgState.soft,
+			w = bgState.w,
+			h = bgState.h,
 			config = bgSaveConfig:GetValue() and name or nil,
 			savedAt = os.time(),
 		}
@@ -11838,7 +11948,6 @@ local function buildWizard(window)
 	bgNext = Nerx.Widgets.PrimaryButton(bgPanel, "下一步", 250, 32, function()
 		if wizard.step < 3 then
 			if wizard.step == 1 then
-				bgState.url = tostring(bgUrlInput.Box.Text or "")
 				setPreviewAsset()
 			end
 			setStep(wizard.step + 1)
@@ -11945,9 +12054,18 @@ local function buildWizard(window)
 			and inputObject.UserInputType ~= Enum.UserInputType.Touch then
 			return
 		end
-		local size = cropStage.AbsoluteSize
-		bgState.ox = dragBaseX + (inputObject.Position.X - dragStart.X) / math.max(size.X, 1)
-		bgState.oy = dragBaseY + (inputObject.Position.Y - dragStart.Y) / math.max(size.Y, 1)
+		local uiScale = 1
+		if U.parentScale then
+			uiScale = U.parentScale(cropStage) or 1
+		end
+		local dx = (inputObject.Position.X - dragStart.X) / math.max(uiScale, 0.01)
+		local dy = (inputObject.Position.Y - dragStart.Y) / math.max(uiScale, 0.01)
+		if cropRanges.x > 0 then
+			bgState.ox = math.clamp(dragBaseX + dx / cropRanges.x, -1, 1)
+		end
+		if cropRanges.y > 0 then
+			bgState.oy = math.clamp(dragBaseY + dy / cropRanges.y, -1, 1)
+		end
 		renderCropViews()
 	end)
 	U.connect(UserInputService.InputEnded, function(inputObject)
@@ -12112,6 +12230,20 @@ local function buildWizard(window)
 	end)
 	cropReset.Root.Position = UDim2.fromOffset(16, 330)
 	cropReset.Root.Size = UDim2.fromOffset(92, 26)
+	cropFitSeg = Nerx.Widgets.Segmented(cropCard, {
+		Width = 220,
+		Height = 26,
+		Items = { "填充", "适应", "平铺" },
+		Selected = fitValueToLabel[bgState.fit] or "填充",
+		Callback = function(value)
+			bgState.fit = fitLabelToValue[value] or "cover"
+			if bgFitSeg then
+				bgFitSeg:SetValue(value, true)
+			end
+			renderCropViews()
+		end,
+	})
+	cropFitSeg.Root.Position = UDim2.fromOffset(120, 330)
 
 end
 
