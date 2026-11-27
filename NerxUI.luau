@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.3.29
+	Nerx UI Library · v1.3.30
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.3.29"
+Nerx.Version = "1.3.30"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -15297,19 +15297,278 @@ local function musicParseLrc(raw)
 	return entries
 end
 
+-- ---------------------------------------------------------------------------------------
+-- NetEase transport: direct music.163.com APIs + executor download/asset bridge
+-- ---------------------------------------------------------------------------------------
+local function musicEnv(name)
+	local ok, value = pcall(function()
+		if getgenv then
+			return getgenv()[name]
+		end
+	end)
+	if ok and value ~= nil then
+		return value
+	end
+	ok, value = pcall(function()
+		return _G[name]
+	end)
+	if ok then
+		return value
+	end
+	return nil
+end
+
+local rawRequest = (type(request) == "function" and request)
+	or (type(http_request) == "function" and http_request)
+	or (type(httprequest) == "function" and httprequest)
+	or (type(syn) == "table" and type(syn.request) == "function" and syn.request)
+	or (type(fluxus) == "table" and type(fluxus.request) == "function" and fluxus.request)
+	or (type(http) == "table" and type(http.request) == "function" and http.request)
+	or musicEnv("request")
+	or musicEnv("http_request")
+	or musicEnv("httprequest")
+if type(rawRequest) ~= "function" then
+	rawRequest = nil
+end
+local fnWrite = (type(writefile) == "function" and writefile) or musicEnv("writefile")
+local fnRead = (type(readfile) == "function" and readfile) or musicEnv("readfile")
+local fnIsFile = (type(isfile) == "function" and isfile) or musicEnv("isfile")
+local fnMakeFolder = (type(makefolder) == "function" and makefolder) or musicEnv("makefolder")
+local fnDelFile = (type(delfile) == "function" and delfile) or musicEnv("delfile")
+local fnListFiles = (type(listfiles) == "function" and listfiles) or musicEnv("listfiles")
+local fnAsset = (type(getcustomasset) == "function" and getcustomasset)
+	or (type(getsynasset) == "function" and getsynasset)
+	or musicEnv("getcustomasset")
+	or musicEnv("getsynasset")
+local fnWorkspace = (type(getworkspace) == "function" and getworkspace) or musicEnv("getworkspace")
+local MUSIC_CACHE_DIR = "NerxMusicCache"
+
+local function musicUrlEncode(value)
+	return tostring(value or ""):gsub("([^%w%-_%.~])", function(char)
+		return string.format("%%%02X", string.byte(char))
+	end)
+end
+
+local function musicNcmHeaders(cookie)
+	local headers = {
+		["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		["Referer"] = "https://music.163.com/",
+		["Accept"] = "*/*",
+	}
+	local value = "appver=2.0.2; os=pc"
+	if type(cookie) == "string" and cookie ~= "" then
+		local c = cookie
+		if not string.find(c, "=", 1, true) then
+			c = "MUSIC_U=" .. c
+		end
+		value = c .. "; " .. value
+	end
+	headers["Cookie"] = value
+	return headers
+end
+
+local function musicHttp(config, timeout)
+	config = config or {}
+	timeout = timeout or 15
+	if rawRequest then
+		local done, ok, response = false, false, nil
+		task.spawn(function()
+			ok, response = pcall(rawRequest, config)
+			done = true
+		end)
+		local started = os.clock()
+		while not done and os.clock() - started < timeout do
+			task.wait(0.05)
+		end
+		if not done then
+			return { ok = false, error = "网易云请求超时" }
+		end
+		if not ok or type(response) ~= "table" then
+			return { ok = false, error = "网易云请求失败" }
+		end
+		local body = response.Body or response.body
+		local status = tonumber(response.StatusCode or response.Status or response.status)
+		local headers = response.Headers or response.headers
+		if type(body) ~= "string" or body == "" then
+			return { ok = false, status = status, headers = headers, error = "网易云返回为空" }
+		end
+		return {
+			ok = (status == nil or (status >= 200 and status < 300)),
+			body = body,
+			status = status,
+			headers = headers,
+		}
+	end
+	if string.upper(tostring(config.Method or "GET")) == "GET" then
+		local ok, body = pcall(function()
+			return game:HttpGet(config.Url, true)
+		end)
+		if ok and type(body) == "string" and body ~= "" then
+			return { ok = true, body = body, status = 200, headers = {} }
+		end
+		return { ok = false, error = "执行器缺少 request，HttpGet 也无法访问网易云" }
+	end
+	return { ok = false, error = "执行器缺少 request，无法访问网易云" }
+end
+
+local function musicHttpFollow(config, timeout)
+	local current = config
+	for _ = 1, 4 do
+		local response = musicHttp(current, timeout)
+		if not response then
+			return nil
+		end
+		local status = response.status
+		if status and status >= 300 and status < 400 and type(response.headers) == "table" then
+			local location
+			for key, value in pairs(response.headers) do
+				if type(key) == "string" and string.lower(key) == "location" then
+					location = value
+					break
+				end
+			end
+			if type(location) == "string" and location ~= "" then
+				if string.sub(location, 1, 1) == "/" then
+					location = "https://music.163.com" .. location
+				end
+				local headers = {}
+				for key, value in pairs(current.Headers or {}) do
+					if string.lower(tostring(key)) ~= "cookie" then
+						headers[key] = value
+					end
+				end
+				current = { Url = location, Method = "GET", Headers = headers }
+			else
+				return response
+			end
+		else
+			return response
+		end
+	end
+	return nil
+end
+
+local function musicBuildApiUrl(path)
+	local base, query = tostring(path or ""):match("^([^?]*)%??(.*)$")
+	local function param(name)
+		return (("&" .. tostring(query or "")):match("&" .. name .. "=([^&]*)"))
+	end
+	local id = param("id")
+	if id and not string.match(id, "^%d+$") then
+		return nil
+	end
+	if base == "/search" then
+		return "https://music.163.com/api/search/get/web?csrf_token=&type=1&offset="
+			.. (param("offset") or "0") .. "&total=true&s=" .. (param("keywords") or "")
+			.. "&limit=" .. (param("limit") or "30")
+	elseif base == "/personalized" then
+		return "https://music.163.com/api/personalized/playlist?limit=" .. (param("limit") or "12")
+	elseif base == "/top/playlist" then
+		return "https://music.163.com/api/playlist/list?cat=" .. (param("cat") or musicUrlEncode("全部"))
+			.. "&order=" .. (param("order") or "hot")
+			.. "&limit=" .. (param("limit") or "12")
+			.. "&offset=" .. (param("offset") or "0")
+	elseif base == "/playlist/detail" and id then
+		return "https://music.163.com/api/v6/playlist/detail?id=" .. id .. "&s=8"
+	elseif base == "/playlist/track/all" and id then
+		return "https://music.163.com/api/playlist/track/all?id=" .. id
+			.. "&limit=" .. (param("limit") or "200") .. "&offset=" .. (param("offset") or "0")
+	elseif base == "/song/detail" then
+		local ids = param("ids")
+		if not ids then
+			return nil
+		end
+		ids = ids:gsub("%%(%x%x)", function(hex)
+			return string.char(tonumber(hex, 16))
+		end)
+		return "https://music.163.com/api/song/detail/?ids=" .. ids
+	elseif base == "/lyric" and id then
+		return "https://music.163.com/api/song/lyric?lv=-1&kv=-1&tv=-1&id=" .. id
+	elseif base == "/account" then
+		return "https://music.163.com/api/nuser/account/get"
+	elseif base == "/user/playlist" then
+		local uid = param("uid")
+		if not uid or not string.match(uid, "^%d+$") then
+			return nil
+		end
+		return "https://music.163.com/api/user/playlist?uid=" .. uid
+			.. "&limit=" .. (param("limit") or "50")
+			.. "&offset=" .. (param("offset") or "0")
+	end
+	return nil
+end
+
+local function musicMergeLrc(raw, translated)
+	local function parse(source)
+		local lines = {}
+		for line in tostring(source or ""):gmatch("[^\r\n]+") do
+			local stamps = {}
+			local rest = line
+			while true do
+				local minutes, seconds, tail = string.match(rest, "^%s*%[(%d+):(%d+[%.%d]*)%](.*)$")
+				if not minutes then
+					break
+				end
+				stamps[#stamps + 1] = (tonumber(minutes) or 0) * 60 + (tonumber(seconds) or 0)
+				rest = tail
+			end
+			if #stamps > 0 then
+				local text = musicTrim(rest)
+				for _, time in ipairs(stamps) do
+					lines[#lines + 1] = { Time = time, Text = text }
+				end
+			end
+		end
+		table.sort(lines, function(a, b)
+			return a.Time < b.Time
+		end)
+		return lines
+	end
+	local main = parse(raw)
+	if #main == 0 then
+		return ""
+	end
+	local trans = parse(translated)
+	local output = {}
+	for _, entry in ipairs(main) do
+		local best, distance = nil, nil
+		for _, candidate in ipairs(trans) do
+			local delta = math.abs(candidate.Time - entry.Time)
+			if not distance or delta < distance then
+				best, distance = candidate, delta
+			end
+		end
+		local text = entry.Text
+		if best and distance and distance <= 0.35 and best.Text ~= "" then
+			text = text .. "|" .. best.Text
+		end
+		output[#output + 1] = string.format("[%02d:%05.2f]%s", math.floor(entry.Time / 60), entry.Time % 60, text)
+	end
+	return table.concat(output, "\n")
+end
+
 local function musicNormalizeData(decoded)
 	local data = type(decoded) == "table" and decoded or {}
-	data.version = 1
+	data.version = 2
 
 	local rawTracks = type(data.tracks) == "table" and data.tracks or {}
 	local tracks = {}
 	for key, value in pairs(rawTracks) do
 		if type(value) == "table" then
 			local id = tostring(value.id or key)
+			local source = value.source == "netease" and "netease" or "local"
 			local soundId = musicNormalizeSoundId(value.soundId) or tostring(value.soundId or ""):gsub("%s", "")
+			local netId = nil
+			if source == "netease" then
+				netId = tostring(value.netId or id:gsub("^ne_", ""))
+				if not netId:match("^%d+$") then
+					source = "local"
+					netId = nil
+				end
+			end
 			local name = musicTrim(value.name)
 			if name == "" then
-				name = "Sound " .. soundId
+				name = source == "netease" and "未知歌曲" or ("Sound " .. soundId)
 			end
 			local artist = musicTrim(value.artist)
 			if artist == "" then
@@ -15317,17 +15576,22 @@ local function musicNormalizeData(decoded)
 			end
 			local album = musicTrim(value.album)
 			if album == "" then
-				album = "本地曲库"
+				album = source == "netease" and "网易云音乐" or "本地曲库"
 			end
-			local c1, c2 = musicArtColors(name .. soundId)
+			local c1, c2 = musicArtColors(name .. artist .. tostring(netId or soundId))
 			value.id = id
+			value.source = source
+			value.netId = netId
 			value.soundId = soundId
 			value.name = name
 			value.artist = artist
 			value.album = album
 			value.duration = tonumber(value.duration) or 0
+			value.fee = tonumber(value.fee) or 0
 			value.liked = value.liked == true
 			value.lyrics = type(value.lyrics) == "string" and value.lyrics or ""
+			value.lyricsLoaded = value.lyricsLoaded == true
+			value.cachedPath = type(value.cachedPath) == "string" and value.cachedPath or nil
 			value.color1 = type(value.color1) == "string" and value.color1 or c1
 			value.color2 = type(value.color2) == "string" and value.color2 or c2
 			value.addedAt = tonumber(value.addedAt) or 0
@@ -15369,29 +15633,39 @@ local function musicNormalizeData(decoded)
 			if name == "" then
 				name = "歌单 " .. tostring(index)
 			end
-			local c1, c2 = musicArtColors(name)
+			local netId = tostring(value.netId or ""):match("^%d+$") and tostring(value.netId) or nil
+			local kind = "custom"
+			if value.kind == "netease" or netId then
+				kind = "netease"
+			elseif value.kind == "saved" then
+				kind = "saved"
+			end
+			if kind == "netease" and netId == nil then
+				local extracted = tostring(value.id or ""):match("^ne_pl_(%d+)$")
+				netId = extracted
+			end
+			local c1, c2 = musicArtColors(name .. tostring(netId or ""))
 			playlists[#playlists + 1] = {
 				id = tostring(value.id or ("pl_" .. tostring(index))),
 				name = name,
-				kind = value.kind == "saved" and "saved" or "custom",
+				kind = kind,
+				netId = netId,
+				creator = tostring(value.creator or ""),
+				count = tonumber(value.count) or #ids,
 				trackIds = ids,
+				loading = false,
+				loaded = value.loaded == true and #ids > 0,
 				color1 = type(value.color1) == "string" and value.color1 or c1,
 				color2 = type(value.color2) == "string" and value.color2 or c2,
 				created = tonumber(value.created) or 0,
 			}
 		end
 	end
-	if #playlists == 0 then
-		local c1, c2 = musicArtColors("默认歌单")
-		playlists[1] = {
-			id = "pl_default",
-			name = "默认歌单",
-			kind = "custom",
-			trackIds = {},
-			color1 = c1,
-			color2 = c2,
-			created = os.time(),
-		}
+	for index = #playlists, 1, -1 do
+		local playlist = playlists[index]
+		if playlist.id == "pl_default" and #playlist.trackIds == 0 then
+			table.remove(playlists, index)
+		end
 	end
 	data.playlists = playlists
 
@@ -15401,7 +15675,33 @@ local function musicNormalizeData(decoded)
 		mode = (settings.mode == "order" or settings.mode == "one") and settings.mode or "all",
 		shuffle = settings.shuffle == true,
 		showTranslation = settings.showTranslation ~= false,
+		cookie = type(settings.cookie) == "string" and settings.cookie or "",
+		nickname = type(settings.nickname) == "string" and settings.nickname or "",
+		uid = tostring(settings.uid or ""),
 	}
+
+	local recommended = {}
+	for _, value in ipairs(type(data.recommended) == "table" and data.recommended or {}) do
+		if type(value) == "table" then
+			local netId = tostring(value.netId or value.id or "")
+			if netId:match("^%d+$") then
+				local name = musicTrim(value.name)
+				if name ~= "" then
+					local c1, c2 = musicArtColors(name .. netId)
+					recommended[#recommended + 1] = {
+						netId = netId,
+						name = name,
+						creator = tostring(value.creator or "网易云音乐"),
+						count = tonumber(value.count) or tonumber(value.trackCount) or 0,
+						playCount = tonumber(value.playCount) or 0,
+						color1 = type(value.color1) == "string" and value.color1 or c1,
+						color2 = type(value.color2) == "string" and value.color2 or c2,
+					}
+				end
+			end
+		end
+	end
+	data.recommended = recommended
 
 	local history = {}
 	for _, id in ipairs(type(data.history) == "table" and data.history or {}) do
@@ -15427,15 +15727,29 @@ function Music:Init()
 	self.Playlists = data.playlists
 	self.Settings = data.settings
 	self.Order = data.order
+	self.Recommended = data.recommended or {}
+	self.MyPlaylists = {}
 	self.Listeners = {}
 	self.Queue = {}
 	self.QueueIndex = 0
 	self.CurrentId = nil
 	self.Playing = false
 	self.Loading = false
+	self.DesiredPlaying = false
 	self.NextId = nil
 	self.LoadToken = 0
 	self.Sound = nil
+	self.SearchIds = {}
+	self.SearchQuery = ""
+	self.Searching = false
+	self.SearchError = nil
+	self.RecommendedLoading = false
+	self.RecommendedError = nil
+	self._ApiCache = {}
+	self._NextRequestAt = 0
+	self._CooldownUntil = 0
+	self.LastApiError = nil
+	self.CacheDir = MUSIC_CACHE_DIR
 
 	local ok = pcall(function()
 		local sound = Instance.new("Sound")
@@ -15460,10 +15774,45 @@ function Music:Save()
 	if not self.Data then
 		return
 	end
-	self.Data.tracks = self.Tracks
+	-- Search / playlist browsing creates many short-lived online tracks. Persist
+	-- only the ones that are still referenced, so music.json does not grow forever.
+	local keep = {}
+	for id, track in pairs(self.Tracks) do
+		if track.source ~= "netease" or track.liked then
+			keep[id] = true
+		end
+	end
+	for _, playlist in ipairs(self.Playlists or {}) do
+		for _, id in ipairs(playlist.trackIds or {}) do
+			keep[id] = true
+		end
+	end
+	for _, id in ipairs(self.Data.history or {}) do
+		keep[id] = true
+	end
+	if self.CurrentId then
+		keep[self.CurrentId] = true
+	end
+	for _, id in ipairs(self.Queue or {}) do
+		keep[id] = true
+	end
+	local tracks = {}
+	for id, track in pairs(self.Tracks) do
+		if keep[id] then
+			tracks[id] = track
+		end
+	end
+	local order = {}
+	for _, id in ipairs(self.Order or {}) do
+		if tracks[id] then
+			order[#order + 1] = id
+		end
+	end
+	self.Data.tracks = tracks
 	self.Data.playlists = self.Playlists
 	self.Data.settings = self.Settings
-	self.Data.order = self.Order
+	self.Data.order = order
+	self.Data.recommended = self.Recommended
 	Nerx.Storage:WriteJSON(MUSIC_STORE_FILE, self.Data)
 end
 
@@ -15490,6 +15839,558 @@ function Music:GetPlaylist(id)
 		end
 	end
 	return nil
+end
+
+function Music:_ApiGet(path, ttl, force)
+	local url = musicBuildApiUrl(path)
+	if url == nil then
+		self.LastApiError = "网易云接口地址无效"
+		return nil
+	end
+	local now = os.clock()
+	local cached = self._ApiCache[url]
+	if cached and not force and now - cached.t < (ttl or 180) then
+		return cached.data
+	end
+	if self._CooldownUntil and now < self._CooldownUntil then
+		self.LastApiError = string.format("网易云请求冷却中，请 %.0f 秒后重试", self._CooldownUntil - now)
+		return nil
+	end
+	if self._NextRequestAt and now < self._NextRequestAt then
+		task.wait(self._NextRequestAt - now)
+	end
+	self._NextRequestAt = os.clock() + 0.35
+	local response = musicHttp({
+		Url = url,
+		Method = "GET",
+		Headers = musicNcmHeaders(self.Settings.cookie),
+	}, 15)
+	if not response or not response.body then
+		self.LastApiError = response and response.error or "网易云无响应"
+		return nil
+	end
+	local status = response.status
+	if status and (status < 200 or status >= 300) then
+		if status == 429 or status == 460 or status == 503 then
+			self._CooldownUntil = os.clock() + 30
+			self.LastApiError = "网易云请求过于频繁（HTTP " .. tostring(status) .. "），请稍后重试"
+		else
+			self.LastApiError = "网易云 HTTP " .. tostring(status)
+		end
+		return nil
+	end
+	local decoded = Nerx.Storage:Decode(response.body)
+	if type(decoded) ~= "table" then
+		self.LastApiError = "网易云返回内容不是有效 JSON"
+		return nil
+	end
+	local code = tonumber(decoded.code)
+	if code and code ~= 200 then
+		self.LastApiError = "网易云接口错误 " .. tostring(code) .. "：" .. tostring(decoded.msg or decoded.message or "")
+		return nil
+	end
+	self.LastApiError = nil
+	self._ApiCache[url] = { t = os.clock(), data = decoded }
+	return decoded
+end
+
+function Music:_RegisterNeteaseSongs(rawSongs, limit)
+	local ids = {}
+	if type(rawSongs) ~= "table" then
+		return ids
+	end
+	for _, raw in ipairs(rawSongs) do
+		if type(raw) == "table" then
+			local netId = tostring(raw.id or "")
+			if netId:match("^%d+$") then
+				local id = "ne_" .. netId
+				local existing = self.Tracks[id]
+				local artistNames = {}
+				local artists = raw.artists or raw.ar
+				if type(artists) == "table" then
+					for _, artist in ipairs(artists) do
+						if type(artist) == "table" and artist.name then
+							artistNames[#artistNames + 1] = tostring(artist.name)
+						end
+					end
+				end
+				local artist = table.concat(artistNames, " / ")
+				if artist == "" then
+					artist = musicTrim(raw.artist)
+				end
+				if artist == "" then
+					artist = "未知歌手"
+				end
+				local album = raw.album or raw.al
+				local albumName = type(album) == "table" and tostring(album.name or "") or ""
+				if albumName == "" then
+					albumName = "网易云音乐"
+				end
+				local duration = (tonumber(raw.duration or raw.dt) or 0) / 1000
+				local c1, c2 = musicArtColors(tostring(raw.name or "") .. artist .. netId)
+				local track = {
+					id = id,
+					source = "netease",
+					netId = netId,
+					name = tostring(raw.name or "未知歌曲"),
+					artist = artist,
+					album = albumName,
+					duration = duration > 0 and duration or (existing and existing.duration or 0),
+					fee = tonumber(raw.fee) or (existing and existing.fee or 0),
+					liked = existing and existing.liked or false,
+					lyrics = existing and existing.lyrics or "",
+					lyricsLoaded = existing and existing.lyricsLoaded or false,
+					cachedPath = existing and existing.cachedPath or nil,
+					color1 = existing and existing.color1 or c1,
+					color2 = existing and existing.color2 or c2,
+					addedAt = existing and existing.addedAt or os.time(),
+				}
+				self.Tracks[id] = track
+				if not existing then
+					table.insert(self.Order, 1, id)
+				end
+				ids[#ids + 1] = id
+				if limit and #ids >= limit then
+					break
+				end
+			end
+		end
+	end
+	return ids
+end
+
+function Music:SearchNetease(keyword, callback)
+	keyword = musicTrim(keyword)
+	if keyword == "" then
+		self.SearchIds = {}
+		self.SearchQuery = ""
+		self.Searching = false
+		self.SearchError = nil
+		self:_Emit("search")
+		if callback then
+			callback({}, nil)
+		end
+		return
+	end
+	self.SearchQuery = keyword
+	self.Searching = true
+	self.SearchError = nil
+	self.SearchIds = {}
+	self:_Emit("search")
+	task.spawn(function()
+		local data = self:_ApiGet("/search?keywords=" .. musicUrlEncode(keyword) .. "&limit=30&offset=0", 120)
+		if self.SearchQuery ~= keyword then
+			return
+		end
+		local songs = data and data.result and data.result.songs
+		local ids = self:_RegisterNeteaseSongs(songs, 30)
+		self.Searching = false
+		self.SearchIds = ids
+		if not data then
+			self.SearchError = self.LastApiError or "网易云请求失败"
+		elseif #ids == 0 then
+			self.SearchError = "网易云没有找到歌曲"
+		end
+		self:_Emit("search")
+		if callback then
+			callback(ids, self.SearchError)
+		end
+	end)
+end
+
+function Music:LoadRecommended(force, callback)
+	if self.RecommendedLoading and not force then
+		return
+	end
+	self.RecommendedLoading = true
+	self.RecommendedError = nil
+	self.RecommendedToken = (self.RecommendedToken or 0) + 1
+	local token = self.RecommendedToken
+	self:_Emit("recommended")
+	task.spawn(function()
+		local data = self:_ApiGet("/personalized?limit=12", 180, force)
+		local items = data and (data.result or data.recommend or data.playlists)
+		if type(items) ~= "table" or #items == 0 then
+			data = self:_ApiGet("/top/playlist?limit=12&offset=0&order=hot&cat=" .. musicUrlEncode("全部"), 180, force)
+			items = data and (data.playlists or data.result)
+		end
+		if token ~= self.RecommendedToken then
+			return
+		end
+		local out = {}
+		local seen = {}
+		if type(items) == "table" then
+			for _, item in ipairs(items) do
+				if type(item) == "table" then
+					local netId = tostring(item.id or "")
+					if netId:match("^%d+$") and not seen[netId] then
+						seen[netId] = true
+						local name = musicTrim(item.name)
+						if name == "" then
+							name = "网易云歌单"
+						end
+						local creator = ""
+						if type(item.creator) == "table" then
+							creator = tostring(item.creator.nickname or item.creator.name or "")
+						end
+						if creator == "" then
+							creator = "网易云音乐"
+						end
+						local count = tonumber(item.trackCount or item.track_count or item.songCount) or 0
+						local playCount = tonumber(item.playCount or item.play_count) or 0
+						local c1, c2 = musicArtColors(name .. netId)
+						out[#out + 1] = {
+							netId = netId,
+							name = name,
+							creator = creator,
+							count = count,
+							playCount = playCount,
+							color1 = c1,
+							color2 = c2,
+						}
+					end
+				end
+			end
+		end
+		self.RecommendedLoading = false
+		if #out > 0 then
+			self.Recommended = out
+			self.RecommendedError = nil
+			self:Save()
+		else
+			self.RecommendedError = self.LastApiError or "网易云推荐歌单获取失败"
+		end
+		self:_Emit("recommended")
+		if callback then
+			callback(self.Recommended, self.RecommendedError)
+		end
+	end)
+end
+
+function Music:OpenNeteasePlaylist(netId, meta, callback, force)
+	netId = tostring(netId or "")
+	if not netId:match("^%d+$") then
+		return nil
+	end
+	local id = "ne_pl_" .. netId
+	local playlist = self:GetPlaylist(id)
+	if not playlist then
+		meta = meta or {}
+		local name = musicTrim(meta.name)
+		if name == "" then
+			name = "网易云歌单 " .. netId
+		end
+		local c1, c2 = musicArtColors(name .. netId)
+		playlist = {
+			id = id,
+			name = name,
+			kind = "netease",
+			netId = netId,
+			creator = tostring(meta.creator or "网易云音乐"),
+			count = tonumber(meta.count) or 0,
+			trackIds = {},
+			loading = false,
+			loaded = false,
+			color1 = c1,
+			color2 = c2,
+			created = os.time(),
+		}
+		table.insert(self.Playlists, playlist)
+	end
+	if playlist.kind ~= "netease" then
+		return playlist
+	end
+	if playlist.loading then
+		return playlist
+	end
+	if playlist.loaded and not force and #playlist.trackIds > 0 then
+		return playlist
+	end
+	playlist.loading = true
+	playlist.loaded = false
+	playlist.error = nil
+	task.spawn(function()
+		local detail = self:_ApiGet("/playlist/detail?id=" .. netId, 120, force)
+		local raw = detail and (detail.playlist or (detail.data and detail.data.playlist))
+		local rawSongs = raw and raw.tracks
+		local ids = self:_RegisterNeteaseSongs(rawSongs, 200)
+		local trackIds = raw and raw.trackIds
+		local wanted = {}
+		if type(trackIds) == "table" then
+			for _, entry in ipairs(trackIds) do
+				local songId = tostring(type(entry) == "table" and (entry.id or entry.songId) or entry or "")
+				if songId:match("^%d+$") then
+					wanted[#wanted + 1] = songId
+				end
+				if #wanted >= 200 then
+					break
+				end
+			end
+		end
+		if #wanted > #ids then
+			local known = {}
+			for _, id2 in ipairs(ids) do
+				known[id2] = true
+			end
+			for first = 1, #wanted, 100 do
+				local batch = {}
+				for index = first, math.min(first + 99, #wanted) do
+					local songId = "ne_" .. wanted[index]
+					if not known[songId] then
+						batch[#batch + 1] = wanted[index]
+					end
+				end
+				if #batch > 0 then
+					local songsData = self:_ApiGet("/song/detail?ids=" .. musicUrlEncode("[" .. table.concat(batch, ",") .. "]"), 180, force)
+					local songs = songsData and songsData.songs
+					local more = self:_RegisterNeteaseSongs(songs, 200)
+					for _, songId in ipairs(more) do
+						if not known[songId] then
+							known[songId] = true
+							ids[#ids + 1] = songId
+						end
+					end
+				end
+				if #ids >= 200 then
+					break
+				end
+			end
+		end
+		if raw then
+			local name = musicTrim(raw.name)
+			if name ~= "" then
+				playlist.name = name
+			end
+			if type(raw.creator) == "table" then
+				playlist.creator = tostring(raw.creator.nickname or raw.creator.name or playlist.creator)
+			end
+			playlist.count = tonumber(raw.trackCount or raw.track_count) or #ids
+			playlist.color1, playlist.color2 = musicArtColors(playlist.name .. netId)
+		end
+		local finalIds = {}
+		local seenIds = {}
+		for _, id in ipairs(ids) do
+			if not seenIds[id] then
+				seenIds[id] = true
+				finalIds[#finalIds + 1] = id
+			end
+		end
+		playlist.trackIds = finalIds
+		playlist.loading = false
+		playlist.loaded = #finalIds > 0
+		if #finalIds == 0 then
+			playlist.error = self.LastApiError or "网易云歌单没有返回歌曲"
+		else
+			playlist.error = nil
+		end
+		self:Save()
+		self:_Emit("library", playlist)
+		if callback then
+			callback(playlist, #ids == 0 and (self.LastApiError or "网易云歌单没有返回歌曲") or nil)
+		end
+	end)
+	return playlist
+end
+
+function Music:FetchNeteaseLyrics(trackId)
+	local track = self.Tracks[tostring(trackId or "")]
+	if not track or track.source ~= "netease" or track.netId == nil then
+		return
+	end
+	if track.lyricsLoaded or track.lyricsLoading then
+		return
+	end
+	track.lyricsLoading = true
+	track.lyricsError = nil
+	task.spawn(function()
+		local data = self:_ApiGet("/lyric?id=" .. track.netId, 300)
+		track.lyricsLoading = false
+		if not data then
+			track.lyricsError = self.LastApiError or "网易云歌词获取失败"
+			self:_Emit("lyrics", track)
+			return
+		end
+		local raw = data.lrc and data.lrc.lyric or ""
+		local translated = data.tlyric and data.tlyric.lyric or ""
+		track.lyrics = musicMergeLrc(raw, translated)
+		track.lyricsLoaded = true
+		track.lyricsError = nil
+		self:Save()
+		self:_Emit("lyrics", track)
+	end)
+end
+
+function Music:SetCookie(cookie)
+	cookie = musicTrim(cookie)
+	if cookie ~= "" and not string.find(cookie, "=", 1, true) then
+		cookie = "MUSIC_U=" .. cookie
+	end
+	self.Settings.cookie = cookie
+	self._ApiCache = {}
+	self:Save()
+	self:_Emit("settings")
+end
+
+function Music:VerifyCookie(callback)
+	if musicTrim(self.Settings.cookie) == "" then
+		self.Settings.nickname = ""
+		self.Settings.uid = ""
+		self.MyPlaylists = {}
+		self:Save()
+		self:_Emit("account")
+		if callback then
+			callback(false, "未设置 Cookie")
+		end
+		return
+	end
+	task.spawn(function()
+		local data = self:_ApiGet("/account", 60, true)
+		local profile = data and (data.profile or (data.data and data.data.profile))
+		if not profile then
+			self.Settings.nickname = ""
+			self.Settings.uid = ""
+			self:Save()
+			self:_Emit("account")
+			if callback then
+				callback(false, self.LastApiError or "Cookie 无效或已过期")
+			end
+			return
+		end
+		self.Settings.nickname = tostring(profile.nickname or "")
+		self.Settings.uid = tostring(profile.userId or profile.userid or "")
+		self:Save()
+		self:_Emit("account")
+		self:LoadAccountPlaylists()
+		if callback then
+			callback(true, self.Settings.nickname)
+		end
+	end)
+end
+
+function Music:LoadAccountPlaylists(callback)
+	local uid = tostring(self.Settings.uid or "")
+	if not uid:match("^%d+$") then
+		return
+	end
+	task.spawn(function()
+		local data = self:_ApiGet("/user/playlist?uid=" .. uid .. "&limit=50&offset=0", 120)
+		local items = data and data.playlist
+		local out = {}
+		local seen = {}
+		if type(items) == "table" then
+			for _, item in ipairs(items) do
+				if type(item) == "table" then
+					local netId = tostring(item.id or "")
+					if netId:match("^%d+$") and not seen[netId] then
+						seen[netId] = true
+						local name = musicTrim(item.name)
+						if name ~= "" then
+							local c1, c2 = musicArtColors(name .. netId)
+							out[#out + 1] = {
+								netId = netId,
+								name = name,
+								creator = self.Settings.nickname ~= "" and self.Settings.nickname or "网易云音乐",
+								count = tonumber(item.trackCount or item.track_count) or 0,
+								playCount = tonumber(item.playCount or item.play_count) or 0,
+								color1 = c1,
+								color2 = c2,
+							}
+						end
+					end
+				end
+			end
+		end
+		self.MyPlaylists = out
+		self:_Emit("account")
+		if callback then
+			callback(out)
+		end
+	end)
+end
+
+function Music:CachePath(netId)
+	return self.CacheDir .. "/" .. tostring(netId) .. ".mp3"
+end
+
+function Music:_FileExists(path)
+	if not fnIsFile then
+		return false
+	end
+	local ok, exists = pcall(fnIsFile, path)
+	return ok and exists == true
+end
+
+function Music:_Asset(path)
+	if type(fnAsset) ~= "function" then
+		return nil, "执行器缺少 getcustomasset"
+	end
+	local candidates = { path }
+	if type(fnWorkspace) == "function" then
+		local ok, workspacePath = pcall(fnWorkspace)
+		if ok and type(workspacePath) == "string" and workspacePath ~= "" then
+			candidates[#candidates + 1] = workspacePath .. "/" .. path
+		end
+	end
+	for _, candidate in ipairs(candidates) do
+		local ok, asset = pcall(fnAsset, candidate)
+		if ok and type(asset) == "string" and asset ~= "" then
+			return asset
+		end
+	end
+	return nil, "getcustomasset 失败"
+end
+
+function Music:_Download(url, path)
+	if type(rawRequest) ~= "function" then
+		return nil, "执行器缺少 request，无法下载网易云音频"
+	end
+	if type(fnWrite) ~= "function" then
+		return nil, "执行器缺少 writefile，无法缓存网易云音频"
+	end
+	if type(fnMakeFolder) == "function" then
+		pcall(fnMakeFolder, self.CacheDir)
+	end
+	local headers = musicNcmHeaders(self.Settings.cookie)
+	headers["Accept"] = "*/*"
+	local response = musicHttpFollow({ Url = url, Method = "GET", Headers = headers }, 45)
+	if not response or not response.body then
+		return nil, response and response.error or "网易云音频下载失败"
+	end
+	local body = response.body
+	if #body < 1024 or string.sub(body, 1, 1) == "{" or string.sub(body, 1, 1) == "<" then
+		return nil, "网易云返回的不是音频（可能是 VIP / 版权限制）"
+	end
+	local ok, err = pcall(fnWrite, path, body)
+	if not ok then
+		local alt = path:gsub("/", "\\")
+		ok, err = pcall(fnWrite, alt, body)
+		if ok then
+			path = alt
+		else
+			return nil, "writefile 失败：" .. tostring(err)
+		end
+	end
+	return path
+end
+
+function Music:ClearCache()
+	local removed = 0
+	if type(fnListFiles) == "function" then
+		local ok, files = pcall(fnListFiles, self.CacheDir)
+		if ok and type(files) == "table" then
+			for _, file in ipairs(files) do
+				if type(file) == "string" and string.sub(file, -4) == ".mp3" and type(fnDelFile) == "function" then
+					local deleted = pcall(fnDelFile, file)
+					if deleted then
+						removed = removed + 1
+					end
+				end
+			end
+		end
+	end
+	self:Save()
+	self:_Emit("cache")
+	return removed
 end
 
 function Music:OrderedIds()
@@ -15725,6 +16626,7 @@ function Music:Play(id, queueIds)
 		self.QueueIndex = index
 	end
 	self.CurrentId = track.id
+	self.DesiredPlaying = true
 	self.NextId = nil
 	self.Data.history = self.Data.history or {}
 	for index = #self.Data.history, 1, -1 do
@@ -15743,9 +16645,25 @@ end
 
 function Music:_Load(track)
 	local sound = self.Sound
+	self.DesiredPlaying = true
 	self.LoadToken = (self.LoadToken or 0) + 1
 	local token = self.LoadToken
 	if not sound then
+		return
+	end
+	if track.source == "netease" and track.netId then
+		pcall(function()
+			sound:Stop()
+		end)
+		pcall(function()
+			sound.TimePosition = 0
+		end)
+		self.Playing = true
+		self.Loading = true
+		self:_Emit("state")
+		task.spawn(function()
+			self:_LoadNetease(track, token)
+		end)
 		return
 	end
 	if tostring(track.soundId or "") == "" then
@@ -15755,7 +16673,7 @@ function Music:_Load(track)
 			sound:Stop()
 		end)
 		task.defer(function()
-			self:_Emit("loadfail", track)
+			self:_Emit("loadfail", { track = track, message = "这首歌曲没有可播放的音频 ID" })
 		end)
 		return
 	end
@@ -15802,7 +16720,100 @@ function Music:_Load(track)
 			pcall(function()
 				sound:Stop()
 			end)
-			self:_Emit("loadfail", track)
+			self:_Emit("loadfail", { track = track, message = "音频加载失败，请检查 Roblox 音频 ID" })
+		end
+		self:_Emit("state")
+	end)
+end
+
+function Music:_LoadNetease(track, token)
+	local sound = self.Sound
+	if not sound then
+		return
+	end
+	local netId = tostring(track.netId or "")
+	local path = self:CachePath(netId)
+	local asset = nil
+	if self:_FileExists(path) then
+		asset = self:_Asset(path)
+	end
+	if not asset then
+		if self:_FileExists(path) and type(fnDelFile) == "function" then
+			pcall(fnDelFile, path)
+		end
+		local url = "https://music.163.com/song/media/outer/url?id=" .. netId .. ".mp3"
+		local ok, err = self:_Download(url, path)
+		if token ~= self.LoadToken then
+			return
+		end
+		if not ok then
+			self.Loading = false
+			self.Playing = false
+			self:_Emit("state")
+			self:_Emit("loadfail", { track = track, message = tostring(err or "网易云音频下载失败") })
+			return
+		end
+		asset = self:_Asset(path)
+	end
+	if token ~= self.LoadToken then
+		return
+	end
+	if not asset then
+		self.Loading = false
+		self.Playing = false
+		self:_Emit("state")
+		self:_Emit("loadfail", { track = track, message = "执行器缺少 getcustomasset，无法播放网易云音频" })
+		return
+	end
+	track.cachedPath = path
+	sound.SoundId = asset
+	sound.Volume = self.Settings.volume
+	pcall(function()
+		sound.TimePosition = 0
+	end)
+	self.Loading = false
+	if not self.DesiredPlaying then
+		self.Playing = false
+		self:_Emit("state")
+		return
+	end
+	local played = pcall(function()
+		sound:Play()
+	end)
+	if not played then
+		self.Playing = false
+		self:_Emit("state")
+		self:_Emit("loadfail", { track = track, message = "网易云音频无法交给 Sound 播放" })
+		return
+	end
+	self.Playing = true
+	self:_Emit("state")
+	task.spawn(function()
+		local waited = 0
+		while waited < 8 and self.LoadToken == token do
+			if sound.TimeLength > 0 then
+				break
+			end
+			task.wait(0.1)
+			waited = waited + 0.1
+		end
+		if self.LoadToken ~= token then
+			return
+		end
+		if sound.TimeLength > 0 then
+			local duration = tonumber(sound.TimeLength) or 0
+			if duration > 0 and math.abs((tonumber(track.duration) or 0) - duration) > 0.05 then
+				track.duration = duration
+				self:Save()
+				self:_Emit("library", track)
+			end
+			self.Playing = sound.IsPlaying
+		else
+			self.Playing = false
+			pcall(function()
+				sound:Stop()
+			end)
+			self:_Emit("loadfail", { track = track, message = "网易云音频加载失败（VIP / 版权或接口限制）" })
 		end
 		self:_Emit("state")
 	end)
@@ -15828,6 +16839,7 @@ function Music:Toggle()
 			sound:Pause()
 		end)
 		self.Playing = false
+		self.DesiredPlaying = false
 	else
 		if sound.TimeLength <= 0 then
 			local track = self.Tracks[self.CurrentId]
@@ -15850,6 +16862,7 @@ function Music:Toggle()
 			end)
 		end
 		self.Playing = true
+		self.DesiredPlaying = true
 	end
 	self:_Emit("state")
 	return true
@@ -16137,12 +17150,8 @@ function MusicPage.Build(page, config)
 		cfIndex = 1,
 		cfIds = {},
 		lastPlayerTrack = nil,
+		searchToken = 0,
 	}
-	local firstPlaylist = M.Playlists[1]
-	if firstPlaylist then
-		state.view = { kind = "playlist", id = firstPlaylist.id }
-		state.lastView = { kind = "playlist", id = firstPlaylist.id }
-	end
 
 	local renderRail
 	local renderMain
@@ -16159,6 +17168,7 @@ function MusicPage.Build(page, config)
 	local syncVolumeUI
 	local setView
 	local openNewPlaylist
+	local openImportPlaylist
 	local openAddTrack
 	local openAddToPlaylist
 	local openLrcImport
@@ -16507,7 +17517,7 @@ function MusicPage.Build(page, config)
 		BorderSizePixel = 0,
 		Font = F.Regular,
 		Text = "",
-		PlaceholderText = "搜索歌曲、歌手、歌单...",
+		PlaceholderText = "搜索网易云歌曲、歌手...",
 		PlaceholderColor3 = T.Faint,
 		TextColor3 = T.Text,
 		TextSize = 10,
@@ -16562,7 +17572,7 @@ function MusicPage.Build(page, config)
 	avatarGradient.Color = ColorSequence.new(musicParseHex("#8d7bff", T.Violet), musicParseHex("#40d9ff", T.Cyan))
 	avatarGradient.Rotation = 135
 	avatarGradient.Parent = railAvatar
-	U.label(railAvatar, {
+	local railAvatarLetter = U.label(railAvatar, {
 		Text = "N",
 		Font = F.Bold,
 		TextSize = 8,
@@ -16570,7 +17580,7 @@ function MusicPage.Build(page, config)
 		TextXAlignment = Enum.TextXAlignment.Center,
 		Size = UDim2.fromScale(1, 1),
 	})
-	U.label(railUser, {
+	local railUserName = U.label(railUser, {
 		Text = "Nerx Music",
 		Font = F.Bold,
 		TextSize = 9.5,
@@ -16579,8 +17589,8 @@ function MusicPage.Build(page, config)
 		Position = UDim2.fromOffset(35, 4),
 		Size = UDim2.new(1, -42, 0, 14),
 	})
-	U.label(railUser, {
-		Text = "本地曲库",
+	local railUserSub = U.label(railUser, {
+		Text = "网易云音乐",
 		TextSize = 8,
 		TextColor3 = T.Faint,
 		TextTransparency = 0.25,
@@ -16705,6 +17715,12 @@ function MusicPage.Build(page, config)
 			order = order + 1
 			return order
 		end
+		local nickname = tostring(M.Settings.nickname or "")
+		railUserName.Text = nickname ~= "" and nickname or "Nerx Music"
+		railUserSub.Text = nickname ~= ""
+			and "网易云音乐 · 已登录"
+			or (M.Settings.cookie ~= "" and "网易云音乐 · Cookie" or "网易云音乐")
+		railAvatarLetter.Text = nickname ~= "" and string.sub(nickname, 1, 1) or "N"
 
 		local brand = U.frame(railScroll, {
 			BackgroundTransparency = 1,
@@ -16735,12 +17751,29 @@ function MusicPage.Build(page, config)
 			setView({ kind = "liked" })
 		end)
 
-		local saved = {}
+		local accountIds = {}
+		if #M.MyPlaylists > 0 then
+			railSection("我的网易云", nextOrder())
+			for _, entry in ipairs(M.MyPlaylists) do
+				accountIds[entry.netId] = true
+				local id = "ne_pl_" .. entry.netId
+				railItem(nextOrder(), "cloud", entry.name, tonumber(entry.count) or 0, state.view.kind == "playlist" and state.view.id == id, function()
+					local playlist = M:OpenNeteasePlaylist(entry.netId, entry)
+					if playlist then
+						setView({ kind = "playlist", id = playlist.id })
+					end
+				end)
+			end
+		end
+
+		local netPlaylists = {}
 		for _, playlist in ipairs(M.Playlists) do
 			local entry = playlist
-			if entry.kind == "saved" then
-				saved[#saved + 1] = entry
-			else
+			if entry.kind == "netease" then
+				if not accountIds[entry.netId] then
+					netPlaylists[#netPlaylists + 1] = entry
+				end
+			elseif entry.kind ~= "saved" then
 				railItem(nextOrder(), "list-bulleted", entry.name, #M:PlaylistIds(entry), state.view.kind == "playlist" and state.view.id == entry.id, function()
 					setView({ kind = "playlist", id = entry.id })
 				end, function(anchor)
@@ -16755,7 +17788,7 @@ function MusicPage.Build(page, config)
 									Attribute = "NerxMusic",
 									OnSubmit = function(name)
 										if M:RenamePlaylist(entry.id, name) then
-											notify("音乐", "已重命名为「" .. name .. "」", "pencil", T.Green)
+											notify("网易云", "已重命名为「" .. name .. "」", "pencil", T.Green)
 										end
 									end,
 								})
@@ -16773,18 +17806,47 @@ function MusicPage.Build(page, config)
 			end
 		end
 
-		if #saved > 0 then
-			railSection("收藏歌单", nextOrder())
-			for _, playlist in ipairs(saved) do
-				local entry = playlist
-				railItem(nextOrder(), "star", entry.name, #M:PlaylistIds(entry), state.view.kind == "playlist" and state.view.id == entry.id, function()
+		if #netPlaylists > 0 then
+			railSection("网易云歌单", nextOrder())
+			for _, entry in ipairs(netPlaylists) do
+				local count = #M:PlaylistIds(entry)
+				if count == 0 then
+					count = tonumber(entry.count) or 0
+				end
+				railItem(nextOrder(), "cloud", entry.name, count, state.view.kind == "playlist" and state.view.id == entry.id, function()
+					M:OpenNeteasePlaylist(entry.netId, entry)
 					setView({ kind = "playlist", id = entry.id })
+				end, function(anchor)
+					UIHelpers.ContextMenu(anchor, {
+						{
+							Text = "刷新歌单",
+							Callback = function()
+								M:OpenNeteasePlaylist(entry.netId, entry, nil, true)
+								notify("网易云", "正在刷新歌单", "arrow-spin-clockwise", T.Accent)
+							end,
+						},
+						{
+							Text = "复制歌单 ID",
+							Callback = function()
+								Nerx.Storage:Copy(entry.netId)
+								notify("网易云", "歌单 ID 已复制", "floppy-disk", T.Green)
+							end,
+						},
+						{
+							Text = "从侧栏移除",
+							Color = T.Red,
+							Callback = function()
+								M:DeletePlaylist(entry.id)
+								notify("网易云", "已从侧栏移除（不影响网易云）", "trash-can", T.Muted)
+							end,
+						},
+					})
 				end)
 			end
 		end
 
 		railSection("系统", nextOrder(), function(anchor)
-			openNewPlaylist(anchor)
+			openImportPlaylist(anchor)
 		end)
 		railItem(nextOrder(), "gear", "设置", nil, state.view.kind == "settings", function()
 			setView({ kind = "settings" })
@@ -17285,7 +18347,7 @@ function MusicPage.Build(page, config)
 			Size = UDim2.new(1, -236, 0, 11),
 		})
 		local album = U.label(row, {
-			Text = track.album,
+			Text = track.album .. (tonumber(track.fee) == 1 and " · VIP" or ""),
 			TextSize = 8.5,
 			TextColor3 = T.Faint,
 			TextTransparency = 0.2,
@@ -17406,20 +18468,46 @@ function MusicPage.Build(page, config)
 				Size = UDim2.new(1, 0, 0, 160),
 				LayoutOrder = 1,
 			})
-			U.icon(empty, "music-note", 22, T.Faint, {
+			local headText = "这里还没有歌曲"
+			local detailText = "从网易云搜索歌曲，或导入一个歌单"
+			local iconName = "cloud"
+			if state.view.kind == "liked" then
+				headText = "还没有喜欢的网易云歌曲"
+				detailText = "右键歌曲即可收藏"
+			elseif state.view.kind == "search" then
+				if M.Searching then
+					headText = "正在搜索网易云..."
+					detailText = "请稍候"
+				elseif M.SearchError then
+					headText = "网易云搜索失败"
+					detailText = M.SearchError
+				else
+					headText = "没有找到匹配的歌曲"
+					detailText = "试试别的关键词"
+				end
+			elseif state.view.kind == "playlist" then
+				local playlist = M:GetPlaylist(state.view.id)
+				if playlist and playlist.kind == "netease" then
+					if playlist.loading then
+						headText = "正在加载网易云歌单..."
+						detailText = "请稍候"
+					elseif playlist.error then
+						headText = "网易云歌单加载失败"
+						detailText = playlist.error
+					else
+						headText = "网易云歌单暂无歌曲"
+						detailText = "可能受版权或接口限制"
+					end
+				end
+			end
+			U.icon(empty, iconName, 22, T.Faint, {
 				AnchorPoint = Vector2.new(0.5, 0.5),
 				Position = UDim2.fromScale(0.5, 0.38),
 				Size = UDim2.fromOffset(24, 24),
 				TextTransparency = 0.35,
 			})
-			local emptyText = "这里还没有歌曲"
-			if state.view.kind == "liked" then
-				emptyText = "还没有喜欢的歌曲"
-			elseif state.view.kind == "search" then
-				emptyText = "没有找到匹配的歌曲"
-			end
 			U.label(empty, {
-				Text = emptyText,
+				Text = headText,
 				Font = F.Bold,
 				TextSize = 11,
 				TextColor3 = T.Muted,
@@ -17429,7 +18517,7 @@ function MusicPage.Build(page, config)
 				Size = UDim2.new(1, 0, 0, 16),
 			})
 			U.label(empty, {
-				Text = state.view.kind == "search" and "试试别的关键词" or "点右上角的 + 添加音频 ID",
+				Text = detailText,
 				TextSize = 9,
 				TextColor3 = T.Faint,
 				TextTransparency = 0.3,
@@ -17456,24 +18544,20 @@ function MusicPage.Build(page, config)
 	end
 
 	local function currentIds()
-		local ids = {}
 		if state.view.kind == "liked" then
 			return M:LikedIds()
 		elseif state.view.kind == "playlist" then
 			return M:PlaylistIds(currentPlaylist())
 		elseif state.view.kind == "search" then
-			local query = string.lower(state.query or "")
-			if query == "" then
-				return ids
-			end
-			for _, id in ipairs(M:OrderedIds()) do
-				local track = M.Tracks[id]
-				if track and string.find(string.lower(track.name .. " " .. track.artist .. " " .. track.album), query, 1, true) then
+			local ids = {}
+			for _, id in ipairs(M.SearchIds or {}) do
+				if M.Tracks[id] then
 					ids[#ids + 1] = id
 				end
 			end
+			return ids
 		end
-		return ids
+		return {}
 	end
 
 	local function viewTitle()
@@ -17501,42 +18585,61 @@ function MusicPage.Build(page, config)
 			c2 = "#4c1029"
 			subtitle = "收藏"
 		elseif state.view.kind == "search" then
-			subtitle = "搜索"
+			subtitle = "网易云搜索"
 		elseif playlist then
 			c1 = playlist.color1 or c1
 			c2 = playlist.color2 or c2
+			if playlist.kind == "netease" then
+				subtitle = "网易云歌单"
+			end
 		end
 		local total = 0
 		for _, id in ipairs(ids) do
-			total = total + (tonumber(M.Tracks[id].duration) or 0)
+			local track = M.Tracks[id]
+			total = total + (track and tonumber(track.duration) or 0)
 		end
 		local description
 		if state.view.kind == "search" then
-			description = "匹配 “" .. tostring(state.query) .. "” 的 " .. tostring(#ids) .. " 首歌曲"
+			if M.Searching then
+				description = "正在网易云搜索 “" .. tostring(state.query) .. "”..."
+			elseif M.SearchError and #ids == 0 then
+				description = M.SearchError
+			else
+				description = "网易云 · 匹配 “" .. tostring(state.query) .. "” 的 " .. tostring(#ids) .. " 首歌曲"
+			end
+		elseif playlist and playlist.kind == "netease" and playlist.loading and #ids == 0 then
+			description = "正在从网易云加载歌单..."
+		elseif playlist and playlist.kind == "netease" and #ids == 0 and playlist.error then
+			description = playlist.error
+		elseif playlist and playlist.kind == "netease" and #ids == 0 and not playlist.loaded then
+			description = "网易云歌单暂无歌曲"
 		else
 			description = tostring(#ids) .. " 首歌曲 · " .. musicFormatTime(total) .. " 时长"
+			if playlist and playlist.kind == "netease" and (tonumber(playlist.count) or 0) > #ids and #ids > 0 then
+				description = description .. " · 已加载前 " .. tostring(#ids) .. " 首 / 共 " .. tostring(playlist.count) .. " 首"
+			end
 		end
 		local function playAll()
 			if #ids == 0 then
-				notify("音乐", "这个歌单还没有歌曲", "music-note", T.Muted)
+				notify("网易云", playlist and playlist.loading and "歌单正在加载" or "这个歌单还没有歌曲", "music-note", T.Muted)
 				return
 			end
 			M:Play(ids[1], ids)
 		end
 		local function shuffleAll()
 			if #ids == 0 then
-				notify("音乐", "这个歌单还没有歌曲", "music-note", T.Muted)
+				notify("网易云", playlist and playlist.loading and "歌单正在加载" or "这个歌单还没有歌曲", "music-note", T.Muted)
 				return
 			end
 			M:SetShuffle(true)
 			M:Play(ids[math.random(1, #ids)], ids)
-			notify("音乐", "已开启乱序播放", "two-arrows-switch-right", T.Accent)
+			notify("网易云", "已开启乱序播放", "two-arrows-switch-right", T.Accent)
 		end
 		buildHeader(parent, {
 			title = viewTitle(),
 			subtitle = subtitle,
 			description = description,
-			creator = "Nerx Music · 本地曲库",
+			creator = playlist and playlist.kind == "netease" and (playlist.creator or "网易云音乐") or "Nerx Music · 网易云",
 			color1 = c1,
 			color2 = c2,
 			onPlay = playAll,
@@ -17592,7 +18695,7 @@ function MusicPage.Build(page, config)
 			Size = UDim2.new(1, -44, 0, 32),
 		})
 		U.label(head, {
-			Text = "推荐歌单",
+			Text = "网易云推荐歌单",
 			Font = F.Bold,
 			TextSize = 8,
 			TextColor3 = T.Faint,
@@ -17600,12 +18703,19 @@ function MusicPage.Build(page, config)
 			Position = UDim2.fromOffset(22, 54),
 			Size = UDim2.new(1, -44, 0, 12),
 		})
+		local refreshRecommended = circleButton(head, 0, 0, "arrow-spin-clockwise", function()
+			M:LoadRecommended(true)
+		end, 20)
+		refreshRecommended.AnchorPoint = Vector2.new(1, 0)
+		refreshRecommended.Position = UDim2.new(1, -22, 0, 48)
 
-		local playlists = {}
-		for _, playlist in ipairs(M.Playlists) do
-			if playlist.kind ~= "saved" then
-				playlists[#playlists + 1] = playlist
-			end
+		local playlists = M.Recommended or {}
+		if #playlists == 0 and not M.RecommendedLoading and not M.RecommendedError then
+			task.defer(function()
+				if canvas.Parent and state.view.kind == "home" then
+					M:LoadRecommended()
+				end
+			end)
 		end
 		local perRow = math.max(2, math.floor((MAIN_WIDTH - 36 + 16) / 144))
 		local cardWidth = 128
@@ -17621,13 +18731,22 @@ function MusicPage.Build(page, config)
 			LayoutOrder = 2,
 		})
 		if #playlists == 0 then
-			U.icon(grid, "music-note", 24, T.Faint, {
+			U.icon(grid, "cloud", 24, T.Faint, {
 				Position = UDim2.fromOffset(22, 10),
 				Size = UDim2.fromOffset(26, 26),
 				TextTransparency = 0.35,
 			})
+			local titleText = "正在连接网易云..."
+			local detailText = "正在获取推荐歌单"
+			if M.RecommendedError then
+				titleText = "网易云推荐获取失败"
+				detailText = M.RecommendedError
+			elseif not M.RecommendedLoading then
+				titleText = "还没有推荐歌单"
+				detailText = "点右侧刷新，或检查执行器 request / 网络"
+			end
 			U.label(grid, {
-				Text = "还没有歌单",
+				Text = titleText,
 				Font = F.Bold,
 				TextSize = 11,
 				TextColor3 = T.Muted,
@@ -17636,17 +18755,17 @@ function MusicPage.Build(page, config)
 				Size = UDim2.new(1, -80, 0, 16),
 			})
 			U.label(grid, {
-				Text = "新建歌单，然后把本地音频 ID 加进来。",
+				Text = detailText,
 				TextSize = 9,
 				TextColor3 = T.Faint,
 				TextTransparency = 0.25,
 				Position = UDim2.fromOffset(58, 28),
 				Size = UDim2.new(1, -80, 0, 14),
 			})
-			local create = actionButton(grid, 58, 52, 92, 24, "新建歌单", "plus-small", true, function()
-				openNewPlaylist(grid)
+			local retry = actionButton(grid, 58, 52, 92, 24, "重试", "arrow-spin-clockwise", true, function()
+				M:LoadRecommended(true)
 			end)
-			create.Visible = true
+			retry.Visible = true
 		else
 			for index, playlist in ipairs(playlists) do
 				local entry = playlist
@@ -17685,7 +18804,7 @@ function MusicPage.Build(page, config)
 					Size = UDim2.fromOffset(cardWidth, 14),
 				})
 				U.label(card, {
-					Text = tostring(#M:PlaylistIds(entry)) .. " 首歌曲",
+					Text = tostring(entry.creator or "网易云音乐") .. " · " .. tostring(entry.count or 0) .. " 首",
 					TextSize = 8,
 					TextColor3 = T.Faint,
 					TextTransparency = 0.25,
@@ -17693,7 +18812,10 @@ function MusicPage.Build(page, config)
 					Size = UDim2.fromOffset(cardWidth, 12),
 				})
 				local input = U.inputButton(card, function()
-					setView({ kind = "playlist", id = entry.id })
+					local playlist = M:OpenNeteasePlaylist(entry.netId, entry)
+					if playlist then
+						setView({ kind = "playlist", id = playlist.id })
+					end
 				end)
 				U.connect(input.MouseEnter, function()
 					badge.Visible = true
@@ -17748,7 +18870,7 @@ function MusicPage.Build(page, config)
 			Size = UDim2.new(1, 0, 0, 26),
 		})
 		U.label(head, {
-			Text = "播放行为、歌词与本地曲库",
+			Text = "播放行为、网易云账号与缓存",
 			TextSize = 9,
 			TextColor3 = T.Faint,
 			TextTransparency = 0.2,
@@ -17846,7 +18968,7 @@ function MusicPage.Build(page, config)
 		end)
 		settingsToggle.Root.Position = UDim2.fromOffset(100, 32)
 		U.label(lyricsCard, {
-			Text = "每首歌可导入 LRC（[mm:ss.xx]歌词|翻译），保存在本地曲库。",
+			Text = "每首歌自动获取网易云歌词；也可导入本地 LRC（[mm:ss.xx]歌词|翻译）。",
 			TextSize = 8.5,
 			TextColor3 = T.Faint,
 			TextTransparency = 0.2,
@@ -17854,79 +18976,104 @@ function MusicPage.Build(page, config)
 			Size = UDim2.new(1, -28, 0, 14),
 		})
 
-		local libraryCard = card(4, 132, "曲库")
-		U.label(libraryCard, {
-			Text = "添加歌曲",
+		local netCard = card(4, 190, "网易云")
+		U.label(netCard, {
+			Text = "账号 Cookie",
 			TextSize = 10,
 			TextColor3 = T.Muted,
 			TextTransparency = 0.15,
 			Position = UDim2.fromOffset(14, 32),
-			Size = UDim2.fromOffset(80, 26),
+			Size = UDim2.fromOffset(80, 28),
 		})
-		local quickAdd = W.Input(libraryCard, {
+		local cookieInput = W.Input(netCard, {
 			Width = 300,
 			Height = 28,
-			Placeholder = "输入 Roblox 音频 ID，例如 9046863048",
+			Placeholder = M.Settings.cookie ~= "" and "已保存 Cookie，输入新值覆盖" or "可选：MUSIC_U=...",
 		})
-		quickAdd.Root.Position = UDim2.fromOffset(100, 31)
-		quickAdd.Root.Size = UDim2.new(1, -196, 0, 28)
-		local addButton = W.Button(libraryCard, "添加", function()
-			local id = musicTrim(quickAdd:GetValue())
-			if not string.match(id, "^%d+$") then
-				notify("音乐", "请输入数字音频 ID", "triangle-exclamation", T.Amber)
+		cookieInput.Root.Position = UDim2.fromOffset(100, 31)
+		cookieInput.Root.Size = UDim2.new(1, -196, 0, 28)
+		local cookieButton = W.Button(netCard, "保存", function()
+			local value = musicTrim(cookieInput:GetValue())
+			if value == "" then
+				notify("网易云", "请先粘贴 MUSIC_U Cookie", "triangle-exclamation", T.Amber)
 				return
 			end
-			local track = M:AddTrack({ SoundId = id })
-			if track then
-				quickAdd:SetValue("", true)
-				notify("音乐", "已添加「" .. track.name .. "」", "plus-small", T.Green)
-			end
+			M:SetCookie(value)
+			cookieInput:SetValue("", true)
+			cookieInput.Box.PlaceholderText = "已保存 Cookie，输入新值覆盖"
+			M:VerifyCookie(function(ok, message)
+				if ok then
+					notify("网易云", "已登录：" .. tostring(message), "circle-check", T.Green)
+				else
+					notify("网易云", "Cookie 验证失败：" .. tostring(message), "triangle-exclamation", T.Amber)
+				end
+			end)
 		end)
-		addButton.Root.Position = UDim2.new(1, -88, 0, 31)
-		addButton.Root.Size = UDim2.fromOffset(74, 28)
-		U.label(libraryCard, {
-			Text = "本地数据",
+		cookieButton.Root.Position = UDim2.new(1, -88, 0, 31)
+		cookieButton.Root.Size = UDim2.fromOffset(74, 28)
+
+		U.label(netCard, {
+			Text = "推荐与缓存",
 			TextSize = 10,
 			TextColor3 = T.Muted,
 			TextTransparency = 0.15,
-			Position = UDim2.fromOffset(14, 74),
+			Position = UDim2.fromOffset(14, 70),
 			Size = UDim2.fromOffset(80, 26),
 		})
-		local exportButton = W.Button(libraryCard, "导出曲库", function()
-			local ok = M:Export()
-			if ok then
-				notify("音乐", "曲库 JSON 已复制到剪贴板", "floppy-disk", T.Green)
-			else
-				notify("音乐", "导出失败：执行器缺少剪贴板权限", "triangle-exclamation", T.Amber)
+		local refreshButton = W.Button(netCard, "刷新推荐", function()
+			M:LoadRecommended(true)
+			notify("网易云", "正在刷新推荐歌单", "arrow-spin-clockwise", T.Accent)
+		end)
+		refreshButton.Root.Position = UDim2.fromOffset(100, 69)
+		refreshButton.Root.Size = UDim2.fromOffset(88, 26)
+		local cacheButton = W.Button(netCard, "清空缓存", function()
+			local removed = M:ClearCache()
+			notify("网易云", "已清理 " .. tostring(removed) .. " 个音频缓存", "trash-can", T.Green)
+		end)
+		cacheButton.Root.Position = UDim2.fromOffset(196, 69)
+		cacheButton.Root.Size = UDim2.fromOffset(88, 26)
+
+		U.label(netCard, {
+			Text = "导入歌单",
+			TextSize = 10,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.15,
+			Position = UDim2.fromOffset(14, 104),
+			Size = UDim2.fromOffset(80, 28),
+		})
+		local importInput = W.Input(netCard, {
+			Width = 300,
+			Height = 28,
+			Placeholder = "歌单 ID 或 https://music.163.com/playlist?id=...",
+		})
+		importInput.Root.Position = UDim2.fromOffset(100, 103)
+		importInput.Root.Size = UDim2.new(1, -196, 0, 28)
+		local importPlaylistButton = W.Button(netCard, "导入", function()
+			local text = musicTrim(importInput:GetValue())
+			local netId = string.match(text, "id=(%d+)")
+				or string.match(text, "/playlist/(%d+)")
+				or string.match(text, "^%s*(%d+)%s*$")
+			if not netId then
+				notify("网易云", "无法识别歌单 ID", "triangle-exclamation", T.Amber)
+				return
+			end
+			local playlist = M:OpenNeteasePlaylist(netId, { name = "网易云歌单 " .. netId })
+			if playlist then
+				importInput:SetValue("", true)
+				setView({ kind = "playlist", id = playlist.id })
+				notify("网易云", "正在从网易云加载歌单...", "cloud-arrow-down", T.Accent)
 			end
 		end)
-		exportButton.Root.Position = UDim2.fromOffset(100, 73)
-		exportButton.Root.Size = UDim2.fromOffset(86, 26)
-		local libraryImportButton
-		libraryImportButton = W.Button(libraryCard, "导入", function()
-			UIHelpers.ImportPrompt(libraryImportButton.Root, {
-				Title = "导入曲库",
-				Placeholder = "粘贴导出的 music.json 内容...",
-				Submit = "导入",
-				OnSubmit = function(text)
-					if M:Import(text) then
-						notify("音乐", "曲库已导入", "cloud-arrow-down", T.Green)
-						setView({ kind = "home" })
-					else
-						notify("音乐", "导入失败：无法解析 JSON", "triangle-exclamation", T.Amber)
-					end
-				end,
-			})
-		end)
-		libraryImportButton.Root.Position = UDim2.fromOffset(192, 73)
-		libraryImportButton.Root.Size = UDim2.fromOffset(70, 26)
-		U.label(libraryCard, {
-			Text = "提示：右键歌曲可导入歌词、添加到歌单或喜欢。",
+		importPlaylistButton.Root.Position = UDim2.new(1, -88, 0, 103)
+		importPlaylistButton.Root.Size = UDim2.fromOffset(74, 28)
+		U.label(netCard, {
+			Text = "播放需要执行器支持 request / writefile / getcustomasset；VIP 或版权歌曲取决于 Cookie。缓存目录：" .. tostring(M.CacheDir),
 			TextSize = 8.5,
 			TextColor3 = T.Faint,
 			TextTransparency = 0.2,
-			Position = UDim2.fromOffset(100, 102),
-			Size = UDim2.new(1, -114, 0, 14),
+			Position = UDim2.fromOffset(14, 142),
+			Size = UDim2.new(1, -28, 0, 32),
+			TextWrapped = true,
 		})
 
 		local aboutCard = card(5, 92, "关于")
@@ -17955,7 +19102,7 @@ function MusicPage.Build(page, config)
 			Size = UDim2.fromOffset(80, 20),
 		})
 		U.label(aboutCard, {
-			Text = "Sound · 客户端本地播放，不经过服务器",
+			Text = "网易云 MP3 · 下载到本地缓存后交给 Sound 播放",
 			TextSize = 8.5,
 			TextColor3 = T.Faint,
 			TextTransparency = 0.15,
@@ -18012,19 +19159,34 @@ function MusicPage.Build(page, config)
 
 	U.connect(searchBox:GetPropertyChangedSignal("Text"), function()
 		local query = musicTrim(searchBox.Text)
+		state.searchToken = (state.searchToken or 0) + 1
+		local token = state.searchToken
 		if query ~= "" then
 			if state.view.kind ~= "search" then
 				state.lastView = state.view
 			end
 			state.query = query
 			state.view = { kind = "search" }
+			M.SearchIds = {}
+			M.SearchQuery = query
+			M.Searching = true
+			M.SearchError = nil
 			if closeCoverflow then
 				closeCoverflow()
 			end
 			renderRail()
 			renderMain()
+			task.delay(0.35, function()
+				if token ~= state.searchToken then
+					return
+				end
+				if canvas.Parent then
+					M:SearchNetease(query)
+				end
+			end)
 		elseif state.view.kind == "search" then
 			state.query = ""
+			M:SearchNetease("")
 			local target = state.lastView or { kind = "home" }
 			if target.kind == "playlist" and not M:GetPlaylist(target.id) then
 				target = { kind = "home" }
@@ -18038,6 +19200,29 @@ function MusicPage.Build(page, config)
 	-- -----------------------------------------------------------------------------------
 	-- Popups / context menu
 	-- -----------------------------------------------------------------------------------
+	openImportPlaylist = function(anchor)
+		UIHelpers.InputPrompt(anchor, {
+			Title = "导入网易云歌单",
+			Placeholder = "歌单 ID 或 https://music.163.com/playlist?id=...",
+			Submit = "导入",
+			Attribute = "NerxMusic",
+			OnSubmit = function(text)
+				local netId = string.match(text, "id=(%d+)")
+					or string.match(text, "/playlist/(%d+)")
+					or string.match(text, "^%s*(%d+)%s*$")
+				if not netId then
+					notify("网易云", "无法识别歌单 ID", "triangle-exclamation", T.Amber)
+					return
+				end
+				local playlist = M:OpenNeteasePlaylist(netId, { name = "网易云歌单 " .. netId })
+				if playlist then
+					setView({ kind = "playlist", id = playlist.id })
+					notify("网易云", "正在从网易云加载歌单...", "cloud-arrow-down", T.Accent)
+				end
+			end,
+		})
+	end
+
 	openNewPlaylist = function(anchor)
 		UIHelpers.InputPrompt(anchor, {
 			Title = "新建歌单",
@@ -18259,14 +19444,34 @@ function MusicPage.Build(page, config)
 					openAddToPlaylist(anchor, trackId)
 				end,
 			},
-			{
+		}
+		if track.source == "netease" then
+			items[#items + 1] = {
+				Text = "复制网易云链接",
+				Callback = function()
+					Nerx.Storage:Copy("https://music.163.com/song?id=" .. tostring(track.netId))
+					notify("网易云", "歌曲链接已复制", "floppy-disk", T.Green)
+				end,
+			}
+			items[#items + 1] = {
+				Text = "重新获取歌词",
+				Callback = function()
+					track.lyrics = ""
+					track.lyricsLoaded = false
+					track.lyricsError = nil
+					M:FetchNeteaseLyrics(trackId)
+					notify("网易云", "正在重新获取歌词", "document-list-heart", T.Accent)
+				end,
+			}
+		else
+			items[#items + 1] = {
 				Text = "导入歌词 (LRC)",
 				Callback = function()
 					openLrcImport(anchor, trackId)
 				end,
-			},
-		}
-		if playlist then
+			}
+		end
+		if playlist and playlist.kind ~= "netease" then
 			local contains = false
 			for _, id in ipairs(playlist.trackIds) do
 				if id == trackId then
@@ -18343,8 +19548,16 @@ function MusicPage.Build(page, config)
 			makeArt(playerCoverHost, UDim2.fromScale(1, 1), track and track.color1 or "#2a2d34", track and track.color2 or "#111216", 4)
 		end
 		playerTitle.Text = track and track.name or "未播放"
-		playerArtist.Text = track and (track.artist .. " — " .. track.album) or "选择一首歌曲开始"
-		playIcon.Text = M.Playing and "pause-small" or "play-small"
+		if track then
+			if M.Loading then
+				playerArtist.Text = "正在从网易云加载音频..."
+			else
+				playerArtist.Text = track.artist .. " — " .. track.album
+			end
+		else
+			playerArtist.Text = "选择一首歌曲开始"
+		end
+		playIcon.Text = M.Loading and "arrow-spin-clockwise" or (M.Playing and "pause-small" or "play-small")
 		shuffleIcon.TextColor3 = M.Settings.shuffle and T.Accent or T.Muted
 		shuffleIcon.TextTransparency = M.Settings.shuffle and 0.02 or 0.15
 		shuffleDot.Visible = M.Settings.shuffle
@@ -18618,7 +19831,7 @@ function MusicPage.Build(page, config)
 		lyricsSlider:Set(ratio, true)
 		lyricsTimeCurrent.Text = musicFormatTime(position)
 		lyricsTimeRemaining.Text = "-" .. musicFormatTime(math.max(0, duration - position))
-		lyricsPlayIcon.Text = M.Playing and "pause-large" or "play-large"
+		lyricsPlayIcon.Text = M.Loading and "arrow-spin-clockwise" or (M.Playing and "pause-large" or "play-large")
 		if state.lyricLoading then
 			return
 		end
@@ -18666,7 +19879,7 @@ function MusicPage.Build(page, config)
 		makeArt(lyricsCoverHolder, UDim2.fromScale(1, 1), c1, c2, 7, nil, true)
 		lyricsTitle.Text = track and track.name or "—"
 		lyricsArtist.Text = track and (track.artist .. " — " .. track.album) or "还没有播放中的歌曲"
-		lyricsPlayIcon.Text = M.Playing and "pause-large" or "play-large"
+		lyricsPlayIcon.Text = M.Loading and "arrow-spin-clockwise" or (M.Playing and "pause-large" or "play-large")
 		lyricsTimeCurrent.Text = "00:00"
 		lyricsTimeRemaining.Text = "-00:00"
 		lyricsSlider:Set(0, true)
@@ -18688,10 +19901,31 @@ function MusicPage.Build(page, config)
 			lyricsHint.Visible = true
 			return
 		end
+		if track.source == "netease" then
+			if track.lyrics == "" and not track.lyricsLoaded and not track.lyricsLoading then
+				M:FetchNeteaseLyrics(track.id)
+			end
+			if track.lyricsLoading then
+				state.lyricLoading = false
+				lyricsHint.Text = "正在获取网易云歌词..."
+				lyricsHint.Visible = true
+				return
+			end
+			if track.lyrics == "" and track.lyricsError then
+				state.lyricLoading = false
+				lyricsHint.Text = "网易云歌词获取失败：" .. tostring(track.lyricsError)
+				lyricsHint.Visible = true
+				return
+			end
+		end
 		local entries = musicParseLrc(track.lyrics)
 		if #entries == 0 then
 			state.lyricLoading = false
-			lyricsHint.Text = "暂无歌词 · 关闭后可右键歌曲导入 LRC"
+			if track.source == "netease" then
+				lyricsHint.Text = "网易云暂无歌词"
+			else
+				lyricsHint.Text = "暂无歌词 · 关闭后可右键歌曲导入 LRC"
+			end
 			lyricsHint.Visible = true
 			return
 		end
@@ -19002,14 +20236,30 @@ function MusicPage.Build(page, config)
 			end
 		elseif kind == "state" then
 			renderPlayer()
+		elseif kind == "search" then
+			if state.view.kind == "search" then
+				renderMain()
+			end
+		elseif kind == "recommended" then
+			if state.view.kind == "home" then
+				renderMain()
+			end
+		elseif kind == "account" then
+			renderRail()
+		elseif kind == "lyrics" then
+			if state.lyricsOpen then
+				renderLyrics(true)
+			end
 		elseif kind == "settings" then
 			renderPlayer()
 			if settingsSync then
 				settingsSync()
 			end
 		elseif kind == "loadfail" then
-			local name = payload and payload.name or "音频"
-			notify("音乐加载失败", "无法播放「" .. tostring(name) .. "」，请检查音频 ID", "triangle-exclamation", T.Amber)
+			local track = payload and payload.track or payload
+			local message = payload and payload.message
+			local name = track and track.name or "音频"
+			notify("网易云播放失败", message or ("无法播放「" .. tostring(name) .. "」"), "triangle-exclamation", T.Amber)
 		end
 	end)
 
@@ -19017,6 +20267,9 @@ function MusicPage.Build(page, config)
 	renderMain()
 	renderPlayer()
 	syncVolumeUI(M.Settings.volume)
+	if M.Settings.cookie ~= "" then
+		M:VerifyCookie()
+	end
 	task.spawn(function()
 		while canvas.Parent do
 			task.wait(0.1)
