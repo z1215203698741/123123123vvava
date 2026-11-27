@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.3.28
+	Nerx UI Library · v1.3.29
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.3.28"
+Nerx.Version = "1.3.29"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -16106,7 +16106,7 @@ function MusicPage.Build(page, config)
 		windowHeight = window.Size.Y.Offset > 0 and window.Size.Y.Offset or 700
 	end
 
-	local RAIL_WIDTH = 188
+	local RAIL_WIDTH = 164
 	local PLAYER_HEIGHT = 56
 	local SHELL_WIDTH = math.max(360, windowWidth - 240)
 	local SHELL_HEIGHT = math.max(300, windowHeight - 88)
@@ -16693,7 +16693,13 @@ function MusicPage.Build(page, config)
 		if not railScroll.Parent then
 			return
 		end
-		railScroll:ClearAllChildren()
+		-- Keep the UIListLayout: ClearAllChildren would destroy it and stack every
+		-- rail row at (0, 0), which made the whole rail look like one garbled row.
+		for _, child in ipairs(railScroll:GetChildren()) do
+			if not child:IsA("UIListLayout") then
+				child:Destroy()
+			end
+		end
 		local order = 0
 		local function nextOrder()
 			order = order + 1
@@ -17605,7 +17611,8 @@ function MusicPage.Build(page, config)
 		local cardWidth = 128
 		local cardHeight = 160
 		local gap = 16
-		local startX = 18
+		local gridWidth = perRow * cardWidth + (perRow - 1) * gap
+		local startX = math.max(18, (MAIN_WIDTH - gridWidth) / 2)
 		local rows = math.max(1, math.ceil(#playlists / perRow))
 		local grid = U.frame(content, {
 			BackgroundTransparency = 1,
@@ -17717,19 +17724,19 @@ function MusicPage.Build(page, config)
 			ScrollingDirection = Enum.ScrollingDirection.Y,
 			ElasticBehavior = Enum.ElasticBehavior.Never,
 		}, parent)
-		U.padding(scroll, 18, 20, 24, 20)
+		U.padding(scroll, 18, 0, 24, 0)
 		local content = U.frame(scroll, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			Size = UDim2.new(1, 0, 0, 0),
 			AutomaticSize = Enum.AutomaticSize.Y,
 		})
-		U.list(content, 10)
+		U.list(content, 10, Enum.HorizontalAlignment.Center, Enum.VerticalAlignment.Top)
 
 		local head = U.frame(content, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Size = UDim2.new(1, 0, 0, 54),
+			Size = UDim2.new(1, -40, 0, 54),
 			LayoutOrder = 1,
 		})
 		U.label(head, {
@@ -17754,7 +17761,7 @@ function MusicPage.Build(page, config)
 				BackgroundColor3 = T.SurfaceRaised,
 				BackgroundTransparency = 0.55,
 				BorderSizePixel = 0,
-				Size = UDim2.new(1, 0, 0, height),
+				Size = UDim2.new(1, -40, 0, height),
 				LayoutOrder = order,
 			})
 			U.corner(root, 7)
