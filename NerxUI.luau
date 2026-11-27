@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.3.20
+	Nerx UI Library · v1.3.28
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.3.26"
+Nerx.Version = "1.3.28"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -12584,6 +12584,11 @@ function UIHelpers.InputPrompt(anchor, config)
 	end
 
 	U.popup(anchor, 278, 124, function(card)
+		if config.Attribute then
+			pcall(function()
+				card:SetAttribute(config.Attribute, true)
+			end)
+		end
 		U.padding(card, 12, 12, 12, 12)
 		U.label(card, {
 			Text = config.Title or "Name",
@@ -14674,7 +14679,38 @@ function ConfigPage.Build(page, config)
 	local renderConfigList
 	local refreshBanner
 
-	titleText(configs, "Configs")
+	local configsTitle = titleText(configs, "Configs")
+	local configCountBadge = U.frame(configs, {
+		BackgroundColor3 = T.Field,
+		BackgroundTransparency = 0.15,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(66, 5),
+		Size = UDim2.fromOffset(24, 18),
+	})
+	U.corner(configCountBadge, 6)
+	local configCountLabel = U.label(configCountBadge, {
+		Text = "0",
+		TextSize = 9,
+		TextColor3 = T.Muted,
+		TextTransparency = 0.2,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Size = UDim2.fromScale(1, 1),
+	})
+	local function setConfigCount(count)
+		local text = tostring(count)
+		configCountLabel.Text = text
+		configCountBadge.Size = UDim2.fromOffset(U.measure(text, 9, F.Regular).X + 16, 18)
+	end
+	-- The title text is swapped by Locale when the menu language changes,
+	-- so the badge follows the measured width instead of a fixed offset.
+	local function layoutConfigCount()
+		local titleWidth = U.measure(tostring(configsTitle.Text or ""), 15, F.Bold).X + 2
+		configCountBadge.Position = UDim2.fromOffset(titleWidth + 8, 5)
+	end
+	layoutConfigCount()
+	U.connect(configsTitle:GetPropertyChangedSignal("Text"), function()
+		layoutConfigCount()
+	end)
 	local configFilter = filterField(configs, 100, 0, 154, "Filter configs...")
 	local configSort = W.Segmented(configs, {
 		Width = 116,
@@ -15025,7 +15061,7 @@ function ConfigPage.Build(page, config)
 		end)
 	end
 
-	local function renderConfigList()
+	function renderConfigList()
 		for _, entry in ipairs(configCards) do
 			if entry.Card and entry.Card.Parent then
 				entry.Card:Destroy()
@@ -15040,6 +15076,7 @@ function ConfigPage.Build(page, config)
 			drawConfigCard(index, record)
 		end
 		configEmpty.Visible = #list == 0
+	setConfigCount(#Nerx.Configs:List())
 	end
 
 	refreshBanner = function()
@@ -15162,6 +15199,3827 @@ function ConfigPage.Build(page, config)
 		end
 		lastBannerRefresh = now
 		pcall(refreshBanner)
+	end)
+end
+
+-- ---------------------------------------------------------------------------------------
+-- Music: local library store, Sound playback, lyrics and the full Music tab
+-- ---------------------------------------------------------------------------------------
+Nerx.Music = {}
+local Music = Nerx.Music
+
+local MUSIC_STORE_FILE = "music.json"
+local MUSIC_ART_PALETTE = {
+	{ "#ff5d8f", "#4c1029" },
+	{ "#5ab0ff", "#10263d" },
+	{ "#8d7bff", "#241a52" },
+	{ "#41c9b0", "#0d3a35" },
+	{ "#ffb45e", "#4a260d" },
+	{ "#ff7a5e", "#4a1a12" },
+	{ "#c46bff", "#34114f" },
+	{ "#5ed0ff", "#0d3247" },
+	{ "#6ee08c", "#0f3a22" },
+	{ "#ff7d9c", "#451326" },
+	{ "#f2c15b", "#473312" },
+	{ "#69cdff", "#0d3247" },
+}
+
+local function musicTrim(text)
+	return tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+local function musicNormalizeSoundId(value)
+	local text = tostring(value or ""):gsub("%s", "")
+	text = text:gsub("^rbxassetid://", "")
+	local extracted = string.match(text, "id=(%d+)")
+	if extracted then
+		text = extracted
+	end
+	if string.match(text, "^%d+$") then
+		return text
+	end
+	return nil
+end
+
+local function musicParseHex(value, fallback)
+	local hex = tostring(value or ""):gsub("#", "")
+	if #hex == 6 then
+		local r = tonumber(string.sub(hex, 1, 2), 16)
+		local g = tonumber(string.sub(hex, 3, 4), 16)
+		local b = tonumber(string.sub(hex, 5, 6), 16)
+		if r and g and b then
+			return Color3.fromRGB(r, g, b)
+		end
+	end
+	return fallback or Theme.SurfaceRaised
+end
+
+local function musicLuminance(color)
+	return 0.299 * color.R + 0.587 * color.G + 0.114 * color.B
+end
+
+local function musicArtColors(seed)
+	seed = tostring(seed or "")
+	local hash = 0
+	for index = 1, #seed do
+		hash = (hash * 31 + string.byte(seed, index)) % 100000
+	end
+	local entry = MUSIC_ART_PALETTE[(hash % #MUSIC_ART_PALETTE) + 1]
+	return entry[1], entry[2]
+end
+
+local function musicFormatTime(seconds)
+	seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+	return string.format("%02d:%02d", math.floor(seconds / 60), seconds % 60)
+end
+
+local function musicParseLrc(raw)
+	local entries = {}
+	for line in tostring(raw or ""):gmatch("[^\r\n]+") do
+		local body = string.match(line, "^.*%](.*)$") or ""
+		body = musicTrim(body)
+		local mainText, translation = string.match(body, "^(.-)|(.*)$")
+		mainText = musicTrim(mainText)
+		translation = musicTrim(translation)
+		if mainText ~= "" or translation ~= "" then
+			for minutes, seconds, fraction in string.gmatch(line, "%[(%d+):(%d+)%.?(%d*)%]") do
+				local time = (tonumber(minutes) or 0) * 60 + (tonumber(seconds) or 0)
+				if fraction and fraction ~= "" then
+					time = time + (tonumber("0." .. fraction) or 0)
+				end
+				entries[#entries + 1] = { Time = time, Text = mainText, Trans = translation }
+			end
+		end
+	end
+	table.sort(entries, function(a, b)
+		return a.Time < b.Time
+	end)
+	return entries
+end
+
+local function musicNormalizeData(decoded)
+	local data = type(decoded) == "table" and decoded or {}
+	data.version = 1
+
+	local rawTracks = type(data.tracks) == "table" and data.tracks or {}
+	local tracks = {}
+	for key, value in pairs(rawTracks) do
+		if type(value) == "table" then
+			local id = tostring(value.id or key)
+			local soundId = musicNormalizeSoundId(value.soundId) or tostring(value.soundId or ""):gsub("%s", "")
+			local name = musicTrim(value.name)
+			if name == "" then
+				name = "Sound " .. soundId
+			end
+			local artist = musicTrim(value.artist)
+			if artist == "" then
+				artist = "未知歌手"
+			end
+			local album = musicTrim(value.album)
+			if album == "" then
+				album = "本地曲库"
+			end
+			local c1, c2 = musicArtColors(name .. soundId)
+			value.id = id
+			value.soundId = soundId
+			value.name = name
+			value.artist = artist
+			value.album = album
+			value.duration = tonumber(value.duration) or 0
+			value.liked = value.liked == true
+			value.lyrics = type(value.lyrics) == "string" and value.lyrics or ""
+			value.color1 = type(value.color1) == "string" and value.color1 or c1
+			value.color2 = type(value.color2) == "string" and value.color2 or c2
+			value.addedAt = tonumber(value.addedAt) or 0
+			tracks[id] = value
+		end
+	end
+	data.tracks = tracks
+
+	local order = {}
+	local seenOrder = {}
+	for _, id in ipairs(type(data.order) == "table" and data.order or {}) do
+		id = tostring(id)
+		if tracks[id] and not seenOrder[id] then
+			seenOrder[id] = true
+			order[#order + 1] = id
+		end
+	end
+	for id in pairs(tracks) do
+		if not seenOrder[id] then
+			seenOrder[id] = true
+			order[#order + 1] = id
+		end
+	end
+	data.order = order
+
+	local playlists = {}
+	for index, value in ipairs(type(data.playlists) == "table" and data.playlists or {}) do
+		if type(value) == "table" then
+			local ids = {}
+			local used = {}
+			for _, trackId in ipairs(type(value.trackIds) == "table" and value.trackIds or {}) do
+				trackId = tostring(trackId)
+				if tracks[trackId] and not used[trackId] then
+					used[trackId] = true
+					ids[#ids + 1] = trackId
+				end
+			end
+			local name = musicTrim(value.name)
+			if name == "" then
+				name = "歌单 " .. tostring(index)
+			end
+			local c1, c2 = musicArtColors(name)
+			playlists[#playlists + 1] = {
+				id = tostring(value.id or ("pl_" .. tostring(index))),
+				name = name,
+				kind = value.kind == "saved" and "saved" or "custom",
+				trackIds = ids,
+				color1 = type(value.color1) == "string" and value.color1 or c1,
+				color2 = type(value.color2) == "string" and value.color2 or c2,
+				created = tonumber(value.created) or 0,
+			}
+		end
+	end
+	if #playlists == 0 then
+		local c1, c2 = musicArtColors("默认歌单")
+		playlists[1] = {
+			id = "pl_default",
+			name = "默认歌单",
+			kind = "custom",
+			trackIds = {},
+			color1 = c1,
+			color2 = c2,
+			created = os.time(),
+		}
+	end
+	data.playlists = playlists
+
+	local settings = type(data.settings) == "table" and data.settings or {}
+	data.settings = {
+		volume = math.clamp(tonumber(settings.volume) or 0.72, 0, 1),
+		mode = (settings.mode == "order" or settings.mode == "one") and settings.mode or "all",
+		shuffle = settings.shuffle == true,
+		showTranslation = settings.showTranslation ~= false,
+	}
+
+	local history = {}
+	for _, id in ipairs(type(data.history) == "table" and data.history or {}) do
+		id = tostring(id)
+		if tracks[id] then
+			history[#history + 1] = id
+			if #history >= 50 then
+				break
+			end
+		end
+	end
+	data.history = history
+	return data
+end
+
+function Music:Init()
+	if self.Data then
+		return self
+	end
+	local data = musicNormalizeData(Nerx.Storage:ReadJSON(MUSIC_STORE_FILE))
+	self.Data = data
+	self.Tracks = data.tracks
+	self.Playlists = data.playlists
+	self.Settings = data.settings
+	self.Order = data.order
+	self.Listeners = {}
+	self.Queue = {}
+	self.QueueIndex = 0
+	self.CurrentId = nil
+	self.Playing = false
+	self.Loading = false
+	self.NextId = nil
+	self.LoadToken = 0
+	self.Sound = nil
+
+	local ok = pcall(function()
+		local sound = Instance.new("Sound")
+		sound.Name = "NerxMusicPlayer"
+		sound.Volume = self.Settings.volume
+		sound.Looped = false
+		sound.Parent = game:GetService("SoundService")
+		self.Sound = sound
+	end)
+	if not ok then
+		self.Sound = nil
+	end
+	if self.Sound then
+		U.connect(self.Sound.Ended, function()
+			self:_HandleEnded()
+		end)
+	end
+	return self
+end
+
+function Music:Save()
+	if not self.Data then
+		return
+	end
+	self.Data.tracks = self.Tracks
+	self.Data.playlists = self.Playlists
+	self.Data.settings = self.Settings
+	self.Data.order = self.Order
+	Nerx.Storage:WriteJSON(MUSIC_STORE_FILE, self.Data)
+end
+
+function Music:Subscribe(callback)
+	self.Listeners = self.Listeners or {}
+	table.insert(self.Listeners, callback)
+	return callback
+end
+
+function Music:_Emit(kind, payload)
+	for _, listener in ipairs(self.Listeners or {}) do
+		pcall(listener, kind, payload)
+	end
+end
+
+function Music:GetTrack(id)
+	return self.Tracks[tostring(id or "")]
+end
+
+function Music:GetPlaylist(id)
+	for _, playlist in ipairs(self.Playlists or {}) do
+		if playlist.id == id then
+			return playlist
+		end
+	end
+	return nil
+end
+
+function Music:OrderedIds()
+	local ids = {}
+	local seen = {}
+	for _, id in ipairs(self.Order or {}) do
+		if self.Tracks[id] and not seen[id] then
+			seen[id] = true
+			ids[#ids + 1] = id
+		end
+	end
+	for id in pairs(self.Tracks) do
+		if not seen[id] then
+			ids[#ids + 1] = id
+		end
+	end
+	return ids
+end
+
+function Music:LikedIds()
+	local ids = {}
+	for _, id in ipairs(self:OrderedIds()) do
+		local track = self.Tracks[id]
+		if track and track.liked then
+			ids[#ids + 1] = id
+		end
+	end
+	return ids
+end
+
+function Music:PlaylistIds(playlist)
+	local ids = {}
+	if not playlist then
+		return ids
+	end
+	for _, id in ipairs(playlist.trackIds or {}) do
+		if self.Tracks[id] then
+			ids[#ids + 1] = id
+		end
+	end
+	return ids
+end
+
+function Music:AddTrack(config)
+	config = config or {}
+	local soundId = musicNormalizeSoundId(config.SoundId or config.soundId)
+	if not soundId then
+		return nil
+	end
+	local name = musicTrim(config.Name or config.name)
+	if name == "" then
+		name = "Sound " .. soundId
+	end
+	local artist = musicTrim(config.Artist or config.artist)
+	if artist == "" then
+		artist = "未知歌手"
+	end
+	local id = "tr_" .. tostring(os.time()) .. "_" .. tostring(#self.Order + 1)
+	while self.Tracks[id] do
+		id = id .. "x"
+	end
+	local c1, c2 = musicArtColors(name .. soundId)
+	local track = {
+		id = id,
+		soundId = soundId,
+		name = name,
+		artist = artist,
+		album = musicTrim(config.Album) ~= "" and musicTrim(config.Album) or "本地曲库",
+		duration = tonumber(config.Duration) or 210,
+		liked = false,
+		lyrics = "",
+		color1 = c1,
+		color2 = c2,
+		addedAt = os.time(),
+	}
+	self.Tracks[id] = track
+	table.insert(self.Order, 1, id)
+	local playlistId = config.PlaylistId
+	if not playlistId then
+		local first = self.Playlists[1]
+		playlistId = first and first.id or nil
+	end
+	if playlistId then
+		self:AddToPlaylist(playlistId, id)
+	end
+	self:Save()
+	self:_Emit("library", track)
+	return track
+end
+
+function Music:AddPlaylist(name)
+	name = musicTrim(name)
+	if name == "" then
+		return nil
+	end
+	local c1, c2 = musicArtColors(name .. tostring(os.time()))
+	local playlist = {
+		id = "pl_" .. tostring(os.time()) .. "_" .. tostring(math.random(100, 999)),
+		name = name,
+		kind = "custom",
+		trackIds = {},
+		color1 = c1,
+		color2 = c2,
+		created = os.time(),
+	}
+	while self:GetPlaylist(playlist.id) do
+		playlist.id = playlist.id .. "x"
+	end
+	table.insert(self.Playlists, playlist)
+	self:Save()
+	self:_Emit("library", playlist)
+	return playlist
+end
+
+function Music:RenamePlaylist(id, name)
+	name = musicTrim(name)
+	local playlist = self:GetPlaylist(id)
+	if not playlist or name == "" then
+		return false
+	end
+	playlist.name = name
+	self:Save()
+	self:_Emit("library", playlist)
+	return true
+end
+
+function Music:DeletePlaylist(id)
+	for index, playlist in ipairs(self.Playlists) do
+		if playlist.id == id then
+			table.remove(self.Playlists, index)
+			self:Save()
+			self:_Emit("library", nil)
+			return true
+		end
+	end
+	return false
+end
+
+function Music:AddToPlaylist(playlistId, trackId)
+	local playlist = self:GetPlaylist(playlistId)
+	if not playlist or not self.Tracks[trackId] then
+		return false
+	end
+	for _, id in ipairs(playlist.trackIds) do
+		if id == trackId then
+			return false
+		end
+	end
+	table.insert(playlist.trackIds, 1, trackId)
+	self:Save()
+	self:_Emit("library", playlist)
+	return true
+end
+
+function Music:RemoveFromPlaylist(playlistId, trackId)
+	local playlist = self:GetPlaylist(playlistId)
+	if not playlist then
+		return false
+	end
+	for index, id in ipairs(playlist.trackIds) do
+		if id == trackId then
+			table.remove(playlist.trackIds, index)
+			self:Save()
+			self:_Emit("library", playlist)
+			return true
+		end
+	end
+	return false
+end
+
+function Music:ToggleLike(id)
+	local track = self.Tracks[id]
+	if not track then
+		return false, false
+	end
+	track.liked = not track.liked
+	self:Save()
+	self:_Emit("library", track)
+	return true, track.liked
+end
+
+function Music:SetLyrics(id, raw)
+	local track = self.Tracks[id]
+	if not track then
+		return false
+	end
+	track.lyrics = tostring(raw or "")
+	self:Save()
+	self:_Emit("library", track)
+	return true
+end
+
+function Music:QueueNext(id)
+	if self.Tracks[id] then
+		self.NextId = id
+		return true
+	end
+	return false
+end
+
+function Music:Play(id, queueIds)
+	local track = self.Tracks[tostring(id or "")]
+	if not track then
+		return false
+	end
+	if queueIds then
+		local queue = {}
+		local seen = {}
+		for _, value in ipairs(queueIds) do
+			value = tostring(value)
+			if self.Tracks[value] and not seen[value] then
+				seen[value] = true
+				queue[#queue + 1] = value
+			end
+		end
+		self.Queue = queue
+		self.QueueIndex = 0
+		for index, value in ipairs(queue) do
+			if value == track.id then
+				self.QueueIndex = index
+				break
+			end
+		end
+	end
+	if #self.Queue == 0 then
+		local index = 0
+		for position, value in ipairs(self:OrderedIds()) do
+			self.Queue[#self.Queue + 1] = value
+			if value == track.id then
+				index = position
+			end
+		end
+		self.QueueIndex = index
+	end
+	self.CurrentId = track.id
+	self.NextId = nil
+	self.Data.history = self.Data.history or {}
+	for index = #self.Data.history, 1, -1 do
+		if self.Data.history[index] == track.id then
+			table.remove(self.Data.history, index)
+		end
+	end
+	table.insert(self.Data.history, 1, track.id)
+	while #self.Data.history > 50 do
+		table.remove(self.Data.history)
+	end
+	self:_Load(track)
+	self:_Emit("track", track)
+	return true
+end
+
+function Music:_Load(track)
+	local sound = self.Sound
+	self.LoadToken = (self.LoadToken or 0) + 1
+	local token = self.LoadToken
+	if not sound then
+		return
+	end
+	if tostring(track.soundId or "") == "" then
+		self.Playing = false
+		self.Loading = false
+		pcall(function()
+			sound:Stop()
+		end)
+		task.defer(function()
+			self:_Emit("loadfail", track)
+		end)
+		return
+	end
+	pcall(function()
+		sound:Stop()
+	end)
+	pcall(function()
+		sound.TimePosition = 0
+	end)
+	sound.SoundId = "rbxassetid://" .. tostring(track.soundId)
+	sound.Volume = self.Settings.volume
+	self.Playing = true
+	self.Loading = true
+	local played = pcall(function()
+		sound:Play()
+	end)
+	if not played then
+		self.Playing = false
+	end
+	self:_Emit("state")
+	task.spawn(function()
+		local waited = 0
+		while waited < 8 and self.LoadToken == token do
+			if sound.TimeLength > 0 then
+				break
+			end
+			task.wait(0.1)
+			waited = waited + 0.1
+		end
+		if self.LoadToken ~= token then
+			return
+		end
+		self.Loading = false
+		if sound.TimeLength > 0 then
+			local duration = tonumber(sound.TimeLength) or 0
+			if duration > 0 and math.abs((tonumber(track.duration) or 0) - duration) > 0.05 then
+				track.duration = duration
+				self:Save()
+				self:_Emit("library", track)
+			end
+			self.Playing = sound.IsPlaying
+		else
+			self.Playing = false
+			pcall(function()
+				sound:Stop()
+			end)
+			self:_Emit("loadfail", track)
+		end
+		self:_Emit("state")
+	end)
+end
+
+function Music:Toggle()
+	if not self.CurrentId then
+		local ids = self.Queue
+		if #ids == 0 then
+			ids = self:OrderedIds()
+		end
+		if #ids == 0 then
+			return false
+		end
+		return self:Play(ids[1], ids)
+	end
+	local sound = self.Sound
+	if not sound then
+		return false
+	end
+	if self.Playing then
+		pcall(function()
+			sound:Pause()
+		end)
+		self.Playing = false
+	else
+		if sound.TimeLength <= 0 then
+			local track = self.Tracks[self.CurrentId]
+			if track then
+				self:_Load(track)
+				return true
+			end
+		end
+		if sound.TimeLength > 0 and sound.TimePosition >= sound.TimeLength - 0.05 then
+			pcall(function()
+				sound.TimePosition = 0
+			end)
+		end
+		local resumed = pcall(function()
+			sound:Resume()
+		end)
+		if not resumed then
+			pcall(function()
+				sound:Play()
+			end)
+		end
+		self.Playing = true
+	end
+	self:_Emit("state")
+	return true
+end
+
+function Music:Seek(ratio)
+	local sound = self.Sound
+	local duration = self:GetDuration()
+	if not sound or duration <= 0 then
+		return
+	end
+	local position = math.clamp(tonumber(ratio) or 0, 0, 1) * duration
+	pcall(function()
+		sound.TimePosition = math.min(position, math.max(0, duration - 0.05))
+	end)
+end
+
+function Music:GetDuration()
+	local track = self.CurrentId and self.Tracks[self.CurrentId]
+	local duration = track and tonumber(track.duration) or 0
+	if self.Sound and self.Sound.TimeLength and self.Sound.TimeLength > 0 then
+		duration = self.Sound.TimeLength
+	end
+	return math.max(0, duration or 0)
+end
+
+function Music:GetPosition()
+	if self.Sound and self.Sound.TimeLength and self.Sound.TimeLength > 0 then
+		return math.clamp(self.Sound.TimePosition, 0, self.Sound.TimeLength)
+	end
+	return 0
+end
+
+function Music:Next(manual)
+	if self.NextId then
+		local queued = self.NextId
+		self.NextId = nil
+		if self.Tracks[queued] then
+			self:Play(queued, self.Queue)
+			return
+		end
+	end
+	local ids = self.Queue
+	if #ids == 0 then
+		ids = self:OrderedIds()
+		self.Queue = ids
+	end
+	if #ids == 0 then
+		return
+	end
+	local index = self.QueueIndex
+	if self.Settings.shuffle and manual ~= false then
+		if #ids == 1 then
+			self:Play(ids[1], ids)
+			return
+		end
+		local choice = index
+		while choice == index do
+			choice = math.random(1, #ids)
+		end
+		self:Play(ids[choice], ids)
+		return
+	end
+	local nextIndex = index + 1
+	if nextIndex > #ids then
+		if self.Settings.mode == "order" and manual ~= true then
+			local sound = self.Sound
+			if sound then
+				pcall(function()
+					sound:Stop()
+				end)
+				pcall(function()
+					sound.TimePosition = 0
+				end)
+			end
+			self.Playing = false
+			self:_Emit("state")
+			return
+		end
+		nextIndex = 1
+	end
+	if nextIndex < 1 then
+		nextIndex = #ids
+	end
+	self:Play(ids[nextIndex], ids)
+end
+
+function Music:Prev()
+	local ids = self.Queue
+	if #ids == 0 then
+		ids = self:OrderedIds()
+		self.Queue = ids
+	end
+	if #ids == 0 then
+		return
+	end
+	local index = self.QueueIndex
+	if self.Settings.shuffle and #ids > 1 then
+		local choice = index
+		while choice == index do
+			choice = math.random(1, #ids)
+		end
+		self:Play(ids[choice], ids)
+		return
+	end
+	index = index - 1
+	if index < 1 then
+		index = #ids
+	end
+	self:Play(ids[index], ids)
+end
+
+function Music:_HandleEnded()
+	if not self.CurrentId then
+		return
+	end
+	if self.Settings.mode == "one" then
+		local sound = self.Sound
+		if sound then
+			pcall(function()
+				sound.TimePosition = 0
+			end)
+			pcall(function()
+				sound:Play()
+			end)
+		end
+		self.Playing = true
+		self:_Emit("state")
+	else
+		self:Next(false)
+	end
+end
+
+function Music:SetMode(mode)
+	if mode ~= "order" and mode ~= "all" and mode ~= "one" then
+		return
+	end
+	self.Settings.mode = mode
+	self:Save()
+	self:_Emit("settings")
+end
+
+function Music:SetShuffle(value)
+	self.Settings.shuffle = value == true
+	self:Save()
+	self:_Emit("settings")
+end
+
+function Music:SetTranslation(value)
+	self.Settings.showTranslation = value ~= false
+	self:Save()
+	self:_Emit("settings")
+end
+
+function Music:SetVolume(value, silent)
+	value = math.clamp(tonumber(value) or 0, 0, 1)
+	self.Settings.volume = value
+	if self.Sound then
+		self.Sound.Volume = value
+	end
+	if not silent then
+		self:Save()
+		self:_Emit("settings")
+	end
+end
+
+function Music:Export()
+	local encoded = Nerx.Storage:Encode(self.Data)
+	if not encoded then
+		return false
+	end
+	return Nerx.Storage:Copy(encoded), encoded
+end
+
+function Music:Import(text)
+	local decoded = Nerx.Storage:Decode(text)
+	if type(decoded) ~= "table" then
+		return false
+	end
+	local data = musicNormalizeData(decoded)
+	self.Data = data
+	self.Tracks = data.tracks
+	self.Playlists = data.playlists
+	self.Settings = data.settings
+	self.Order = data.order
+	if self.CurrentId and not self.Tracks[self.CurrentId] then
+		self.CurrentId = nil
+		self.Queue = {}
+		self.QueueIndex = 0
+		self.Playing = false
+		if self.Sound then
+			pcall(function()
+				self.Sound:Stop()
+			end)
+		end
+	end
+	if self.Sound then
+		self.Sound.Volume = self.Settings.volume
+	end
+	self:Save()
+	self:_Emit("library", nil)
+	self:_Emit("track", self.CurrentId and self.Tracks[self.CurrentId] or nil)
+	return true
+end
+
+-- ---------------------------------------------------------------------------------------
+-- MusicPage: rail library, playlist / home / settings views, player, lyrics, coverflow
+-- ---------------------------------------------------------------------------------------
+Nerx.MusicPage = {}
+local MusicPage = Nerx.MusicPage
+
+function MusicPage.Build(page, config)
+	config = config or {}
+	local M = Nerx.Music
+	M:Init()
+
+	local canvas = page:SetCustomMode()
+	local T = Theme
+	local F = Fonts
+	local W = Nerx.Widgets
+	local UIHelpers = UIKit.UIHelpers
+	local notify = UIKit.Notify
+
+	-- Music text includes user data (song / artist / playlist names). Exempt this
+	-- page from the menu Locale so English titles are never translated word-by-word.
+	if Nerx.Locale and type(Nerx.Locale.SetSkip) == "function" then
+		local previousSkip = Nerx.Locale.Skip
+		Nerx.Locale:SetSkip(function(object)
+			local node = object
+			while node do
+				local ok, marked = pcall(function()
+					return node:GetAttribute("NerxMusic")
+				end)
+				if ok and marked then
+					return true
+				end
+				node = node.Parent
+			end
+			if previousSkip then
+				return previousSkip(object)
+			end
+			return false
+		end)
+	end
+	pcall(function()
+		canvas:SetAttribute("NerxMusic", true)
+	end)
+
+	local window = config.Window or page.Window
+	local windowWidth = 1024
+	local windowHeight = 700
+	if window and window.Size then
+		windowWidth = window.Size.X.Offset > 0 and window.Size.X.Offset or 1024
+		windowHeight = window.Size.Y.Offset > 0 and window.Size.Y.Offset or 700
+	end
+
+	local RAIL_WIDTH = 188
+	local PLAYER_HEIGHT = 56
+	local SHELL_WIDTH = math.max(360, windowWidth - 240)
+	local SHELL_HEIGHT = math.max(300, windowHeight - 88)
+	local absolute = canvas.AbsoluteSize
+	if absolute.X > 100 and absolute.Y > 100 then
+		SHELL_WIDTH = absolute.X
+		SHELL_HEIGHT = absolute.Y
+	end
+	local MAIN_WIDTH = SHELL_WIDTH - RAIL_WIDTH
+	local MAIN_HEIGHT = SHELL_HEIGHT - PLAYER_HEIGHT
+
+	local function accentText()
+		return musicLuminance(T.Accent) > 0.62 and T.Window or T.White
+	end
+
+	local state = {
+		view = { kind = "home" },
+		lastView = { kind = "home" },
+		query = "",
+		rows = {},
+		lyricsOpen = false,
+		lyricEntries = nil,
+		lyricActive = nil,
+		lyricLoading = false,
+		lyricToken = 0,
+		progressDragging = false,
+		progressRatio = 0,
+		cfIndex = 1,
+		cfIds = {},
+		lastPlayerTrack = nil,
+	}
+	local firstPlaylist = M.Playlists[1]
+	if firstPlaylist then
+		state.view = { kind = "playlist", id = firstPlaylist.id }
+		state.lastView = { kind = "playlist", id = firstPlaylist.id }
+	end
+
+	local renderRail
+	local renderMain
+	local renderPlayer
+	local renderLyrics
+	local updateLyrics
+	local updatePlayerProgress
+	local openLyrics
+	local closeLyrics
+	local openCoverflow
+	local closeCoverflow
+	local renderCoverflowStage
+	local syncRows
+	local syncVolumeUI
+	local setView
+	local openNewPlaylist
+	local openAddTrack
+	local openAddToPlaylist
+	local openLrcImport
+	local openTrackMenu
+	local confirmDeletePlaylist
+
+	local volumeSliders = {}
+	local settingsSeg
+	local settingsToggle
+	local settingsVolumeLabel
+	local settingsSync
+	local progressSlider
+	local lyricsSlider
+
+	local function makeArt(parent, size, c1Hex, c2Hex, radius, zIndex, shadow)
+		local c1 = musicParseHex(c1Hex, T.SurfaceRaised)
+		local c2 = musicParseHex(c2Hex, T.Surface)
+		local baseZ = zIndex or 1
+		local root = U.frame(parent, {
+			BackgroundColor3 = c1,
+			BorderSizePixel = 0,
+			Size = size,
+			ClipsDescendants = true,
+			ZIndex = baseZ,
+		})
+		U.corner(root, radius or 6)
+		if shadow then
+			U.shadow(root, "soft")
+		end
+		local gradient = Instance.new("UIGradient")
+		gradient.Color = ColorSequence.new(c1, c2)
+		gradient.Rotation = 135
+		gradient.Parent = root
+		local gloss = U.frame(root, {
+			BackgroundColor3 = T.White,
+			BackgroundTransparency = 0.93,
+			BorderSizePixel = 0,
+			Rotation = -18,
+			Position = UDim2.fromScale(-0.3, -0.4),
+			Size = UDim2.fromScale(0.62, 1.6),
+			ZIndex = baseZ + 1,
+		})
+		local glossGradient = Instance.new("UIGradient")
+		glossGradient.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1),
+			NumberSequenceKeypoint.new(0.5, 0.4),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		glossGradient.Parent = gloss
+		local ring = U.frame(root, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			AnchorPoint = Vector2.new(1, 1),
+			Position = UDim2.fromScale(0.98, 0.98),
+			Size = UDim2.fromScale(0.74, 0.74),
+			ZIndex = baseZ + 1,
+		})
+		U.corner(ring, 999)
+		U.stroke(ring, T.White, 0.8, 1)
+		local disc = U.frame(root, {
+			BackgroundColor3 = T.Black,
+			BackgroundTransparency = 0.72,
+			BorderSizePixel = 0,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromScale(0.26, 0.26),
+			ZIndex = baseZ + 1,
+		})
+		U.corner(disc, 999)
+		U.stroke(disc, T.White, 0.82, 1)
+		local dot = U.frame(disc, {
+			BackgroundColor3 = T.White,
+			BackgroundTransparency = 0.5,
+			BorderSizePixel = 0,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromScale(0.22, 0.22),
+			ZIndex = baseZ + 2,
+		})
+		U.corner(dot, 999)
+		return root
+	end
+
+	local function makeDots(parent, x, y, size, zIndex)
+		local baseZ = zIndex or 1
+		local holder = U.frame(parent, {
+			Position = UDim2.fromOffset(x, y),
+			Size = UDim2.fromOffset(size * 3 + 24, size + 6),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			ZIndex = baseZ,
+		})
+		for index = 1, 3 do
+			local dot = U.frame(holder, {
+				BackgroundColor3 = T.White,
+				BackgroundTransparency = 0.82,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset((index - 1) * (size + 12), 2),
+				Size = UDim2.fromOffset(size, size),
+				ZIndex = baseZ + 1,
+			})
+			U.corner(dot, size / 2)
+			local info = TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true, (index - 1) * 0.54)
+			local fade = TweenService:Create(dot, info, { BackgroundTransparency = 0 })
+			fade:Play()
+			local lift = TweenService:Create(dot, info, { Position = UDim2.fromOffset((index - 1) * (size + 12), 0) })
+			lift:Play()
+		end
+		return holder
+	end
+
+	local function createSlider(parent, size, initial, onChanged, options)
+		options = options or {}
+		local value = math.clamp(tonumber(initial) or 0, 0, 1)
+		local trackHeight = options.TrackHeight or 3
+		local root = U.frame(parent, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = size,
+		})
+		local base = U.frame(root, {
+			AnchorPoint = Vector2.new(0, 0.5),
+			BackgroundColor3 = options.BaseColor or T.Track,
+			BackgroundTransparency = options.BaseTransparency or 0.5,
+			BorderSizePixel = 0,
+			Position = UDim2.fromScale(0, 0.5),
+			Size = UDim2.new(1, 0, 0, trackHeight),
+		})
+		U.corner(base, math.ceil(trackHeight / 2))
+		local fill = U.frame(root, {
+			AnchorPoint = Vector2.new(0, 0.5),
+			BackgroundColor3 = options.FillColor or T.White,
+			BackgroundTransparency = options.FillTransparency or 0,
+			BorderSizePixel = 0,
+			Position = UDim2.fromScale(0, 0.5),
+			Size = UDim2.new(value, 0, 0, trackHeight),
+		})
+		U.corner(fill, math.ceil(trackHeight / 2))
+		local knobSize = options.KnobSize or 8
+		local knob = U.frame(root, {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundColor3 = T.White,
+			BorderSizePixel = 0,
+			Position = UDim2.new(value, 0, 0.5, 0),
+			Size = UDim2.fromOffset(knobSize, knobSize),
+			Visible = options.KnobVisible == true,
+			ZIndex = 3,
+		})
+		U.corner(knob, knobSize / 2)
+		U.stroke(knob, T.Accent, 0.6, 1)
+		local api = { Root = root }
+		function api:Set(newValue, silent)
+			value = math.clamp(tonumber(newValue) or 0, 0, 1)
+			fill.Size = UDim2.new(value, 0, 0, trackHeight)
+			knob.Position = UDim2.new(value, 0, 0.5, 0)
+		end
+		function api:GetValue()
+			return value
+		end
+		local holding = false
+		local function applyFromInput(input)
+			local position = root.AbsolutePosition
+			local size = root.AbsoluteSize
+			if size.X <= 0 then
+				return
+			end
+			local ratio = math.clamp((input.Position.X - position.X) / size.X, 0, 1)
+			api:Set(ratio)
+			if onChanged then
+				onChanged(ratio, true)
+			end
+		end
+		local hit = U.inputButton(root, function() end)
+		hit.ZIndex = 10
+		U.connect(hit.InputBegan, function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				holding = true
+				applyFromInput(input)
+			end
+		end)
+		U.connect(UserInputService.InputChanged, function(input)
+			if not root.Parent then
+				holding = false
+				return
+			end
+			if holding and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+				applyFromInput(input)
+			end
+		end)
+		U.connect(UserInputService.InputEnded, function(input)
+			if holding and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+				holding = false
+				knob.Visible = options.KnobVisible == true
+				if onChanged then
+					onChanged(value, false)
+				end
+			end
+		end)
+		U.connect(root.MouseEnter, function()
+			knob.Visible = true
+		end)
+		U.connect(root.MouseLeave, function()
+			if not holding then
+				knob.Visible = options.KnobVisible == true
+			end
+		end)
+		return api
+	end
+
+	local function registerVolumeSlider(slider)
+		volumeSliders[#volumeSliders + 1] = slider
+		slider:Set(M.Settings.volume, true)
+	end
+
+	syncVolumeUI = function(value)
+		if settingsVolumeLabel then
+			settingsVolumeLabel.Text = tostring(math.floor(value * 100 + 0.5)) .. "%"
+		end
+		for index = #volumeSliders, 1, -1 do
+			local slider = volumeSliders[index]
+			if not slider.Root.Parent then
+				table.remove(volumeSliders, index)
+			else
+				slider:Set(value, true)
+			end
+		end
+	end
+
+	local function actionButton(parent, x, y, width, height, text, iconName, primary, callback)
+		local root = U.frame(parent, {
+			BackgroundColor3 = primary and T.Accent or T.Button,
+			BackgroundTransparency = 0,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(x, y),
+			Size = UDim2.fromOffset(width, height),
+		})
+		U.corner(root, 4)
+		if not primary then
+			U.stroke(root, T.Stroke, 0.55, 1)
+		end
+		local iconSize = 10
+		local textSize = 9.5
+		local textWidth = U.measure(text, textSize, F.Regular).X
+		local total = textWidth + iconSize + 5
+		local startX = math.max(7, (width - total) / 2)
+		U.icon(root, iconName, iconSize, primary and accentText() or T.Muted, {
+			Position = UDim2.fromOffset(startX, 0),
+			Size = UDim2.fromOffset(iconSize + 2, height),
+			TextTransparency = primary and 0.02 or 0.14,
+		})
+		U.label(root, {
+			Text = text,
+			TextSize = textSize,
+			TextColor3 = primary and accentText() or T.Text,
+			TextTransparency = 0.04,
+			Position = UDim2.fromOffset(startX + iconSize + 5, 0),
+			Size = UDim2.fromOffset(textWidth + 6, height),
+		})
+		local input = U.inputButton(root, callback)
+		U.pressFx(input, root, 0.97)
+		U.connect(input.MouseEnter, function()
+			if primary then
+				U.tween(root, U.Tween.Fast, { BackgroundTransparency = 0.08 })
+			else
+				U.tween(root, U.Tween.Fast, { BackgroundColor3 = T.ButtonHover })
+			end
+		end)
+		U.connect(input.MouseLeave, function()
+			if primary then
+				U.tween(root, U.Tween.Fast, { BackgroundTransparency = 0 })
+			else
+				U.tween(root, U.Tween.Fast, { BackgroundColor3 = T.Button })
+			end
+		end)
+		return root
+	end
+
+	local function circleButton(parent, x, y, iconName, callback, size)
+		size = size or 24
+		local root = U.frame(parent, {
+			BackgroundColor3 = T.Button,
+			BackgroundTransparency = 0,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(x, y),
+			Size = UDim2.fromOffset(size, size),
+		})
+		U.corner(root, size / 2)
+		U.stroke(root, T.Stroke, 0.6, 1)
+		U.icon(root, iconName, 11, T.Muted, {
+			Size = UDim2.fromScale(1, 1),
+			TextTransparency = 0.15,
+		})
+		local input = U.inputButton(root, callback)
+		U.pressFx(input, root, 0.94)
+		U.connect(input.MouseEnter, function()
+			U.tween(root, U.Tween.Fast, { BackgroundColor3 = T.ButtonHover })
+		end)
+		U.connect(input.MouseLeave, function()
+			U.tween(root, U.Tween.Fast, { BackgroundColor3 = T.Button })
+		end)
+		return root
+	end
+
+	-- -----------------------------------------------------------------------------------
+	-- Shell + rail
+	-- -----------------------------------------------------------------------------------
+	local shell = U.frame(canvas, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+		ClipsDescendants = true,
+	})
+	U.corner(shell, 8)
+
+	local rail = U.frame(shell, {
+		BackgroundColor3 = T.Sidebar,
+		BackgroundTransparency = 0.02,
+		BorderSizePixel = 0,
+		Size = UDim2.new(0, RAIL_WIDTH, 1, 0),
+		ClipsDescendants = true,
+	})
+	U.frame(rail, {
+		BackgroundColor3 = T.White,
+		BackgroundTransparency = 0.97,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.new(1, 0, 0, 1),
+	})
+
+	local searchRoot = U.frame(rail, {
+		BackgroundColor3 = T.FieldDeep,
+		BackgroundTransparency = 0,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(10, 10),
+		Size = UDim2.new(1, -20, 0, 28),
+	})
+	U.corner(searchRoot, 6)
+	local searchStroke = U.stroke(searchRoot, T.Stroke, 0.65, 1)
+	U.icon(searchRoot, "magnifying-glass", 12, T.Faint, {
+		Position = UDim2.fromOffset(8, 0),
+		Size = UDim2.fromOffset(14, 28),
+		TextTransparency = 0.2,
+	})
+	local searchBox = U.new("TextBox", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Font = F.Regular,
+		Text = "",
+		PlaceholderText = "搜索歌曲、歌手、歌单...",
+		PlaceholderColor3 = T.Faint,
+		TextColor3 = T.Text,
+		TextSize = 10,
+		ClearTextOnFocus = false,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Position = UDim2.fromOffset(26, 0),
+		Size = UDim2.new(1, -34, 1, 0),
+	}, searchRoot)
+	U.connect(searchBox.Focused, function()
+		U.tween(searchRoot, U.Tween.Fast, { BackgroundColor3 = T.FieldHover })
+		searchStroke.Transparency = 0.3
+	end)
+	U.connect(searchBox.FocusLost, function()
+		U.tween(searchRoot, U.Tween.Fast, { BackgroundColor3 = T.FieldDeep })
+		searchStroke.Transparency = 0.65
+	end)
+
+	local railScroll = U.new("ScrollingFrame", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+		Position = UDim2.fromOffset(8, 46),
+		Size = UDim2.new(1, -16, 1, -92),
+		ScrollBarThickness = 2,
+		ScrollBarImageColor3 = T.Stroke,
+		ScrollBarImageTransparency = 0.45,
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		CanvasSize = UDim2.fromOffset(0, 0),
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		ElasticBehavior = Enum.ElasticBehavior.Never,
+	}, rail)
+	U.list(railScroll, 1)
+
+	local railUser = U.frame(rail, {
+		AnchorPoint = Vector2.new(0, 1),
+		BackgroundColor3 = T.White,
+		BackgroundTransparency = 0.965,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0, 8, 1, -8),
+		Size = UDim2.new(1, -16, 0, 36),
+	})
+	U.corner(railUser, 6)
+	U.stroke(railUser, T.StrokeSoft, 0.7, 1)
+	local railAvatar = U.frame(railUser, {
+		BackgroundColor3 = T.SurfaceRaised,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(7, 7),
+		Size = UDim2.fromOffset(22, 22),
+	})
+	U.corner(railAvatar, 11)
+	local avatarGradient = Instance.new("UIGradient")
+	avatarGradient.Color = ColorSequence.new(musicParseHex("#8d7bff", T.Violet), musicParseHex("#40d9ff", T.Cyan))
+	avatarGradient.Rotation = 135
+	avatarGradient.Parent = railAvatar
+	U.label(railAvatar, {
+		Text = "N",
+		Font = F.Bold,
+		TextSize = 8,
+		TextColor3 = T.White,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Size = UDim2.fromScale(1, 1),
+	})
+	U.label(railUser, {
+		Text = "Nerx Music",
+		Font = F.Bold,
+		TextSize = 9.5,
+		TextColor3 = T.Text,
+		TextTransparency = 0.1,
+		Position = UDim2.fromOffset(35, 4),
+		Size = UDim2.new(1, -42, 0, 14),
+	})
+	U.label(railUser, {
+		Text = "本地曲库",
+		TextSize = 8,
+		TextColor3 = T.Faint,
+		TextTransparency = 0.25,
+		Position = UDim2.fromOffset(35, 17),
+		Size = UDim2.new(1, -42, 0, 12),
+	})
+
+	local function railSection(text, order, onAdd)
+		local row = U.frame(railScroll, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, 24),
+			LayoutOrder = order,
+		})
+		U.label(row, {
+			Text = text,
+			Font = F.Bold,
+			TextSize = 8,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.2,
+			Position = UDim2.fromOffset(8, 0),
+			Size = UDim2.new(1, -34, 0, 24),
+		})
+		if onAdd then
+			local add = U.frame(row, {
+				AnchorPoint = Vector2.new(1, 0.5),
+				BackgroundColor3 = T.White,
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Position = UDim2.new(1, 0, 0.5, 0),
+				Size = UDim2.fromOffset(16, 16),
+			})
+			U.corner(add, 4)
+			U.icon(add, "plus-small", 10, T.Faint, {
+				Size = UDim2.fromScale(1, 1),
+				TextTransparency = 0.15,
+			})
+			local input = U.inputButton(add, function()
+				onAdd(add)
+			end)
+			U.connect(input.MouseEnter, function()
+				U.tween(add, U.Tween.Fast, { BackgroundTransparency = 0.93 })
+			end)
+			U.connect(input.MouseLeave, function()
+				U.tween(add, U.Tween.Fast, { BackgroundTransparency = 1 })
+			end)
+		end
+		return row
+	end
+
+	local function railItem(order, iconName, text, count, active, callback, rightClick)
+		local item = U.frame(railScroll, {
+			BackgroundColor3 = active and T.Accent or T.White,
+			BackgroundTransparency = active and 0.87 or 1,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, 26),
+			LayoutOrder = order,
+		})
+		U.corner(item, 5)
+		local icon = U.icon(item, iconName, 11, active and T.Accent or T.Muted, {
+			Position = UDim2.fromOffset(8, 0),
+			Size = UDim2.fromOffset(12, 26),
+			TextTransparency = active and 0 or 0.2,
+		})
+		local label = U.label(item, {
+			Text = text,
+			TextSize = 10,
+			TextColor3 = active and T.Text or T.Muted,
+			TextTransparency = active and 0.05 or 0.2,
+			Position = UDim2.fromOffset(26, 0),
+			Size = UDim2.new(1, -(count and 50 or 34), 1, 0),
+		})
+		if count then
+			U.label(item, {
+				Text = tostring(count),
+				TextSize = 8,
+				TextColor3 = active and T.Accent or T.Faint,
+				TextTransparency = active and 0.1 or 0.25,
+				TextXAlignment = Enum.TextXAlignment.Right,
+				Position = UDim2.new(1, -34, 0, 0),
+				Size = UDim2.fromOffset(28, 26),
+			})
+		end
+		local input = U.inputButton(item, callback)
+		U.connect(input.MouseEnter, function()
+			if not active then
+				U.tween(item, U.Tween.Fast, { BackgroundTransparency = 0.94 })
+				U.tween(label, U.Tween.Fast, { TextColor3 = T.Text, TextTransparency = 0.05 })
+				U.tween(icon, U.Tween.Fast, { TextTransparency = 0.1 })
+			end
+		end)
+		U.connect(input.MouseLeave, function()
+			if not active then
+				U.tween(item, U.Tween.Fast, { BackgroundTransparency = 1 })
+				U.tween(label, U.Tween.Fast, { TextColor3 = T.Muted, TextTransparency = 0.2 })
+				U.tween(icon, U.Tween.Fast, { TextTransparency = 0.2 })
+			end
+		end)
+		if rightClick then
+			U.connect(input.InputBegan, function(inputObject)
+				if inputObject.UserInputType == Enum.UserInputType.MouseButton2 then
+					rightClick(item)
+				end
+			end)
+		end
+		return item
+	end
+
+	renderRail = function()
+		if not railScroll.Parent then
+			return
+		end
+		railScroll:ClearAllChildren()
+		local order = 0
+		local function nextOrder()
+			order = order + 1
+			return order
+		end
+
+		local brand = U.frame(railScroll, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, 26),
+			LayoutOrder = nextOrder(),
+		})
+		U.icon(brand, "music-note", 12, T.Accent, {
+			Position = UDim2.fromOffset(8, 0),
+			Size = UDim2.fromOffset(13, 26),
+		})
+		U.label(brand, {
+			Text = "Nerx Music",
+			Font = F.Bold,
+			TextSize = 10.5,
+			TextColor3 = T.Text,
+			TextTransparency = 0.08,
+			Position = UDim2.fromOffset(26, 0),
+			Size = UDim2.new(1, -34, 1, 0),
+		})
+
+		railItem(nextOrder(), "house", "主页", nil, state.view.kind == "home", function()
+			setView({ kind = "home" })
+		end)
+
+		railSection("我的歌单", nextOrder())
+		railItem(nextOrder(), "heart", "我喜欢的音乐", #M:LikedIds(), state.view.kind == "liked", function()
+			setView({ kind = "liked" })
+		end)
+
+		local saved = {}
+		for _, playlist in ipairs(M.Playlists) do
+			local entry = playlist
+			if entry.kind == "saved" then
+				saved[#saved + 1] = entry
+			else
+				railItem(nextOrder(), "list-bulleted", entry.name, #M:PlaylistIds(entry), state.view.kind == "playlist" and state.view.id == entry.id, function()
+					setView({ kind = "playlist", id = entry.id })
+				end, function(anchor)
+					UIHelpers.ContextMenu(anchor, {
+						{
+							Text = "重命名",
+							Callback = function()
+								UIHelpers.InputPrompt(anchor, {
+									Title = "重命名歌单",
+									Initial = entry.name,
+									Submit = "保存",
+									Attribute = "NerxMusic",
+									OnSubmit = function(name)
+										if M:RenamePlaylist(entry.id, name) then
+											notify("音乐", "已重命名为「" .. name .. "」", "pencil", T.Green)
+										end
+									end,
+								})
+							end,
+						},
+						{
+							Text = "删除歌单",
+							Color = T.Red,
+							Callback = function()
+								confirmDeletePlaylist(anchor, entry)
+							end,
+						},
+					})
+				end)
+			end
+		end
+
+		if #saved > 0 then
+			railSection("收藏歌单", nextOrder())
+			for _, playlist in ipairs(saved) do
+				local entry = playlist
+				railItem(nextOrder(), "star", entry.name, #M:PlaylistIds(entry), state.view.kind == "playlist" and state.view.id == entry.id, function()
+					setView({ kind = "playlist", id = entry.id })
+				end)
+			end
+		end
+
+		railSection("系统", nextOrder(), function(anchor)
+			openNewPlaylist(anchor)
+		end)
+		railItem(nextOrder(), "gear", "设置", nil, state.view.kind == "settings", function()
+			setView({ kind = "settings" })
+		end)
+	end
+
+	-- -----------------------------------------------------------------------------------
+	-- Workspace + main + player frames
+	-- -----------------------------------------------------------------------------------
+	local musicWorkspace = U.frame(shell, {
+		BackgroundColor3 = T.Main,
+		BackgroundTransparency = 0,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(RAIL_WIDTH, 0),
+		Size = UDim2.new(1, -RAIL_WIDTH, 1, 0),
+		ClipsDescendants = true,
+	})
+	local main = U.frame(musicWorkspace, {
+		BackgroundColor3 = T.Surface,
+		BackgroundTransparency = 0,
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 1, -PLAYER_HEIGHT),
+		ClipsDescendants = true,
+	})
+	U.frame(main, {
+		BackgroundColor3 = T.White,
+		BackgroundTransparency = 0.985,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.new(1, 0, 0, 2),
+	})
+	local mainAccentGlow = U.frame(main, {
+		BackgroundColor3 = T.Accent,
+		BackgroundTransparency = 0.965,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromOffset(MAIN_WIDTH * 0.18, -40),
+		Size = UDim2.fromOffset(520, 300),
+	})
+	U.corner(mainAccentGlow, 999)
+	local viewHost = U.frame(main, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+	})
+
+	local player = U.frame(musicWorkspace, {
+		BackgroundColor3 = T.Window,
+		BackgroundTransparency = 0.02,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0, 0, 1, -PLAYER_HEIGHT),
+		Size = UDim2.new(1, 0, 0, PLAYER_HEIGHT),
+		ClipsDescendants = true,
+	})
+	U.frame(player, {
+		BackgroundColor3 = T.StrokeSoft,
+		BackgroundTransparency = 0.5,
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 0, 1),
+	})
+
+	local nowBox = U.frame(player, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(14, 11),
+		Size = UDim2.fromOffset(148, 34),
+	})
+	local playerCover = U.frame(nowBox, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.fromOffset(34, 34),
+	})
+	local playerCoverHost = U.frame(playerCover, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+	})
+	local playerCoverScale = Instance.new("UIScale")
+	playerCoverScale.Scale = 1
+	playerCoverScale.Parent = playerCover
+	local playerTitle = U.label(nowBox, {
+		Text = "未播放",
+		Font = F.Bold,
+		TextSize = 10.5,
+		TextColor3 = T.Text,
+		TextTransparency = 0.06,
+		Position = UDim2.fromOffset(42, 0),
+		Size = UDim2.new(1, -42, 0, 14),
+	})
+	local playerArtist = U.label(nowBox, {
+		Text = "选择一首歌曲开始",
+		TextSize = 8.5,
+		TextColor3 = T.Faint,
+		TextTransparency = 0.15,
+		Position = UDim2.fromOffset(42, 16),
+		Size = UDim2.new(1, -42, 0, 12),
+	})
+	local coverInput = U.inputButton(playerCover, function()
+		openLyrics()
+	end)
+	coverInput.ZIndex = 10
+	U.connect(coverInput.MouseEnter, function()
+		U.tween(playerCoverScale, U.Tween.Fast, { Scale = 1.08 })
+	end)
+	U.connect(coverInput.MouseLeave, function()
+		U.tween(playerCoverScale, U.Tween.Fast, { Scale = 1 })
+	end)
+
+	local progressWrap = U.frame(player, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(170, 0),
+		Size = UDim2.new(1, -420, 1, 0),
+	})
+	local currentTimeLabel = U.label(progressWrap, {
+		Text = "00:00",
+		Font = F.Mono,
+		TextSize = 8.5,
+		TextColor3 = T.Faint,
+		TextTransparency = 0.1,
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.fromOffset(30, PLAYER_HEIGHT),
+	})
+	local remainingTimeLabel = U.label(progressWrap, {
+		Text = "-00:00",
+		Font = F.Mono,
+		TextSize = 8.5,
+		TextColor3 = T.Faint,
+		TextTransparency = 0.1,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		Position = UDim2.new(1, -32, 0, 0),
+		Size = UDim2.fromOffset(32, PLAYER_HEIGHT),
+	})
+	progressSlider = createSlider(progressWrap, UDim2.new(1, -70, 0, 14), 0, function(ratio, dragging)
+		state.progressDragging = dragging
+		state.progressRatio = ratio
+		if not dragging then
+			M:Seek(ratio)
+			state.progressDragging = false
+		end
+		updatePlayerProgress()
+	end, {
+		FillColor = T.White,
+		BaseColor = T.White,
+		BaseTransparency = 0.84,
+		TrackHeight = 3,
+		KnobSize = 8,
+	})
+	progressSlider.Root.Position = UDim2.fromOffset(36, 21)
+
+	local controls = U.frame(player, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(1, -242, 0.5, 0),
+		Size = UDim2.fromOffset(132, 32),
+	})
+
+	local function playerIcon(parent, x, y, size, iconName, activeFn, callback)
+		local root = U.frame(parent, {
+			BackgroundColor3 = T.White,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(x, y),
+			Size = UDim2.fromOffset(size, size),
+		})
+		U.corner(root, size / 2)
+		local icon = U.icon(root, iconName, math.floor(size * 0.5), activeFn and activeFn() and T.Accent or T.Muted, {
+			Size = UDim2.fromScale(1, 1),
+			TextTransparency = activeFn and activeFn() and 0.02 or 0.15,
+		})
+		local input = U.inputButton(root, callback)
+		U.pressFx(input, root, 0.92)
+		local dot = U.frame(root, {
+			AnchorPoint = Vector2.new(0.5, 1),
+			BackgroundColor3 = T.Accent,
+			BorderSizePixel = 0,
+			Position = UDim2.new(0.5, 0, 1, -1),
+			Size = UDim2.fromOffset(3, 3),
+			Visible = false,
+			ZIndex = 3,
+		})
+		U.corner(dot, 1.5)
+		U.connect(input.MouseEnter, function()
+			U.tween(root, U.Tween.Fast, { BackgroundTransparency = 0.9 })
+			U.tween(icon, U.Tween.Fast, { TextColor3 = activeFn and activeFn() and T.Accent or T.Text, TextTransparency = 0 })
+		end)
+		U.connect(input.MouseLeave, function()
+			U.tween(root, U.Tween.Fast, { BackgroundTransparency = 1 })
+			U.tween(icon, U.Tween.Fast, {
+				TextColor3 = activeFn and activeFn() and T.Accent or T.Muted,
+				TextTransparency = activeFn and activeFn() and 0.02 or 0.15,
+			})
+		end)
+		return icon, dot
+	end
+
+	local shuffleIcon, shuffleDot = playerIcon(controls, 0, 6, 20, "two-arrows-switch-right", function()
+		return M.Settings.shuffle
+	end, function()
+		local value = not M.Settings.shuffle
+		M:SetShuffle(value)
+		notify("音乐", value and "乱序播放：开" or "乱序播放：关", "two-arrows-switch-right", value and T.Accent or T.Muted)
+	end)
+	playerIcon(controls, 24, 5, 22, "skip-previous-large", nil, function()
+		M:Prev()
+	end)
+	local playButton = U.frame(controls, {
+		BackgroundColor3 = T.White,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(50, 2),
+		Size = UDim2.fromOffset(28, 28),
+	})
+	U.corner(playButton, 14)
+	local playIcon = U.icon(playButton, "play-small", 14, T.White, {
+		Size = UDim2.fromScale(1, 1),
+		TextTransparency = 0.02,
+	})
+	local playInput = U.inputButton(playButton, function()
+		if not M.CurrentId then
+			local ids = state.view.kind == "settings" and {} or M:OrderedIds()
+			if #ids > 0 then
+				M:Play(ids[1], ids)
+			end
+		else
+			M:Toggle()
+		end
+	end)
+	U.pressFx(playInput, playButton, 0.92)
+	U.connect(playInput.MouseEnter, function()
+		U.tween(playButton, U.Tween.Fast, { BackgroundTransparency = 0.9 })
+	end)
+	U.connect(playInput.MouseLeave, function()
+		U.tween(playButton, U.Tween.Fast, { BackgroundTransparency = 1 })
+	end)
+	playerIcon(controls, 82, 5, 22, "skip-next-large", nil, function()
+		M:Next(true)
+	end)
+	local repeatIcon, repeatDot = playerIcon(controls, 108, 6, 20, "two-arrows-loop-clockwise", function()
+		return M.Settings.mode ~= "order"
+	end, function()
+		local mode = M.Settings.mode
+		if mode == "order" then
+			M:SetMode("all")
+			notify("音乐", "列表循环", "two-arrows-loop-clockwise", T.Accent)
+		elseif mode == "all" then
+			M:SetMode("one")
+			notify("音乐", "单曲循环", "two-arrows-loop-clockwise-1", T.Accent)
+		else
+			M:SetMode("order")
+			notify("音乐", "顺序播放", "two-arrows-loop-clockwise", T.Muted)
+		end
+	end)
+
+	local volumeBox = U.frame(player, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -14, 0.5, 0),
+		Size = UDim2.fromOffset(86, 16),
+	})
+	U.icon(volumeBox, "speaker", 11, T.Muted, {
+		Position = UDim2.fromOffset(0, 2),
+		Size = UDim2.fromOffset(12, 12),
+		TextTransparency = 0.35,
+	})
+	local volumeSlider = createSlider(volumeBox, UDim2.new(1, -20, 0, 14), M.Settings.volume, function(value, dragging)
+		M:SetVolume(value, dragging)
+		syncVolumeUI(value)
+	end, {
+		FillColor = T.White,
+		BaseColor = T.White,
+		BaseTransparency = 0.82,
+		TrackHeight = 3,
+		KnobSize = 7,
+	})
+	volumeSlider.Root.Position = UDim2.fromOffset(18, 1)
+	registerVolumeSlider(volumeSlider)
+
+	updatePlayerProgress = function()
+		local duration = M:GetDuration()
+		local ratio
+		if state.progressDragging then
+			ratio = state.progressRatio or 0
+		else
+			ratio = duration > 0 and M:GetPosition() / duration or 0
+		end
+		ratio = math.clamp(ratio or 0, 0, 1)
+		if progressSlider then
+			progressSlider:Set(ratio, true)
+		end
+		local position = ratio * duration
+		currentTimeLabel.Text = musicFormatTime(position)
+		remainingTimeLabel.Text = "-" .. musicFormatTime(math.max(0, duration - position))
+	end
+
+	-- -----------------------------------------------------------------------------------
+	-- Header + track list
+	-- -----------------------------------------------------------------------------------
+	local function buildHeader(parent, options)
+		local head = U.frame(parent, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, 140),
+		})
+		local artHolder = U.frame(head, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(16, 14),
+			Size = UDim2.fromOffset(110, 110),
+		})
+		makeArt(artHolder, UDim2.fromScale(1, 1), options.color1, options.color2, 6, nil, true)
+		local hover = U.frame(artHolder, {
+			BackgroundColor3 = T.Black,
+			BackgroundTransparency = 0.5,
+			BorderSizePixel = 0,
+			Size = UDim2.fromScale(1, 1),
+			Visible = false,
+			ZIndex = 4,
+		})
+		U.corner(hover, 6)
+		local hoverButton = U.frame(hover, {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundColor3 = T.Accent,
+			BorderSizePixel = 0,
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromOffset(34, 34),
+			ZIndex = 5,
+		})
+		U.corner(hoverButton, 17)
+		U.icon(hoverButton, "play-small", 14, accentText(), {
+			Size = UDim2.fromScale(1, 1),
+			ZIndex = 6,
+		})
+		local artInput = U.inputButton(artHolder, options.onPlay or function() end)
+		artInput.ZIndex = 10
+		U.connect(artInput.MouseEnter, function()
+			hover.Visible = true
+		end)
+		U.connect(artInput.MouseLeave, function()
+			hover.Visible = false
+		end)
+
+		U.label(head, {
+			Text = options.subtitle,
+			Font = F.Bold,
+			TextSize = 8,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.15,
+			Position = UDim2.fromOffset(142, 12),
+			Size = UDim2.new(1, -160, 0, 12),
+		})
+		U.label(head, {
+			Text = options.title,
+			Font = F.Bold,
+			TextSize = 20,
+			TextColor3 = T.Text,
+			TextTransparency = 0.02,
+			Position = UDim2.fromOffset(142, 24),
+			Size = UDim2.new(1, -160, 0, 28),
+		})
+		U.label(head, {
+			Text = options.description,
+			TextSize = 9,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.2,
+			Position = UDim2.fromOffset(142, 56),
+			Size = UDim2.new(1, -160, 0, 12),
+		})
+		local creator = U.frame(head, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(142, 72),
+			Size = UDim2.new(1, -160, 0, 16),
+		})
+		local miniAvatar = U.frame(creator, {
+			BackgroundColor3 = T.SurfaceRaised,
+			BorderSizePixel = 0,
+			Size = UDim2.fromOffset(16, 16),
+		})
+		U.corner(miniAvatar, 8)
+		local miniGradient = Instance.new("UIGradient")
+		miniGradient.Color = ColorSequence.new(musicParseHex(options.color1, T.Violet), musicParseHex(options.color2, T.Cyan))
+		miniGradient.Rotation = 135
+		miniGradient.Parent = miniAvatar
+		U.label(miniAvatar, {
+			Text = "N",
+			Font = F.Bold,
+			TextSize = 7.5,
+			TextColor3 = T.White,
+			TextXAlignment = Enum.TextXAlignment.Center,
+			Size = UDim2.fromScale(1, 1),
+		})
+		U.label(creator, {
+			Text = options.creator or "Nerx Music",
+			TextSize = 9,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.15,
+			Position = UDim2.fromOffset(22, 0),
+			Size = UDim2.new(1, -22, 0, 16),
+		})
+
+		local actions = U.frame(head, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(142, 92),
+			Size = UDim2.new(1, -160, 0, 24),
+		})
+		local cursor = 0
+		actionButton(actions, cursor, 0, 80, 24, "播放歌单", "play-small", true, options.onPlay)
+		cursor = cursor + 86
+		actionButton(actions, cursor, 0, 98, 24, "乱序播放歌单", "two-arrows-switch-right", true, options.onShuffle)
+		cursor = cursor + 104
+		actionButton(actions, cursor, 0, 84, 24, "Coverflow", "rectangle-play-stacked", false, options.onCoverflow)
+		cursor = cursor + 90
+		circleButton(actions, cursor, 0, "magnifying-glass", options.onSearch)
+		cursor = cursor + 30
+		if options.onAdd then
+			local addButton
+			addButton = circleButton(actions, cursor, 0, "plus-small", function()
+				options.onAdd(addButton)
+			end)
+		end
+
+		U.frame(head, {
+			BackgroundColor3 = T.StrokeSoft,
+			BackgroundTransparency = 0.55,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(0, 139),
+			Size = UDim2.new(1, 0, 0, 1),
+		})
+		return head
+	end
+
+	local function paintRow(row, playing)
+		local onAccent = accentText()
+		row.Root.BackgroundColor3 = playing and T.Accent or T.White
+		row.Root.BackgroundTransparency = playing and 0 or row.BaseTransparency
+		row.Index.TextColor3 = playing and onAccent or T.Faint
+		row.Index.TextTransparency = playing and 0.35 or 0.2
+		row.Title.TextColor3 = playing and onAccent or T.Text
+		row.Title.TextTransparency = playing and 0 or 0.04
+		row.Artist.TextColor3 = playing and onAccent or T.Faint
+		row.Artist.TextTransparency = playing and 0.28 or 0.15
+		row.Album.TextColor3 = playing and onAccent or T.Faint
+		row.Album.TextTransparency = playing and 0.3 or 0.2
+		row.Duration.TextColor3 = playing and onAccent or T.Faint
+		row.Duration.TextTransparency = playing and 0.25 or 0.2
+		row.More.BackgroundColor3 = playing and T.Window or T.Window
+		row.More.BackgroundTransparency = playing and 0.55 or 0.3
+		row.MoreIcon.TextColor3 = playing and onAccent or T.Faint
+		row.MoreIcon.TextTransparency = playing and 0.1 or 0.15
+	end
+
+	local function createTrackRow(parent, index, track)
+		local odd = index % 2 == 1
+		local baseTransparency = odd and 0.978 or 1
+		local row = U.frame(parent, {
+			BackgroundColor3 = T.White,
+			BackgroundTransparency = baseTransparency,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, 28),
+			LayoutOrder = index,
+		})
+		U.corner(row, 3)
+		local indexLabel = U.label(row, {
+			Text = tostring(index),
+			TextSize = 9.5,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.2,
+			TextXAlignment = Enum.TextXAlignment.Center,
+			Position = UDim2.fromOffset(0, 0),
+			Size = UDim2.fromOffset(28, 28),
+		})
+		local coverHolder = U.frame(row, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(30, 3),
+			Size = UDim2.fromOffset(22, 22),
+		})
+		makeArt(coverHolder, UDim2.fromScale(1, 1), track.color1, track.color2, 3)
+		local title = U.label(row, {
+			Text = track.name,
+			Font = F.Bold,
+			TextSize = 10.5,
+			TextColor3 = T.Text,
+			TextTransparency = 0.04,
+			Position = UDim2.fromOffset(60, 1),
+			Size = UDim2.new(1, -236, 0, 14),
+		})
+		local artist = U.label(row, {
+			Text = track.artist,
+			TextSize = 8.5,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.15,
+			Position = UDim2.fromOffset(60, 15),
+			Size = UDim2.new(1, -236, 0, 11),
+		})
+		local album = U.label(row, {
+			Text = track.album,
+			TextSize = 8.5,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.2,
+			Position = UDim2.new(1, -174, 0, 0),
+			Size = UDim2.fromOffset(96, 28),
+		})
+		local duration = U.label(row, {
+			Text = musicFormatTime(track.duration),
+			TextSize = 8.5,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.2,
+			TextXAlignment = Enum.TextXAlignment.Right,
+			Position = UDim2.new(1, -70, 0, 0),
+			Size = UDim2.fromOffset(36, 28),
+		})
+		local more = U.frame(row, {
+			BackgroundColor3 = T.Window,
+			BackgroundTransparency = 0.3,
+			BorderSizePixel = 0,
+			Position = UDim2.new(1, -26, 0.5, -9),
+			Size = UDim2.fromOffset(18, 18),
+			Visible = false,
+			ZIndex = 5,
+		})
+		U.corner(more, 4)
+		local moreIcon = U.icon(more, "three-dots-horizontal", 10, T.Faint, {
+			Size = UDim2.fromScale(1, 1),
+			ZIndex = 6,
+			TextTransparency = 0.15,
+		})
+		local rowWidget = {
+			Root = row,
+			Index = indexLabel,
+			Title = title,
+			Artist = artist,
+			Album = album,
+			Duration = duration,
+			More = more,
+			MoreIcon = moreIcon,
+			BaseTransparency = baseTransparency,
+		}
+		local input = U.inputButton(row, function()
+			local ids = {}
+			if state.view.kind == "liked" then
+				ids = M:LikedIds()
+			elseif state.view.kind == "search" then
+				local query = string.lower(state.query or "")
+				for _, id in ipairs(M:OrderedIds()) do
+					local item = M.Tracks[id]
+					if item and string.find(string.lower(item.name .. " " .. item.artist .. " " .. item.album), query, 1, true) then
+						ids[#ids + 1] = id
+					end
+				end
+			elseif state.view.kind == "playlist" then
+				ids = M:PlaylistIds(M:GetPlaylist(state.view.id))
+			end
+			if #ids == 0 then
+				ids = M:OrderedIds()
+			end
+			M:Play(track.id, ids)
+		end)
+		U.connect(input.MouseEnter, function()
+			if track.id ~= M.CurrentId then
+				U.tween(row, U.Tween.Fast, { BackgroundTransparency = 0.93 })
+				U.tween(title, U.Tween.Fast, { TextColor3 = T.Text, TextTransparency = 0 })
+			end
+			more.Visible = true
+		end)
+		U.connect(input.MouseLeave, function()
+			paintRow(rowWidget, track.id == M.CurrentId)
+			more.Visible = false
+		end)
+		U.connect(input.InputBegan, function(inputObject)
+			if inputObject.UserInputType == Enum.UserInputType.MouseButton2 then
+				openTrackMenu(row, track.id)
+			end
+		end)
+		local moreInput = U.inputButton(more, function()
+			openTrackMenu(more, track.id)
+		end)
+		U.connect(moreInput.MouseEnter, function()
+			U.tween(more, U.Tween.Fast, { BackgroundTransparency = 0.15 })
+		end)
+		U.connect(moreInput.MouseLeave, function()
+			U.tween(more, U.Tween.Fast, { BackgroundTransparency = 0.3 })
+		end)
+		paintRow(rowWidget, track.id == M.CurrentId)
+		return rowWidget
+	end
+
+	syncRows = function()
+		for id, row in pairs(state.rows) do
+			paintRow(row, id == M.CurrentId)
+		end
+	end
+
+	local function buildTrackList(parent, ids)
+		local list = U.new("ScrollingFrame", {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			ClipsDescendants = true,
+			Position = UDim2.fromOffset(0, 140),
+			Size = UDim2.new(1, 0, 1, -140),
+			ScrollBarThickness = 3,
+			ScrollBarImageColor3 = T.Stroke,
+			ScrollBarImageTransparency = 0.35,
+			AutomaticCanvasSize = Enum.AutomaticSize.Y,
+			CanvasSize = UDim2.fromOffset(0, 0),
+			ScrollingDirection = Enum.ScrollingDirection.Y,
+			ElasticBehavior = Enum.ElasticBehavior.Never,
+		}, parent)
+		U.padding(list, 6, 10, 14, 10)
+		U.list(list, 0)
+		if #ids == 0 then
+			local empty = U.frame(list, {
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Size = UDim2.new(1, 0, 0, 160),
+				LayoutOrder = 1,
+			})
+			U.icon(empty, "music-note", 22, T.Faint, {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(0.5, 0.38),
+				Size = UDim2.fromOffset(24, 24),
+				TextTransparency = 0.35,
+			})
+			local emptyText = "这里还没有歌曲"
+			if state.view.kind == "liked" then
+				emptyText = "还没有喜欢的歌曲"
+			elseif state.view.kind == "search" then
+				emptyText = "没有找到匹配的歌曲"
+			end
+			U.label(empty, {
+				Text = emptyText,
+				Font = F.Bold,
+				TextSize = 11,
+				TextColor3 = T.Muted,
+				TextTransparency = 0.35,
+				TextXAlignment = Enum.TextXAlignment.Center,
+				Position = UDim2.new(0, 0, 0.5, 10),
+				Size = UDim2.new(1, 0, 0, 16),
+			})
+			U.label(empty, {
+				Text = state.view.kind == "search" and "试试别的关键词" or "点右上角的 + 添加音频 ID",
+				TextSize = 9,
+				TextColor3 = T.Faint,
+				TextTransparency = 0.3,
+				TextXAlignment = Enum.TextXAlignment.Center,
+				Position = UDim2.new(0, 0, 0.5, 28),
+				Size = UDim2.new(1, 0, 0, 14),
+			})
+			return list
+		end
+		for index, id in ipairs(ids) do
+			local track = M.Tracks[id]
+			if track then
+				state.rows[id] = createTrackRow(list, index, track)
+			end
+		end
+		return list
+	end
+
+	local function currentPlaylist()
+		if state.view.kind == "playlist" then
+			return M:GetPlaylist(state.view.id)
+		end
+		return nil
+	end
+
+	local function currentIds()
+		local ids = {}
+		if state.view.kind == "liked" then
+			return M:LikedIds()
+		elseif state.view.kind == "playlist" then
+			return M:PlaylistIds(currentPlaylist())
+		elseif state.view.kind == "search" then
+			local query = string.lower(state.query or "")
+			if query == "" then
+				return ids
+			end
+			for _, id in ipairs(M:OrderedIds()) do
+				local track = M.Tracks[id]
+				if track and string.find(string.lower(track.name .. " " .. track.artist .. " " .. track.album), query, 1, true) then
+					ids[#ids + 1] = id
+				end
+			end
+		end
+		return ids
+	end
+
+	local function viewTitle()
+		if state.view.kind == "home" then
+			return "主页"
+		elseif state.view.kind == "liked" then
+			return "我喜欢的音乐"
+		elseif state.view.kind == "settings" then
+			return "设置"
+		elseif state.view.kind == "search" then
+			return "搜索结果"
+		end
+		local playlist = currentPlaylist()
+		return playlist and playlist.name or "音乐"
+	end
+
+	local function buildPlaylistView(parent)
+		local ids = currentIds()
+		local playlist = currentPlaylist()
+		local c1 = "#69cdff"
+		local c2 = "#0d3247"
+		local subtitle = "歌单"
+		if state.view.kind == "liked" then
+			c1 = "#ff5d8f"
+			c2 = "#4c1029"
+			subtitle = "收藏"
+		elseif state.view.kind == "search" then
+			subtitle = "搜索"
+		elseif playlist then
+			c1 = playlist.color1 or c1
+			c2 = playlist.color2 or c2
+		end
+		local total = 0
+		for _, id in ipairs(ids) do
+			total = total + (tonumber(M.Tracks[id].duration) or 0)
+		end
+		local description
+		if state.view.kind == "search" then
+			description = "匹配 “" .. tostring(state.query) .. "” 的 " .. tostring(#ids) .. " 首歌曲"
+		else
+			description = tostring(#ids) .. " 首歌曲 · " .. musicFormatTime(total) .. " 时长"
+		end
+		local function playAll()
+			if #ids == 0 then
+				notify("音乐", "这个歌单还没有歌曲", "music-note", T.Muted)
+				return
+			end
+			M:Play(ids[1], ids)
+		end
+		local function shuffleAll()
+			if #ids == 0 then
+				notify("音乐", "这个歌单还没有歌曲", "music-note", T.Muted)
+				return
+			end
+			M:SetShuffle(true)
+			M:Play(ids[math.random(1, #ids)], ids)
+			notify("音乐", "已开启乱序播放", "two-arrows-switch-right", T.Accent)
+		end
+		buildHeader(parent, {
+			title = viewTitle(),
+			subtitle = subtitle,
+			description = description,
+			creator = "Nerx Music · 本地曲库",
+			color1 = c1,
+			color2 = c2,
+			onPlay = playAll,
+			onShuffle = shuffleAll,
+			onCoverflow = function()
+				openCoverflow()
+			end,
+			onSearch = function()
+				searchBox:CaptureFocus()
+			end,
+			onAdd = playlist and playlist.kind == "custom" and function(anchor)
+				openAddTrack(anchor, playlist.id)
+			end or nil,
+		})
+		buildTrackList(parent, ids)
+	end
+
+	local function buildHome(parent)
+		local scroll = U.new("ScrollingFrame", {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			ClipsDescendants = true,
+			Size = UDim2.fromScale(1, 1),
+			ScrollBarThickness = 3,
+			ScrollBarImageColor3 = T.Stroke,
+			ScrollBarImageTransparency = 0.35,
+			AutomaticCanvasSize = Enum.AutomaticSize.Y,
+			CanvasSize = UDim2.fromOffset(0, 0),
+			ScrollingDirection = Enum.ScrollingDirection.Y,
+			ElasticBehavior = Enum.ElasticBehavior.Never,
+		}, parent)
+		local content = U.frame(scroll, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+		})
+		U.list(content, 0)
+
+		local head = U.frame(content, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, 76),
+			LayoutOrder = 1,
+		})
+		U.label(head, {
+			Text = "Nerx Music!",
+			Font = F.Bold,
+			TextSize = 25,
+			TextColor3 = T.Text,
+			TextTransparency = 0.02,
+			Position = UDim2.fromOffset(22, 18),
+			Size = UDim2.new(1, -44, 0, 32),
+		})
+		U.label(head, {
+			Text = "推荐歌单",
+			Font = F.Bold,
+			TextSize = 8,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.2,
+			Position = UDim2.fromOffset(22, 54),
+			Size = UDim2.new(1, -44, 0, 12),
+		})
+
+		local playlists = {}
+		for _, playlist in ipairs(M.Playlists) do
+			if playlist.kind ~= "saved" then
+				playlists[#playlists + 1] = playlist
+			end
+		end
+		local perRow = math.max(2, math.floor((MAIN_WIDTH - 36 + 16) / 144))
+		local cardWidth = 128
+		local cardHeight = 160
+		local gap = 16
+		local startX = 18
+		local rows = math.max(1, math.ceil(#playlists / perRow))
+		local grid = U.frame(content, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, rows * cardHeight + 20),
+			LayoutOrder = 2,
+		})
+		if #playlists == 0 then
+			U.icon(grid, "music-note", 24, T.Faint, {
+				Position = UDim2.fromOffset(22, 10),
+				Size = UDim2.fromOffset(26, 26),
+				TextTransparency = 0.35,
+			})
+			U.label(grid, {
+				Text = "还没有歌单",
+				Font = F.Bold,
+				TextSize = 11,
+				TextColor3 = T.Muted,
+				TextTransparency = 0.3,
+				Position = UDim2.fromOffset(58, 10),
+				Size = UDim2.new(1, -80, 0, 16),
+			})
+			U.label(grid, {
+				Text = "新建歌单，然后把本地音频 ID 加进来。",
+				TextSize = 9,
+				TextColor3 = T.Faint,
+				TextTransparency = 0.25,
+				Position = UDim2.fromOffset(58, 28),
+				Size = UDim2.new(1, -80, 0, 14),
+			})
+			local create = actionButton(grid, 58, 52, 92, 24, "新建歌单", "plus-small", true, function()
+				openNewPlaylist(grid)
+			end)
+			create.Visible = true
+		else
+			for index, playlist in ipairs(playlists) do
+				local entry = playlist
+				local column = (index - 1) % perRow
+				local rowIndex = math.floor((index - 1) / perRow)
+				local card = U.frame(grid, {
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					Position = UDim2.fromOffset(startX + column * (cardWidth + gap), rowIndex * cardHeight),
+					Size = UDim2.fromOffset(cardWidth, cardHeight - 2),
+				})
+				local artHolder = U.frame(card, {
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					Size = UDim2.fromOffset(cardWidth, cardWidth),
+				})
+				makeArt(artHolder, UDim2.fromScale(1, 1), entry.color1, entry.color2, 6, nil, true)
+				local badge = U.frame(artHolder, {
+					AnchorPoint = Vector2.new(1, 1),
+					BackgroundColor3 = T.Accent,
+					BorderSizePixel = 0,
+					Position = UDim2.fromScale(0.92, 0.92),
+					Size = UDim2.fromOffset(24, 24),
+					Visible = false,
+				})
+				U.corner(badge, 12)
+				U.icon(badge, "play-small", 11, accentText(), {
+					Size = UDim2.fromScale(1, 1),
+				})
+				local name = U.label(card, {
+					Text = entry.name,
+					TextSize = 10,
+					TextColor3 = T.Muted,
+					TextTransparency = 0.1,
+					Position = UDim2.fromOffset(0, 132),
+					Size = UDim2.fromOffset(cardWidth, 14),
+				})
+				U.label(card, {
+					Text = tostring(#M:PlaylistIds(entry)) .. " 首歌曲",
+					TextSize = 8,
+					TextColor3 = T.Faint,
+					TextTransparency = 0.25,
+					Position = UDim2.fromOffset(0, 145),
+					Size = UDim2.fromOffset(cardWidth, 12),
+				})
+				local input = U.inputButton(card, function()
+					setView({ kind = "playlist", id = entry.id })
+				end)
+				U.connect(input.MouseEnter, function()
+					badge.Visible = true
+					U.tween(name, U.Tween.Fast, { TextColor3 = T.Text, TextTransparency = 0 })
+				end)
+				U.connect(input.MouseLeave, function()
+					badge.Visible = false
+					U.tween(name, U.Tween.Fast, { TextColor3 = T.Muted, TextTransparency = 0.1 })
+				end)
+			end
+		end
+	end
+
+	local function buildSettings(parent)
+		settingsSeg = nil
+		settingsToggle = nil
+		settingsVolumeLabel = nil
+		local scroll = U.new("ScrollingFrame", {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			ClipsDescendants = true,
+			Size = UDim2.fromScale(1, 1),
+			ScrollBarThickness = 3,
+			ScrollBarImageColor3 = T.Stroke,
+			ScrollBarImageTransparency = 0.35,
+			AutomaticCanvasSize = Enum.AutomaticSize.Y,
+			CanvasSize = UDim2.fromOffset(0, 0),
+			ScrollingDirection = Enum.ScrollingDirection.Y,
+			ElasticBehavior = Enum.ElasticBehavior.Never,
+		}, parent)
+		U.padding(scroll, 18, 20, 24, 20)
+		local content = U.frame(scroll, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+		})
+		U.list(content, 10)
+
+		local head = U.frame(content, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, 54),
+			LayoutOrder = 1,
+		})
+		U.label(head, {
+			Text = "设置",
+			Font = F.Bold,
+			TextSize = 20,
+			TextColor3 = T.Text,
+			TextTransparency = 0.02,
+			Size = UDim2.new(1, 0, 0, 26),
+		})
+		U.label(head, {
+			Text = "播放行为、歌词与本地曲库",
+			TextSize = 9,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.2,
+			Position = UDim2.fromOffset(0, 28),
+			Size = UDim2.new(1, 0, 0, 14),
+		})
+
+		local function card(order, height, title)
+			local root = U.frame(content, {
+				BackgroundColor3 = T.SurfaceRaised,
+				BackgroundTransparency = 0.55,
+				BorderSizePixel = 0,
+				Size = UDim2.new(1, 0, 0, height),
+				LayoutOrder = order,
+			})
+			U.corner(root, 7)
+			U.stroke(root, T.Stroke, 0.6, 1)
+			U.label(root, {
+				Text = title,
+				Font = F.Bold,
+				TextSize = 8,
+				TextColor3 = T.Faint,
+				TextTransparency = 0.15,
+				Position = UDim2.fromOffset(14, 10),
+				Size = UDim2.new(1, -28, 0, 12),
+			})
+			return root
+		end
+
+		local playCard = card(2, 118, "播放")
+		U.label(playCard, {
+			Text = "音量",
+			TextSize = 10,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.15,
+			Position = UDim2.fromOffset(14, 34),
+			Size = UDim2.fromOffset(80, 28),
+		})
+		local setVolume = createSlider(playCard, UDim2.new(1, -200, 0, 14), M.Settings.volume, function(value, dragging)
+			M:SetVolume(value, dragging)
+			syncVolumeUI(value)
+		end, {
+			FillColor = T.Accent,
+			BaseColor = T.Track,
+			BaseTransparency = 0.45,
+			TrackHeight = 3,
+			KnobSize = 8,
+		})
+		setVolume.Root.Position = UDim2.fromOffset(100, 41)
+		registerVolumeSlider(setVolume)
+		settingsVolumeLabel = U.label(playCard, {
+			Text = tostring(math.floor(M.Settings.volume * 100 + 0.5)) .. "%",
+			TextSize = 9,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.15,
+			TextXAlignment = Enum.TextXAlignment.Right,
+			Position = UDim2.new(1, -92, 0, 34),
+			Size = UDim2.fromOffset(78, 28),
+		})
+		U.label(playCard, {
+			Text = "播放模式",
+			TextSize = 10,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.15,
+			Position = UDim2.fromOffset(14, 70),
+			Size = UDim2.fromOffset(80, 26),
+		})
+		local modeLabels = { order = "顺序", all = "列表循环", one = "单曲循环" }
+		local modeByName = { ["顺序"] = "order", ["列表循环"] = "all", ["单曲循环"] = "one" }
+		settingsSeg = W.Segmented(playCard, {
+			Width = 190,
+			Height = 26,
+			Items = { "顺序", "列表循环", "单曲循环" },
+			Selected = modeLabels[M.Settings.mode] or "列表循环",
+			Callback = function(name)
+				M:SetMode(modeByName[name] or "all")
+			end,
+		})
+		settingsSeg.Root.Position = UDim2.fromOffset(100, 68)
+
+		local lyricsCard = card(3, 96, "歌词")
+		U.label(lyricsCard, {
+			Text = "显示翻译",
+			TextSize = 10,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.15,
+			Position = UDim2.fromOffset(14, 32),
+			Size = UDim2.fromOffset(100, 20),
+		})
+		settingsToggle = W.Toggle(lyricsCard, M.Settings.showTranslation, function(value)
+			M:SetTranslation(value)
+			if state.lyricsOpen then
+				renderLyrics(true)
+			end
+		end)
+		settingsToggle.Root.Position = UDim2.fromOffset(100, 32)
+		U.label(lyricsCard, {
+			Text = "每首歌可导入 LRC（[mm:ss.xx]歌词|翻译），保存在本地曲库。",
+			TextSize = 8.5,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.2,
+			Position = UDim2.fromOffset(14, 62),
+			Size = UDim2.new(1, -28, 0, 14),
+		})
+
+		local libraryCard = card(4, 132, "曲库")
+		U.label(libraryCard, {
+			Text = "添加歌曲",
+			TextSize = 10,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.15,
+			Position = UDim2.fromOffset(14, 32),
+			Size = UDim2.fromOffset(80, 26),
+		})
+		local quickAdd = W.Input(libraryCard, {
+			Width = 300,
+			Height = 28,
+			Placeholder = "输入 Roblox 音频 ID，例如 9046863048",
+		})
+		quickAdd.Root.Position = UDim2.fromOffset(100, 31)
+		quickAdd.Root.Size = UDim2.new(1, -196, 0, 28)
+		local addButton = W.Button(libraryCard, "添加", function()
+			local id = musicTrim(quickAdd:GetValue())
+			if not string.match(id, "^%d+$") then
+				notify("音乐", "请输入数字音频 ID", "triangle-exclamation", T.Amber)
+				return
+			end
+			local track = M:AddTrack({ SoundId = id })
+			if track then
+				quickAdd:SetValue("", true)
+				notify("音乐", "已添加「" .. track.name .. "」", "plus-small", T.Green)
+			end
+		end)
+		addButton.Root.Position = UDim2.new(1, -88, 0, 31)
+		addButton.Root.Size = UDim2.fromOffset(74, 28)
+		U.label(libraryCard, {
+			Text = "本地数据",
+			TextSize = 10,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.15,
+			Position = UDim2.fromOffset(14, 74),
+			Size = UDim2.fromOffset(80, 26),
+		})
+		local exportButton = W.Button(libraryCard, "导出曲库", function()
+			local ok = M:Export()
+			if ok then
+				notify("音乐", "曲库 JSON 已复制到剪贴板", "floppy-disk", T.Green)
+			else
+				notify("音乐", "导出失败：执行器缺少剪贴板权限", "triangle-exclamation", T.Amber)
+			end
+		end)
+		exportButton.Root.Position = UDim2.fromOffset(100, 73)
+		exportButton.Root.Size = UDim2.fromOffset(86, 26)
+		local libraryImportButton
+		libraryImportButton = W.Button(libraryCard, "导入", function()
+			UIHelpers.ImportPrompt(libraryImportButton.Root, {
+				Title = "导入曲库",
+				Placeholder = "粘贴导出的 music.json 内容...",
+				Submit = "导入",
+				OnSubmit = function(text)
+					if M:Import(text) then
+						notify("音乐", "曲库已导入", "cloud-arrow-down", T.Green)
+						setView({ kind = "home" })
+					else
+						notify("音乐", "导入失败：无法解析 JSON", "triangle-exclamation", T.Amber)
+					end
+				end,
+			})
+		end)
+		libraryImportButton.Root.Position = UDim2.fromOffset(192, 73)
+		libraryImportButton.Root.Size = UDim2.fromOffset(70, 26)
+		U.label(libraryCard, {
+			Text = "提示：右键歌曲可导入歌词、添加到歌单或喜欢。",
+			TextSize = 8.5,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.2,
+			Position = UDim2.fromOffset(100, 102),
+			Size = UDim2.new(1, -114, 0, 14),
+		})
+
+		local aboutCard = card(5, 92, "关于")
+		U.label(aboutCard, {
+			Text = "存储位置",
+			TextSize = 9,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.15,
+			Position = UDim2.fromOffset(14, 32),
+			Size = UDim2.fromOffset(80, 20),
+		})
+		U.label(aboutCard, {
+			Text = Nerx.Storage:Path(MUSIC_STORE_FILE),
+			TextSize = 8.5,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.15,
+			Position = UDim2.fromOffset(100, 32),
+			Size = UDim2.new(1, -114, 0, 20),
+		})
+		U.label(aboutCard, {
+			Text = "播放器",
+			TextSize = 9,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.15,
+			Position = UDim2.fromOffset(14, 54),
+			Size = UDim2.fromOffset(80, 20),
+		})
+		U.label(aboutCard, {
+			Text = "Sound · 客户端本地播放，不经过服务器",
+			TextSize = 8.5,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.15,
+			Position = UDim2.fromOffset(100, 54),
+			Size = UDim2.new(1, -114, 0, 20),
+		})
+		syncVolumeUI(M.Settings.volume)
+	end
+
+	settingsSync = function()
+		if settingsSeg then
+			local labels = { order = "顺序", all = "列表循环", one = "单曲循环" }
+			settingsSeg:SetValue(labels[M.Settings.mode] or "列表循环", true)
+		end
+		if settingsToggle then
+			settingsToggle:SetValue(M.Settings.showTranslation, true)
+		end
+		if settingsVolumeLabel then
+			settingsVolumeLabel.Text = tostring(math.floor(M.Settings.volume * 100 + 0.5)) .. "%"
+		end
+		syncVolumeUI(M.Settings.volume)
+	end
+
+	renderMain = function()
+		if not viewHost.Parent then
+			return
+		end
+		viewHost:ClearAllChildren()
+		state.rows = {}
+		settingsSeg = nil
+		settingsToggle = nil
+		settingsVolumeLabel = nil
+		if state.view.kind == "settings" then
+			buildSettings(viewHost)
+		elseif state.view.kind == "home" then
+			buildHome(viewHost)
+		else
+			buildPlaylistView(viewHost)
+		end
+	end
+
+	setView = function(view)
+		state.view = view
+		state.query = ""
+		if searchBox.Text ~= "" then
+			searchBox.Text = ""
+		end
+		if closeCoverflow then
+			closeCoverflow()
+		end
+		renderRail()
+		renderMain()
+	end
+
+	U.connect(searchBox:GetPropertyChangedSignal("Text"), function()
+		local query = musicTrim(searchBox.Text)
+		if query ~= "" then
+			if state.view.kind ~= "search" then
+				state.lastView = state.view
+			end
+			state.query = query
+			state.view = { kind = "search" }
+			if closeCoverflow then
+				closeCoverflow()
+			end
+			renderRail()
+			renderMain()
+		elseif state.view.kind == "search" then
+			state.query = ""
+			local target = state.lastView or { kind = "home" }
+			if target.kind == "playlist" and not M:GetPlaylist(target.id) then
+				target = { kind = "home" }
+			end
+			state.view = target
+			renderRail()
+			renderMain()
+		end
+	end)
+
+	-- -----------------------------------------------------------------------------------
+	-- Popups / context menu
+	-- -----------------------------------------------------------------------------------
+	openNewPlaylist = function(anchor)
+		UIHelpers.InputPrompt(anchor, {
+			Title = "新建歌单",
+			Placeholder = "歌单名称，例如：深夜循环",
+			Submit = "创建",
+			Attribute = "NerxMusic",
+			OnSubmit = function(name)
+				local playlist = M:AddPlaylist(name)
+				if playlist then
+					setView({ kind = "playlist", id = playlist.id })
+					notify("音乐", "已创建歌单「" .. playlist.name .. "」", "list-bulleted", T.Green)
+				end
+			end,
+		})
+	end
+
+	openAddTrack = function(anchor, playlistId)
+		U.popup(anchor, 300, 286, function(card)
+			pcall(function()
+				card:SetAttribute("NerxMusic", true)
+			end)
+			U.padding(card, 12, 12, 12, 12)
+			U.label(card, {
+				Text = "添加歌曲",
+				Font = F.Bold,
+				TextSize = 11,
+				TextColor3 = T.Text,
+				TextTransparency = 0.05,
+				Size = UDim2.new(1, 0, 0, 16),
+			})
+			U.label(card, {
+				Text = "粘贴 Roblox 音频 ID，播放使用客户端 Sound。",
+				TextSize = 8.5,
+				TextColor3 = T.Faint,
+				TextTransparency = 0.15,
+				Position = UDim2.fromOffset(0, 18),
+				Size = UDim2.new(1, 0, 0, 12),
+			})
+			local function field(y, labelText, placeholder)
+				U.label(card, {
+					Text = labelText,
+					TextSize = 9,
+					TextColor3 = T.Muted,
+					TextTransparency = 0.15,
+					Position = UDim2.fromOffset(0, y),
+					Size = UDim2.new(1, 0, 0, 12),
+				})
+				local box = W.Input(card, {
+					Width = 276,
+					Height = 26,
+					Placeholder = placeholder,
+				})
+				box.Root.Position = UDim2.fromOffset(0, y + 14)
+				return box
+			end
+			local idBox = field(38, "音频 ID", "例如 9046863048")
+			local nameBox = field(86, "歌曲名称", "显示在列表里的名字")
+			local artistBox = field(134, "歌手 / 备注", "可选")
+			local cancel = W.Button(card, "取消", function()
+				Nerx:ClosePopup(true)
+			end)
+			cancel.Root.Position = UDim2.new(1, -158, 1, -28)
+			cancel.Root.Size = UDim2.fromOffset(70, 26)
+			local add = W.PrimaryButton(card, "添加", 76, 26, function()
+				local soundId = musicTrim(idBox:GetValue())
+				if not string.match(soundId, "^%d+$") then
+					notify("音乐", "请输入有效的数字音频 ID", "triangle-exclamation", T.Amber)
+					return
+				end
+				local track = M:AddTrack({
+					SoundId = soundId,
+					Name = nameBox:GetValue(),
+					Artist = artistBox:GetValue(),
+					PlaylistId = playlistId,
+				})
+				if track then
+					Nerx:ClosePopup(true)
+					notify("音乐", "已添加「" .. track.name .. "」", "plus-small", T.Green)
+					if state.view.kind == "playlist" then
+						renderMain()
+					end
+				end
+			end)
+			add.Root.Position = UDim2.new(1, -76, 1, -28)
+			task.defer(function()
+				pcall(function()
+					idBox.Box:CaptureFocus()
+				end)
+			end)
+		end)
+	end
+
+	openAddToPlaylist = function(anchor, trackId)
+		local playlists = {}
+		for _, playlist in ipairs(M.Playlists) do
+			if playlist.kind == "custom" then
+				playlists[#playlists + 1] = playlist
+			end
+		end
+		if #playlists == 0 then
+			notify("音乐", "还没有自建歌单", "list-bulleted", T.Muted)
+			return
+		end
+		U.popup(anchor, 206, 40 + #playlists * 26 + 8, function(card)
+			pcall(function()
+				card:SetAttribute("NerxMusic", true)
+			end)
+			U.padding(card, 8, 8, 8, 8)
+			U.label(card, {
+				Text = "添加到歌单",
+				Font = F.Bold,
+				TextSize = 10.5,
+				TextColor3 = T.Text,
+				TextTransparency = 0.05,
+				Size = UDim2.new(1, 0, 0, 16),
+			})
+			for index, playlist in ipairs(playlists) do
+				local entry = playlist
+				local row = U.frame(card, {
+					BackgroundColor3 = T.White,
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					Position = UDim2.fromOffset(0, 22 + (index - 1) * 26),
+					Size = UDim2.new(1, 0, 0, 24),
+				})
+				U.corner(row, 4)
+				U.icon(row, "list-bulleted", 10, T.Muted, {
+					Position = UDim2.fromOffset(6, 0),
+					Size = UDim2.fromOffset(12, 24),
+					TextTransparency = 0.2,
+				})
+				U.label(row, {
+					Text = entry.name,
+					TextSize = 9.5,
+					TextColor3 = T.Muted,
+					TextTransparency = 0.1,
+					Position = UDim2.fromOffset(22, 0),
+					Size = UDim2.new(1, -54, 1, 0),
+				})
+				U.label(row, {
+					Text = tostring(#entry.trackIds),
+					TextSize = 8,
+					TextColor3 = T.Faint,
+					TextTransparency = 0.2,
+					TextXAlignment = Enum.TextXAlignment.Right,
+					Position = UDim2.new(1, -30, 0, 0),
+					Size = UDim2.fromOffset(24, 24),
+				})
+				local input = U.inputButton(row, function()
+					local ok = M:AddToPlaylist(entry.id, trackId)
+					Nerx:ClosePopup(true)
+					notify("音乐", ok and ("已添加到「" .. entry.name .. "」") or "歌曲已在该歌单中", "plus-small", ok and T.Green or T.Muted)
+				end)
+				U.connect(input.MouseEnter, function()
+					U.tween(row, U.Tween.Fast, { BackgroundTransparency = 0.93 })
+				end)
+				U.connect(input.MouseLeave, function()
+					U.tween(row, U.Tween.Fast, { BackgroundTransparency = 1 })
+				end)
+			end
+		end)
+	end
+
+	openLrcImport = function(anchor, trackId)
+		UIHelpers.ImportPrompt(anchor, {
+			Title = "导入歌词 (LRC)",
+			Placeholder = "[00:12.34]歌词|翻译",
+			Submit = "导入",
+			OnSubmit = function(text)
+				if M:SetLyrics(trackId, text) then
+					notify("音乐", "歌词已保存", "document-list-heart", T.Green)
+					if state.lyricsOpen then
+						renderLyrics(true)
+					end
+				end
+			end,
+		})
+	end
+
+	openTrackMenu = function(anchor, trackId)
+		local track = M.Tracks[trackId]
+		if not track then
+			return
+		end
+		local playlist = currentPlaylist()
+		local items = {
+			{
+				Text = "播放",
+				Callback = function()
+					M:Play(trackId, currentIds())
+				end,
+			},
+			{
+				Text = "下一首播放",
+				Callback = function()
+					M:QueueNext(trackId)
+					notify("音乐", "已加入下一首播放", "play-small", T.Accent)
+				end,
+			},
+			{
+				Text = track.liked and "取消喜欢" or "添加到我喜欢的音乐",
+				Callback = function()
+					local _, liked = M:ToggleLike(trackId)
+					notify("音乐", liked and "已添加到我喜欢的音乐" or "已取消喜欢", "heart", liked and T.Pink or T.Muted)
+				end,
+			},
+			{
+				Text = "查看歌词",
+				Callback = function()
+					if M.CurrentId ~= trackId then
+						M:Play(trackId, currentIds())
+					end
+					openLyrics()
+				end,
+			},
+			{
+				Text = "添加到歌单",
+				Callback = function()
+					openAddToPlaylist(anchor, trackId)
+				end,
+			},
+			{
+				Text = "导入歌词 (LRC)",
+				Callback = function()
+					openLrcImport(anchor, trackId)
+				end,
+			},
+		}
+		if playlist then
+			local contains = false
+			for _, id in ipairs(playlist.trackIds) do
+				if id == trackId then
+					contains = true
+					break
+				end
+			end
+			if contains then
+				items[#items + 1] = {
+					Text = "从当前歌单移除",
+					Color = T.Red,
+					Callback = function()
+						M:RemoveFromPlaylist(playlist.id, trackId)
+						notify("音乐", "已从歌单移除", "trash-can", T.Muted)
+					end,
+				}
+			end
+		end
+		UIHelpers.ContextMenu(anchor, items)
+	end
+
+	confirmDeletePlaylist = function(anchor, playlist)
+		U.popup(anchor, 250, 118, function(card)
+			pcall(function()
+				card:SetAttribute("NerxMusic", true)
+			end)
+			U.padding(card, 12, 12, 12, 12)
+			U.label(card, {
+				Text = "删除歌单",
+				Font = F.Bold,
+				TextSize = 11,
+				TextColor3 = T.Text,
+				TextTransparency = 0.05,
+				Size = UDim2.new(1, 0, 0, 16),
+			})
+			U.label(card, {
+				Text = "确定删除「" .. playlist.name .. "」吗？歌曲仍会留在曲库。",
+				TextSize = 8.5,
+				TextColor3 = T.Faint,
+				TextTransparency = 0.1,
+				TextWrapped = true,
+				Position = UDim2.fromOffset(0, 20),
+				Size = UDim2.new(1, 0, 0, 30),
+			})
+			local cancel = W.Button(card, "取消", function()
+				Nerx:ClosePopup(true)
+			end)
+			cancel.Root.Position = UDim2.new(1, -154, 1, -26)
+			cancel.Root.Size = UDim2.fromOffset(64, 26)
+			local remove = W.PrimaryButton(card, "删除", 66, 26, function()
+				Nerx:ClosePopup(true)
+				if M:DeletePlaylist(playlist.id) then
+					if state.view.kind == "playlist" and state.view.id == playlist.id then
+						state.view = { kind = "home" }
+					end
+					renderRail()
+					renderMain()
+					notify("音乐", "已删除歌单", "trash-can", T.Muted)
+				end
+			end)
+			remove.Root.Position = UDim2.new(1, -76, 1, -26)
+		end)
+	end
+
+	-- -----------------------------------------------------------------------------------
+	-- Player updates
+	-- -----------------------------------------------------------------------------------
+	renderPlayer = function()
+		local track = M.CurrentId and M.Tracks[M.CurrentId] or nil
+		local trackId = track and track.id or "none"
+		if state.lastPlayerTrack ~= trackId then
+			state.lastPlayerTrack = trackId
+			playerCoverHost:ClearAllChildren()
+			makeArt(playerCoverHost, UDim2.fromScale(1, 1), track and track.color1 or "#2a2d34", track and track.color2 or "#111216", 4)
+		end
+		playerTitle.Text = track and track.name or "未播放"
+		playerArtist.Text = track and (track.artist .. " — " .. track.album) or "选择一首歌曲开始"
+		playIcon.Text = M.Playing and "pause-small" or "play-small"
+		shuffleIcon.TextColor3 = M.Settings.shuffle and T.Accent or T.Muted
+		shuffleIcon.TextTransparency = M.Settings.shuffle and 0.02 or 0.15
+		shuffleDot.Visible = M.Settings.shuffle
+		repeatIcon.Text = M.Settings.mode == "one" and "two-arrows-loop-clockwise-1" or "two-arrows-loop-clockwise"
+		repeatIcon.TextColor3 = M.Settings.mode ~= "order" and T.Accent or T.Muted
+		repeatIcon.TextTransparency = M.Settings.mode ~= "order" and 0.02 or 0.15
+		repeatDot.Visible = M.Settings.mode ~= "order"
+		updatePlayerProgress()
+	end
+
+	-- -----------------------------------------------------------------------------------
+	-- Lyrics overlay (covers the whole menu window, like the approved preview)
+	-- -----------------------------------------------------------------------------------
+	local overlayParent = window and window.Root or canvas
+	local overlayWidth = window and windowWidth or SHELL_WIDTH
+	local overlayHeight = window and windowHeight or SHELL_HEIGHT
+	local existingLyrics = overlayParent:FindFirstChild("NerxMusicLyrics")
+	if existingLyrics then
+		existingLyrics:Destroy()
+	end
+	local coverSize = math.min(overlayWidth * 0.304, overlayHeight * 0.5)
+	local lyrics = U.canvas(overlayParent, {
+		Name = "NerxMusicLyrics",
+		BackgroundColor3 = T.Window,
+		BackgroundTransparency = 0,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+		Visible = false,
+		Active = true,
+		ZIndex = 80,
+		ClipsDescendants = true,
+	})
+	pcall(function()
+		lyrics:SetAttribute("NerxMusic", true)
+	end)
+	local lyricsBg = U.frame(lyrics, {
+		BackgroundColor3 = musicParseHex("#2a2d34", T.SurfaceRaised),
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+	})
+	local lyricsBgGradient = Instance.new("UIGradient")
+	lyricsBgGradient.Color = ColorSequence.new(musicParseHex("#2a2d34", T.SurfaceRaised), musicParseHex("#111216", T.Surface))
+	lyricsBgGradient.Rotation = 135
+	lyricsBgGradient.Parent = lyricsBg
+	U.frame(lyrics, {
+		BackgroundColor3 = T.Black,
+		BackgroundTransparency = 0.55,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+	})
+	local lyricsRing = U.frame(lyrics, {
+		AnchorPoint = Vector2.new(1, 0),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromScale(0.95, 0.08),
+		Size = UDim2.fromOffset(overlayHeight * 0.62, overlayHeight * 0.62),
+	})
+	U.corner(lyricsRing, 999)
+	U.stroke(lyricsRing, T.White, 0.82, 2)
+	U.frame(lyrics, {
+		BackgroundColor3 = T.White,
+		BackgroundTransparency = 0.87,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0.45, 0, 0.16, 0),
+		Size = UDim2.new(0, 1, 0.68, 0),
+	})
+	local closeButton = U.frame(lyrics, {
+		AnchorPoint = Vector2.new(1, 0),
+		BackgroundColor3 = T.White,
+		BackgroundTransparency = 0.92,
+		BorderSizePixel = 0,
+		Position = UDim2.new(1, -16, 0, 14),
+		Size = UDim2.fromOffset(28, 28),
+	})
+	U.corner(closeButton, 14)
+	U.stroke(closeButton, T.White, 0.86, 1)
+	U.icon(closeButton, "x-small", 12, T.White, {
+		Size = UDim2.fromScale(1, 1),
+		TextTransparency = 0.15,
+	})
+	U.inputButton(closeButton, function()
+		closeLyrics()
+	end)
+
+	local leftColumn = U.frame(lyrics, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(overlayWidth * 0.082, overlayHeight * 0.112),
+		Size = UDim2.fromOffset(overlayWidth * 0.304, overlayHeight * 0.78),
+	})
+	local lyricsCoverHolder = U.frame(leftColumn, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.fromOffset(coverSize, coverSize),
+	})
+	U.corner(lyricsCoverHolder, 7)
+	U.stroke(lyricsCoverHolder, T.White, 0.76, 2)
+	local lyricsTitle = U.label(leftColumn, {
+		Text = "—",
+		Font = F.Bold,
+		TextSize = 13,
+		TextColor3 = T.White,
+		TextTransparency = 0.02,
+		Position = UDim2.fromOffset(0, coverSize + 16),
+		Size = UDim2.new(1, 0, 0, 18),
+	})
+	local lyricsArtist = U.label(leftColumn, {
+		Text = "—",
+		TextSize = 9.5,
+		TextColor3 = T.White,
+		TextTransparency = 0.3,
+		Position = UDim2.fromOffset(0, coverSize + 36),
+		Size = UDim2.new(1, 0, 0, 14),
+	})
+	local lyricsTimeCurrent = U.label(leftColumn, {
+		Text = "00:00",
+		Font = F.Mono,
+		TextSize = 8.5,
+		TextColor3 = T.White,
+		TextTransparency = 0.45,
+		Position = UDim2.fromOffset(0, coverSize + 58),
+		Size = UDim2.fromOffset(32, 18),
+	})
+	local lyricsTimeRemaining = U.label(leftColumn, {
+		Text = "-00:00",
+		Font = F.Mono,
+		TextSize = 8.5,
+		TextColor3 = T.White,
+		TextTransparency = 0.45,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		Position = UDim2.new(1, -32, 0, coverSize + 58),
+		Size = UDim2.fromOffset(32, 18),
+	})
+	lyricsSlider = createSlider(leftColumn, UDim2.new(1, -74, 0, 14), 0, function(ratio)
+		M:Seek(ratio)
+	end, {
+		FillColor = T.White,
+		BaseColor = T.White,
+		BaseTransparency = 0.78,
+		TrackHeight = 5,
+		KnobSize = 8,
+	})
+	lyricsSlider.Root.Position = UDim2.fromOffset(36, coverSize + 60)
+
+	local lyricsControls = U.frame(leftColumn, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, coverSize + 84),
+		Size = UDim2.new(1, 0, 0, 34),
+	})
+	local function lyricsControl(iconName, x, size, callback)
+		local root = U.frame(lyricsControls, {
+			BackgroundColor3 = T.White,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(x, (34 - size) / 2),
+			Size = UDim2.fromOffset(size, size),
+		})
+		U.corner(root, size / 2)
+		local icon = U.icon(root, iconName, math.floor(size * 0.5), T.White, {
+			Size = UDim2.fromScale(1, 1),
+		})
+		local input = U.inputButton(root, callback)
+		U.connect(input.MouseEnter, function()
+			U.tween(root, U.Tween.Fast, { BackgroundTransparency = 0.88 })
+		end)
+		U.connect(input.MouseLeave, function()
+			U.tween(root, U.Tween.Fast, { BackgroundTransparency = 1 })
+		end)
+		return icon
+	end
+	local centered = overlayWidth * 0.304 / 2
+	lyricsControl("skip-previous-large", centered - 76, 30, function()
+		M:Prev()
+	end)
+	local lyricsPlayIcon = lyricsControl("play-large", centered - 16, 32, function()
+		if not M.CurrentId then
+			local ids = currentIds()
+			if #ids > 0 then
+				M:Play(ids[1], ids)
+			end
+		else
+			M:Toggle()
+		end
+	end)
+	lyricsControl("skip-next-large", centered + 46, 30, function()
+		M:Next(true)
+	end)
+
+	local lyricsVolume = U.frame(leftColumn, {
+		AnchorPoint = Vector2.new(0, 1),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0, 0, 1, 0),
+		Size = UDim2.new(1, 0, 0, 16),
+	})
+	U.icon(lyricsVolume, "speaker", 10, T.White, {
+		Position = UDim2.fromOffset(0, 2),
+		Size = UDim2.fromOffset(11, 12),
+		TextTransparency = 0.45,
+	})
+	local lyricsVolumeSlider = createSlider(lyricsVolume, UDim2.new(1, -32, 0, 14), M.Settings.volume, function(value, dragging)
+		M:SetVolume(value, dragging)
+		syncVolumeUI(value)
+	end, {
+		FillColor = T.White,
+		BaseColor = T.White,
+		BaseTransparency = 0.78,
+		TrackHeight = 5,
+		KnobSize = 8,
+	})
+	lyricsVolumeSlider.Root.Position = UDim2.fromOffset(18, 1)
+	registerVolumeSlider(lyricsVolumeSlider)
+	U.icon(lyricsVolume, "speaker", 12, T.White, {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, 0, 0, 1),
+		Size = UDim2.fromOffset(12, 14),
+		TextTransparency = 0.35,
+	})
+
+	local lyricsRight = U.frame(lyrics, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(overlayWidth * 0.48, 0),
+		Size = UDim2.new(0.48, 0, 1, 0),
+		ClipsDescendants = true,
+	})
+	local lyricsLines = U.frame(lyricsRight, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+		ClipsDescendants = true,
+	})
+	local lyricsTrack = U.frame(lyricsLines, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.new(1, 0, 0, 0),
+	})
+	local lyricsDots = makeDots(lyricsLines, 0, overlayHeight * 0.25, 20, 5)
+	lyricsDots.Visible = true
+	local lyricsHint = U.label(lyricsLines, {
+		Text = "",
+		TextSize = 9.5,
+		TextColor3 = T.White,
+		TextTransparency = 0.55,
+		Position = UDim2.fromOffset(0, overlayHeight * 0.25 + 36),
+		Size = UDim2.new(1, 0, 0, 16),
+	})
+
+	closeLyrics = function()
+		state.lyricsOpen = false
+		state.lyricToken = (state.lyricToken or 0) + 1
+		lyrics.Visible = false
+	end
+
+	openLyrics = function()
+		state.lyricsOpen = true
+		lyrics.Visible = true
+		renderLyrics(true)
+	end
+
+	updateLyrics = function(force)
+		if not state.lyricsOpen then
+			return
+		end
+		local duration = M:GetDuration()
+		local position = M:GetPosition()
+		local ratio = duration > 0 and position / duration or 0
+		lyricsSlider:Set(ratio, true)
+		lyricsTimeCurrent.Text = musicFormatTime(position)
+		lyricsTimeRemaining.Text = "-" .. musicFormatTime(math.max(0, duration - position))
+		lyricsPlayIcon.Text = M.Playing and "pause-large" or "play-large"
+		if state.lyricLoading then
+			return
+		end
+		local entries = state.lyricEntries
+		if not entries or #entries == 0 then
+			return
+		end
+		local active = nil
+		for _, entry in ipairs(entries) do
+			if entry.Time <= position + 0.05 then
+				active = entry
+			else
+				break
+			end
+		end
+		if active == state.lyricActive and not force then
+			return
+		end
+		state.lyricActive = active
+		local activeIndex = active and active.RowIndex or 0
+		for _, entry in ipairs(entries) do
+			local distance = math.abs(entry.RowIndex - activeIndex)
+			entry.Main.TextTransparency = distance == 0 and 0 or (distance == 1 and 0.55 or 0.8)
+			if entry.Trans then
+				entry.Trans.TextTransparency = distance == 0 and 0.18 or (distance == 1 and 0.62 or 0.85)
+			end
+		end
+		if active then
+			local target = math.min(0, overlayHeight * 0.25 - (active.TopY or 0))
+			U.tween(lyricsTrack, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Position = UDim2.fromOffset(0, target) })
+		else
+			U.tween(lyricsTrack, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Position = UDim2.fromOffset(0, 0) })
+		end
+	end
+
+	renderLyrics = function(force)
+		if not state.lyricsOpen then
+			return
+		end
+		local track = M.CurrentId and M.Tracks[M.CurrentId] or nil
+		local c1 = track and track.color1 or "#2a2d34"
+		local c2 = track and track.color2 or "#111216"
+		lyricsBgGradient.Color = ColorSequence.new(musicParseHex(c1, T.SurfaceRaised), musicParseHex(c2, T.Surface))
+		lyricsCoverHolder:ClearAllChildren()
+		makeArt(lyricsCoverHolder, UDim2.fromScale(1, 1), c1, c2, 7, nil, true)
+		lyricsTitle.Text = track and track.name or "—"
+		lyricsArtist.Text = track and (track.artist .. " — " .. track.album) or "还没有播放中的歌曲"
+		lyricsPlayIcon.Text = M.Playing and "pause-large" or "play-large"
+		lyricsTimeCurrent.Text = "00:00"
+		lyricsTimeRemaining.Text = "-00:00"
+		lyricsSlider:Set(0, true)
+
+		state.lyricToken = (state.lyricToken or 0) + 1
+		local token = state.lyricToken
+		state.lyricLoading = true
+		state.lyricEntries = nil
+		state.lyricActive = nil
+		lyricsTrack:ClearAllChildren()
+		lyricsTrack.Visible = false
+		lyricsTrack.Position = UDim2.fromOffset(0, 0)
+		lyricsDots.Visible = true
+		lyricsHint.Visible = false
+
+		if not track then
+			state.lyricLoading = false
+			lyricsHint.Text = "还没有播放中的歌曲"
+			lyricsHint.Visible = true
+			return
+		end
+		local entries = musicParseLrc(track.lyrics)
+		if #entries == 0 then
+			state.lyricLoading = false
+			lyricsHint.Text = "暂无歌词 · 关闭后可右键歌曲导入 LRC"
+			lyricsHint.Visible = true
+			return
+		end
+
+		task.delay(1.8, function()
+			if token ~= state.lyricToken or not state.lyricsOpen or not lyrics.Parent then
+				return
+			end
+			local width = overlayWidth * 0.48 - 8
+			local mainSize = 28
+			local transSize = 14
+			local y = 0
+			local rows = {}
+			local rowIndex = 0
+			local previousTime = nil
+			local showTranslation = M.Settings.showTranslation
+			local function addBreak()
+				rowIndex = rowIndex + 1
+				local breakRow = U.frame(lyricsTrack, {
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					Position = UDim2.fromOffset(0, y),
+					Size = UDim2.fromOffset(width, 30),
+				})
+				makeDots(breakRow, 0, 6, 13, 2)
+				y = y + 30 + 16
+			end
+			for _, entry in ipairs(entries) do
+				if previousTime and entry.Time - previousTime >= 10 then
+					addBreak()
+				end
+				local mainHeight = math.max(mainSize + 4, U.measureWrap(entry.Text, mainSize, F.Bold, width).Y + 2)
+				local transText = nil
+				if showTranslation and entry.Trans ~= "" then
+					transText = entry.Trans
+				end
+				local transHeight = 0
+				if transText then
+					transHeight = math.max(transSize + 4, U.measureWrap(transText, transSize, F.Regular, width).Y + 2)
+				end
+				local rowHeight = mainHeight + (transText and (transHeight + 4) or 0) + 22
+				local row = U.frame(lyricsTrack, {
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					Position = UDim2.fromOffset(0, y),
+					Size = UDim2.fromOffset(width, rowHeight),
+				})
+				local main = U.label(row, {
+					Text = entry.Text,
+					Font = F.Bold,
+					TextSize = mainSize,
+					TextColor3 = T.White,
+					TextTransparency = 0.8,
+					TextWrapped = true,
+					TextXAlignment = Enum.TextXAlignment.Left,
+					TextYAlignment = Enum.TextYAlignment.Top,
+					Size = UDim2.fromOffset(width, mainHeight),
+				})
+				local trans = nil
+				if transText then
+					trans = U.label(row, {
+						Text = transText,
+						TextSize = transSize,
+						TextColor3 = T.White,
+						TextTransparency = 0.85,
+						TextWrapped = true,
+						TextXAlignment = Enum.TextXAlignment.Left,
+						TextYAlignment = Enum.TextYAlignment.Top,
+						Position = UDim2.fromOffset(0, mainHeight + 4),
+						Size = UDim2.fromOffset(width, transHeight),
+					})
+				end
+				rowIndex = rowIndex + 1
+				rows[#rows + 1] = {
+					Time = entry.Time,
+					Main = main,
+					Trans = trans,
+					RowIndex = rowIndex,
+					TopY = y,
+					CenterY = y + rowHeight * 0.5,
+				}
+				y = y + rowHeight
+				previousTime = entry.Time
+			end
+			lyricsTrack.Size = UDim2.fromOffset(width, math.max(1, y))
+			state.lyricEntries = rows
+			state.lyricLoading = false
+			lyricsDots.Visible = false
+			lyricsTrack.Visible = true
+			updateLyrics(true)
+		end)
+	end
+
+	-- -----------------------------------------------------------------------------------
+	-- Coverflow
+	-- -----------------------------------------------------------------------------------
+	local existingCoverflow = main:FindFirstChild("NerxMusicCoverflow")
+	if existingCoverflow then
+		existingCoverflow:Destroy()
+	end
+	local coverflow = U.canvas(main, {
+		Name = "NerxMusicCoverflow",
+		BackgroundColor3 = T.Window,
+		BackgroundTransparency = 0.03,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+		Visible = false,
+		Active = true,
+		ZIndex = 40,
+	})
+	local cfGlow = U.frame(coverflow, {
+		BackgroundColor3 = T.White,
+		BackgroundTransparency = 0.97,
+		BorderSizePixel = 0,
+		Position = UDim2.fromScale(0.5, 0.2),
+		Size = UDim2.fromOffset(280, 280),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+	})
+	U.corner(cfGlow, 999)
+	local cfTop = U.frame(coverflow, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 0, 44),
+	})
+	U.label(cfTop, {
+		Text = "Coverflow",
+		Font = F.Bold,
+		TextSize = 10.5,
+		TextColor3 = T.Text,
+		TextTransparency = 0.05,
+		Position = UDim2.fromOffset(16, 0),
+		Size = UDim2.fromOffset(120, 44),
+	})
+	local cfClose = U.frame(cfTop, {
+		AnchorPoint = Vector2.new(1, 0.5),
+		BackgroundColor3 = T.White,
+		BackgroundTransparency = 0.94,
+		BorderSizePixel = 0,
+		Position = UDim2.new(1, -14, 0.5, 0),
+		Size = UDim2.fromOffset(24, 24),
+	})
+	U.corner(cfClose, 12)
+	U.icon(cfClose, "x-small", 10, T.Muted, {
+		Size = UDim2.fromScale(1, 1),
+	})
+	U.inputButton(cfClose, function()
+		closeCoverflow()
+	end)
+	local cfStage = U.frame(coverflow, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, 44),
+		Size = UDim2.new(1, 0, 1, -150),
+		ClipsDescendants = true,
+	})
+	local cfTitle = U.label(coverflow, {
+		Text = "",
+		Font = F.Bold,
+		TextSize = 12,
+		TextColor3 = T.Text,
+		TextTransparency = 0.04,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Position = UDim2.new(0, 0, 1, -106),
+		Size = UDim2.new(1, 0, 0, 18),
+	})
+	local cfArtist = U.label(coverflow, {
+		Text = "",
+		TextSize = 8.5,
+		TextColor3 = T.Faint,
+		TextTransparency = 0.2,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Position = UDim2.new(0, 0, 1, -84),
+		Size = UDim2.new(1, 0, 0, 14),
+	})
+	local cfNav = U.frame(coverflow, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0, 0, 1, -66),
+		Size = UDim2.new(1, 0, 0, 48),
+	})
+	circleButton(cfNav, MAIN_WIDTH * 0.5 - 62, 8, "chevron-small-left", function()
+		state.cfIndex = state.cfIndex - 1
+		renderCoverflowStage()
+	end)
+	circleButton(cfNav, MAIN_WIDTH * 0.5 + 38, 8, "chevron-small-right", function()
+		state.cfIndex = state.cfIndex + 1
+		renderCoverflowStage()
+	end)
+	local cfPlay = circleButton(cfNav, MAIN_WIDTH * 0.5 - 17, 0, "play-small", function()
+		local ids = state.cfIds
+		if #ids > 0 then
+			local id = ids[((state.cfIndex - 1) % #ids) + 1]
+			if id then
+				M:Play(id, ids)
+				closeCoverflow()
+			end
+		end
+	end, 34)
+	cfPlay.BackgroundColor3 = T.Accent
+	local cfPlayIcon = cfPlay:FindFirstChildWhichIsA("TextLabel")
+	if cfPlayIcon then
+		cfPlayIcon.TextColor3 = accentText()
+		cfPlayIcon.TextTransparency = 0
+	end
+
+	renderCoverflowStage = function()
+		cfStage:ClearAllChildren()
+		local ids = state.cfIds
+		if #ids == 0 then
+			cfTitle.Text = "没有可播放的歌曲"
+			cfArtist.Text = ""
+			return
+		end
+		state.cfIndex = ((state.cfIndex - 1) % #ids) + 1
+		local stageWidth = MAIN_WIDTH
+		local stageHeight = math.max(120, MAIN_HEIGHT - 150)
+		for offset = -2, 2 do
+			local id = ids[((state.cfIndex + offset - 1) % #ids) + 1]
+			local track = M.Tracks[id]
+			if track then
+				local size = offset == 0 and 140 or (math.abs(offset) == 1 and 112 or 84)
+				local x = stageWidth * 0.5 - size * 0.5 + offset * 112
+				local y = stageHeight * 0.5 - size * 0.5 + math.abs(offset) * 6
+				local cover = makeArt(cfStage, UDim2.fromOffset(size, size), track.color1, track.color2, 7, 30 - math.abs(offset) * 5, true)
+				cover.Position = UDim2.fromOffset(x, y)
+				cover.BackgroundTransparency = math.abs(offset) == 0 and 0 or (math.abs(offset) == 1 and 0.12 or 0.45)
+				if offset ~= 0 then
+					cover.Rotation = offset < 0 and -7 or 7
+				end
+				local input = U.inputButton(cover, function()
+					if offset == 0 then
+						M:Play(track.id, ids)
+						closeCoverflow()
+					else
+						state.cfIndex = ((state.cfIndex + offset - 1) % #ids) + 1
+						renderCoverflowStage()
+					end
+				end)
+				input.ZIndex = 40
+				U.connect(input.MouseEnter, function()
+					U.tween(cover, U.Tween.Fast, { BackgroundTransparency = math.abs(offset) == 0 and 0 or 0.02 })
+				end)
+				U.connect(input.MouseLeave, function()
+					U.tween(cover, U.Tween.Fast, { BackgroundTransparency = math.abs(offset) == 0 and 0 or (math.abs(offset) == 1 and 0.12 or 0.45) })
+				end)
+			end
+		end
+		local center = M.Tracks[ids[state.cfIndex]]
+		cfTitle.Text = center and center.name or "—"
+		cfArtist.Text = center and (center.artist .. " — " .. center.album) or ""
+	end
+
+	openCoverflow = function()
+		local ids = currentIds()
+		if #ids == 0 then
+			ids = M:OrderedIds()
+		end
+		state.cfIds = ids
+		state.cfIndex = 1
+		for index, id in ipairs(ids) do
+			if id == M.CurrentId then
+				state.cfIndex = index
+				break
+			end
+		end
+		renderCoverflowStage()
+		coverflow.Visible = true
+	end
+
+	closeCoverflow = function()
+		coverflow.Visible = false
+	end
+
+	if page.Root then
+		U.connect(page.Root:GetPropertyChangedSignal("Visible"), function()
+			if not page.Root.Visible then
+				closeLyrics()
+				closeCoverflow()
+			end
+		end)
+	end
+
+	-- -----------------------------------------------------------------------------------
+	-- Library events + boot
+	-- -----------------------------------------------------------------------------------
+	M:Subscribe(function(kind, payload)
+		if not canvas.Parent then
+			return
+		end
+		if kind == "library" then
+			if state.view.kind == "playlist" and not currentPlaylist() then
+				state.view = { kind = "home" }
+			end
+			renderRail()
+			if state.view.kind == "settings" then
+				if settingsSync then
+					settingsSync()
+				end
+			else
+				renderMain()
+			end
+			renderPlayer()
+		elseif kind == "track" then
+			syncRows()
+			renderPlayer()
+			if state.lyricsOpen then
+				renderLyrics(true)
+			end
+		elseif kind == "state" then
+			renderPlayer()
+		elseif kind == "settings" then
+			renderPlayer()
+			if settingsSync then
+				settingsSync()
+			end
+		elseif kind == "loadfail" then
+			local name = payload and payload.name or "音频"
+			notify("音乐加载失败", "无法播放「" .. tostring(name) .. "」，请检查音频 ID", "triangle-exclamation", T.Amber)
+		end
+	end)
+
+	renderRail()
+	renderMain()
+	renderPlayer()
+	syncVolumeUI(M.Settings.volume)
+	task.spawn(function()
+		while canvas.Parent do
+			task.wait(0.1)
+			if canvas.Parent then
+				updatePlayerProgress()
+				if state.lyricsOpen then
+					updateLyrics(false)
+				end
+			end
+		end
 	end)
 end
 
