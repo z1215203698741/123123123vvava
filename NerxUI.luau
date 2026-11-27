@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.3.20"
+Nerx.Version = "1.3.25"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -10919,7 +10919,7 @@ local function bgNotify(text, color)
 	pcall(function()
 		Nerx:Notify({
 			Title = "Themes",
-			Text = tostring(text),
+			Content = tostring(text),
 			Icon = "paint-bucket",
 			Color = color or Theme.Green,
 			Duration = 3,
@@ -11284,7 +11284,7 @@ local function applyPalette(record)
 end
 
 local function nextBackgroundName()
-	local base = "我的背景"
+	local base = Nerx.Locale:Pick("我的背景", "My Background")
 	if not bgStore.customs[base] then
 		return base
 	end
@@ -11428,12 +11428,13 @@ local function setStep(index, instant)
 		bgBack:SetDisabled(index == 1)
 	end
 	if bgNext then
-		bgNext.Label.Text = index == 3 and "保存并应用" or "下一步"
+		bgNext.Label.Text = index == 3 and Nerx.Locale:Pick("保存并应用", "Save & apply")
+				or Nerx.Locale:Pick("下一步", "Next")
 	end
 	if index == 3 then
-		local fitText = fitValueToLabel[bgState.fit] or "填充"
+		local fitText = fitValueToLabel[bgState.fit] or Nerx.Locale:Pick("填充", "Fill")
 		if bgSummary.url then
-			bgSummary.url.Text = bgState.url ~= "" and bgState.url or "未设置"
+			bgSummary.url.Text = bgState.url ~= "" and bgState.url or Nerx.Locale:Pick("未设置", "Not set")
 			bgSummary.fit.Text = fitText
 			bgSummary.base.Text = U.hex(bgState.base)
 			bgSummary.accent.Text = U.hex(bgState.accent)
@@ -11510,7 +11511,8 @@ local function openWizard(window)
 		bgSaveConfig:SetValue(true, true)
 	end
 	if bgConfigLabel then
-		bgConfigLabel.Text = "同时保存到当前配置（" .. tostring(Nerx.Configs.ActiveName or "Default") .. "）"
+		local activeName = tostring(Nerx.Configs.ActiveName or "Default")
+		bgConfigLabel.Text = Nerx.Locale:Pick("同时保存到当前配置（" .. activeName .. "）", "Also save to the active config (" .. activeName .. ")")
 	end
 	setPreviewAsset()
 	setStep(1, true)
@@ -11932,8 +11934,8 @@ local function buildWizard(window)
 	bgNameInput = Nerx.Widgets.Input(bgSteps[3], {
 		Width = 260,
 		Height = 30,
-		Text = "我的背景",
-		Placeholder = "给这套背景起个名字",
+		Text = Nerx.Locale:Pick("我的背景", "My Background"),
+		Placeholder = Nerx.Locale:Pick("给这套背景起个名字", "Name this background"),
 	})
 	bgNameInput.Root.Position = UDim2.fromOffset(0, 136)
 	bgNameInput.Root.ClipsDescendants = true
@@ -11951,7 +11953,7 @@ local function buildWizard(window)
 	local function commit()
 		local name = tostring(bgNameInput.Box.Text or ""):gsub("^%s+", ""):gsub("%s+$", "")
 		if name == "" then
-			bgNotify("请先填写主题名称", Theme.Amber)
+			bgNotify(Nerx.Locale:Pick("请先填写主题名称", "Enter a theme name first"), Theme.Amber)
 			return
 		end
 		local record = {
@@ -11983,7 +11985,7 @@ local function buildWizard(window)
 			end)
 		end
 		closeWizard()
-		bgNotify("已保存「" .. name .. "」到我的主题", Theme.Green)
+		bgNotify(Nerx.Locale:Pick("已保存「" .. name .. "」到我的主题", "Saved \"" .. name .. "\" to My Themes"), Theme.Green)
 	end
 
 	bgBack = Nerx.Widgets.Button(bgPanel, "上一步", function()
@@ -12303,6 +12305,2849 @@ function Background:Open(window)
 	buildWizard(window)
 	openWizard(window)
 end
+
+
+-- ---------------------------------------------------------------------------------------
+-- UIKit: shared building blocks for menus built on top of NerxUI
+-- ---------------------------------------------------------------------------------------
+Nerx.UIKit = {}
+local UIKit = Nerx.UIKit
+
+function UIKit.CountBadge(parent, x, y, text)
+	local width = U.measure(tostring(text), 9, Fonts.Regular).X + 16
+	local badge = U.frame(parent, {
+		BackgroundColor3 = Theme.Field,
+		BackgroundTransparency = 0.15,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(x, y),
+		Size = UDim2.fromOffset(width, 18),
+	})
+	U.corner(badge, 6)
+	U.label(badge, {
+		Text = tostring(text),
+		TextSize = 9,
+		TextColor3 = Theme.Muted,
+		TextTransparency = 0.2,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Size = UDim2.fromScale(1, 1),
+	})
+	return width
+end
+
+function UIKit.TitleText(parent, text, count, status)
+	local title = U.label(parent, {
+		Text = text,
+		Font = Fonts.Bold,
+		TextSize = 15,
+		TextColor3 = Theme.Text,
+		TextTransparency = 0.05,
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.fromOffset(0, 28),
+		TextXAlignment = Enum.TextXAlignment.Left,
+	})
+	local width = U.measure(text, 15, Fonts.Bold).X
+	title.Size = UDim2.fromOffset(width + 2, 28)
+	if count then
+		UIKit.CountBadge(parent, width + 10, 5, count)
+		width = width + 10 + U.measure(tostring(count), 9, Fonts.Regular).X + 16
+	end
+	if status then
+		local dot = U.frame(parent, {
+			AnchorPoint = Vector2.new(0, 0.5),
+			BackgroundColor3 = Theme.Faint,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(width + 12, 14),
+			Size = UDim2.fromOffset(4, 4),
+		})
+		U.corner(dot, 2)
+		U.label(parent, {
+			Text = status,
+			TextSize = 9.5,
+			TextColor3 = Theme.Muted,
+			TextTransparency = 0.35,
+			Position = UDim2.fromOffset(width + 20, 0),
+			Size = UDim2.fromOffset(160, 28),
+		})
+	end
+	return title
+end
+
+function UIKit.SurfaceCard(parent, x, y, width, height, options)
+	options = options or {}
+	local radius = options.Radius or 8
+	local card = U.frame(parent, {
+		BackgroundColor3 = options.Background or Theme.Surface,
+		BackgroundTransparency = options.Transparency or 0,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(x, y),
+		Size = UDim2.fromOffset(width, height),
+		ClipsDescendants = options.Clip == true,
+	})
+	U.corner(card, radius)
+	local strokeParent = card
+	if options.InsetStroke then
+		-- 1px inset outline: the border sits inside the rounded card instead of
+		-- riding the outer edge, so it can never overhang the corners.
+		strokeParent = U.frame(card, {
+			Name = "NerxCardOutline",
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(1, 1),
+			Size = UDim2.new(1, -2, 1, -2),
+			ZIndex = (card.ZIndex or 1) + 1,
+		})
+		U.corner(strokeParent, math.max(1, radius - 1))
+	end
+	local stroke = U.stroke(strokeParent, options.StrokeColor or Theme.Stroke, options.StrokeTransparency or 0.55, 1)
+	return card, stroke
+end
+
+function UIKit.ToolbarButton(parent, text, rightOffset, y, width, height, callback, disabled)
+	local api = Nerx.Widgets.Button(parent, text, callback, disabled)
+	api.Root.AnchorPoint = Vector2.new(1, 0)
+	api.Root.Position = UDim2.new(1, -rightOffset, 0, y)
+	api.Root.Size = UDim2.fromOffset(width, height)
+	return api
+end
+
+function UIKit.ToolbarPrimary(parent, text, rightOffset, y, width, height, callback)
+	local api = Nerx.Widgets.PrimaryButton(parent, text, width, height, callback)
+	api.Root.AnchorPoint = Vector2.new(1, 0)
+	api.Root.Position = UDim2.new(1, -rightOffset, 0, y)
+	return api
+end
+
+function UIKit.FilterField(parent, x, y, width, placeholder, height)
+	local api = Nerx.Widgets.Input(parent, {
+		Width = width,
+		Height = height or 28,
+		Placeholder = placeholder,
+		Icon = "magnifying-glass",
+	})
+	api.Root.Position = UDim2.fromOffset(x, y)
+	return api
+end
+
+function UIKit.Token(parent, text, x, y, color, height)
+	local h = height or 22
+	local width = U.measure(text, 8.5, Fonts.Bold).X + 16
+	local frame = U.frame(parent, {
+		BackgroundColor3 = Theme.Field,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(x, y),
+		Size = UDim2.fromOffset(width, h),
+	})
+	U.corner(frame, 4)
+	U.label(frame, {
+		Text = text,
+		Font = Fonts.Bold,
+		TextSize = 8.5,
+		TextColor3 = color or Theme.Text,
+		TextTransparency = 0.1,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Size = UDim2.fromScale(1, 1),
+	})
+	return width
+end
+
+function UIKit.Divider(parent, x, y, width, transparency)
+	U.frame(parent, {
+		BackgroundColor3 = Theme.StrokeSoft,
+		BackgroundTransparency = transparency or 0.45,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(x, y),
+		Size = UDim2.fromOffset(width, 1),
+	})
+end
+
+function UIKit.Subsection(section, text)
+	section:AddCustomRow(24, function(row)
+		U.label(row, {
+			Text = text,
+			Font = Fonts.Bold,
+			TextSize = 9,
+			TextColor3 = Theme.Muted,
+			TextTransparency = 0.35,
+			Position = UDim2.fromOffset(section.Inset or 12, 0),
+			Size = UDim2.fromOffset(220, 24),
+		})
+	end)
+end
+
+function UIKit.MetricGrid(section, items)
+	section:AddCustomRow(58, function(row)
+		local inset = section.Inset or 12
+		local gap = 6
+		local width = 406
+		local cellWidth = (width - gap * (#items - 1)) / #items
+		for index, item in ipairs(items) do
+			local cell = U.frame(row, {
+				BackgroundColor3 = Theme.Field,
+				BackgroundTransparency = 0.3,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset(inset + (index - 1) * (cellWidth + gap), 6),
+				Size = UDim2.fromOffset(cellWidth, 44),
+			})
+			U.corner(cell, 5)
+			U.label(cell, {
+				Text = item.Label,
+				Font = Fonts.Bold,
+				TextSize = 7.5,
+				TextColor3 = Theme.Muted,
+				TextTransparency = 0.45,
+				Position = UDim2.fromOffset(8, 5),
+				Size = UDim2.fromOffset(cellWidth - 16, 12),
+			})
+			U.label(cell, {
+				Text = item.Value,
+				Font = Fonts.Bold,
+				TextSize = 12,
+				TextColor3 = Theme.Text,
+				TextTransparency = 0.1,
+				Position = UDim2.fromOffset(8, 17),
+				Size = UDim2.fromOffset(cellWidth - 16, 16),
+			})
+			if item.Sub then
+				U.label(cell, {
+					Text = item.Sub,
+					TextSize = 7.5,
+					TextColor3 = Theme.Faint,
+					TextTransparency = 0.25,
+					Position = UDim2.fromOffset(8, 32),
+					Size = UDim2.fromOffset(cellWidth - 16, 11),
+				})
+			end
+		end
+	end)
+end
+
+function UIKit.ChipGroup(section, label, items, height)
+	section:AddCustomRow(height or 62, function(row)
+		local inset = section.Inset or 12
+		local x = inset
+		local y = 5
+		U.label(row, {
+			Text = label,
+			Font = Fonts.Bold,
+			TextSize = 8,
+			TextColor3 = Theme.Muted,
+			TextTransparency = 0.45,
+			Position = UDim2.fromOffset(inset, y + 6),
+			Size = UDim2.fromOffset(46, 14),
+		})
+		x = inset + 50
+		for _, item in ipairs(items) do
+			local chip, width = Nerx.Widgets.Chip(row, item, {
+				Height = 22,
+				TextSize = 10,
+			})
+			if x + width > (section.Card.AbsoluteSize.X or 430) - inset then
+				x = inset + 50
+				y = y + 28
+			end
+			chip.Root.Position = UDim2.fromOffset(x, y)
+			x = x + width + 4
+		end
+	end)
+end
+
+function UIKit.Notify(title, content, icon, color)
+	Nerx:Notify({
+		Title = title,
+		Content = content,
+		Icon = icon or "circle-i",
+		Color = color or Theme.Muted,
+	})
+end
+
+-- Interactive helpers shared by config, bind and theme pages.
+local UIHelpers = {}
+UIKit.UIHelpers = UIHelpers
+
+function UIHelpers.InputPrompt(anchor, config)
+	config = config or {}
+	local submitted = false
+	local box
+	local function submit()
+		if submitted then
+			return
+		end
+		local text = tostring(box and box.Text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+		if text == "" then
+			return
+		end
+		submitted = true
+		Nerx:ClosePopup(true)
+		if config.OnSubmit then
+			config.OnSubmit(text)
+		end
+	end
+
+	U.popup(anchor, 278, 124, function(card)
+		U.padding(card, 12, 12, 12, 12)
+		U.label(card, {
+			Text = config.Title or "Name",
+			Font = Fonts.Bold,
+			TextSize = 11,
+			TextColor3 = Theme.Text,
+			TextTransparency = 0.05,
+			Position = UDim2.fromOffset(0, 0),
+			Size = UDim2.new(1, 0, 0, 16),
+		})
+		local field = U.frame(card, {
+			BackgroundColor3 = Theme.Field,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(0, 24),
+			Size = UDim2.new(1, 0, 0, 28),
+		})
+		U.corner(field, 5)
+		local stroke = U.stroke(field, Theme.Stroke, 0.55, 1)
+		box = U.new("TextBox", {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Font = Fonts.Regular,
+			Text = config.Initial or "",
+			PlaceholderText = config.Placeholder or "Type a name...",
+			PlaceholderColor3 = Theme.Faint,
+			TextColor3 = Theme.Text,
+			TextSize = 11,
+			ClearTextOnFocus = false,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Position = UDim2.fromOffset(9, 0),
+			Size = UDim2.new(1, -18, 1, 0),
+		}, field)
+		U.connect(box.Focused, function()
+			U.tween(field, U.Tween.Fast, { BackgroundColor3 = Theme.FieldHover })
+			stroke.Transparency = 0.3
+		end)
+		U.connect(box.FocusLost, function(enterPressed)
+			U.tween(field, U.Tween.Fast, { BackgroundColor3 = Theme.Field })
+			stroke.Transparency = 0.55
+			if enterPressed then
+				submit()
+			end
+		end)
+
+		local cancel = Nerx.Widgets.Button(card, "Cancel", function()
+			submitted = true
+			Nerx:ClosePopup(true)
+		end)
+		cancel.Root.Position = UDim2.new(1, -150, 1, -26)
+		cancel.Root.Size = UDim2.fromOffset(66, 26)
+		local create = Nerx.Widgets.PrimaryButton(card, config.Submit or "Create", 76, 26, submit)
+		create.Root.Position = UDim2.new(1, -76, 1, -26)
+		task.defer(function()
+			pcall(function()
+				box:CaptureFocus()
+			end)
+		end)
+	end)
+end
+
+function UIHelpers.ImportPrompt(anchor, config)
+	config = config or {}
+	local box
+	U.popup(anchor, 320, 292, function(card)
+		U.padding(card, 12, 12, 12, 12)
+		U.label(card, {
+			Text = config.Title or "Import JSON",
+			Font = Fonts.Bold,
+			TextSize = 11,
+			TextColor3 = Theme.Text,
+			TextTransparency = 0.05,
+			Position = UDim2.fromOffset(0, 0),
+			Size = UDim2.new(1, 0, 0, 16),
+		})
+		local field = U.frame(card, {
+			BackgroundColor3 = Theme.FieldDeep,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(0, 24),
+			Size = UDim2.new(1, 0, 0, 190),
+		})
+		U.corner(field, 5)
+		local stroke = U.stroke(field, Theme.Stroke, 0.55, 1)
+		box = U.new("TextBox", {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Font = Fonts.Mono,
+			Text = "",
+			PlaceholderText = config.Placeholder or "Paste exported JSON here...",
+			PlaceholderColor3 = Theme.Faint,
+			TextColor3 = Theme.Text,
+			TextSize = 9.5,
+			MultiLine = true,
+			TextWrapped = true,
+			ClearTextOnFocus = false,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top,
+			Position = UDim2.fromOffset(9, 8),
+			Size = UDim2.new(1, -18, 1, -16),
+		}, field)
+		U.connect(box.Focused, function()
+			stroke.Transparency = 0.3
+		end)
+		U.connect(box.FocusLost, function()
+			stroke.Transparency = 0.55
+		end)
+
+		local cancel = Nerx.Widgets.Button(card, "Cancel", function()
+			Nerx:ClosePopup(true)
+		end)
+		cancel.Root.Position = UDim2.new(1, -150, 1, -26)
+		cancel.Root.Size = UDim2.fromOffset(66, 26)
+		local submit = Nerx.Widgets.PrimaryButton(card, config.Submit or "Import", 76, 26, function()
+			local text = tostring(box.Text or "")
+			if text == "" then
+				return
+			end
+			Nerx:ClosePopup(true)
+			if config.OnSubmit then
+				config.OnSubmit(text)
+			end
+		end)
+		submit.Root.Position = UDim2.new(1, -76, 1, -26)
+		task.defer(function()
+			pcall(function()
+				box:CaptureFocus()
+			end)
+		end)
+	end)
+end
+
+function UIHelpers.ContextMenu(anchor, items)
+	items = items or {}
+	local height = 10 + #items * 28
+	U.popup(anchor, 178, height, function(card)
+		U.padding(card, 5, 5, 5, 5)
+		local list = U.frame(card, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, #items * 28),
+		})
+		U.list(list, 0)
+		for _, item in ipairs(items) do
+			local row = U.frame(list, {
+				BackgroundColor3 = Theme.White,
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Size = UDim2.new(1, 0, 0, 28),
+			})
+			U.corner(row, 5)
+			U.label(row, {
+				Text = item.Text or "Action",
+				TextSize = 10.5,
+				TextColor3 = item.Color or Theme.Text,
+				TextTransparency = 0.15,
+				Position = UDim2.fromOffset(9, 0),
+				Size = UDim2.new(1, -18, 1, 0),
+				TextTruncate = Enum.TextTruncate.AtEnd,
+			})
+			local input = U.inputButton(row, function()
+				Nerx:ClosePopup(true)
+				if item.Callback then
+					item.Callback()
+				end
+			end)
+			U.connect(input.MouseEnter, function()
+				U.tween(row, U.Tween.Fast, { BackgroundTransparency = 0.94 })
+			end)
+			U.connect(input.MouseLeave, function()
+				U.tween(row, U.Tween.Fast, { BackgroundTransparency = 1 })
+			end)
+		end
+	end)
+end
+
+function UIHelpers.Picker(anchor, config)
+	config = config or {}
+	local items = config.Items or {}
+	local query = ""
+	local renderList
+	U.popup(anchor, 326, 332, function(card)
+		U.padding(card, 9, 9, 9, 9)
+		U.label(card, {
+			Text = config.Title or "Select",
+			Font = Fonts.Bold,
+			TextSize = 11,
+			TextColor3 = Theme.Text,
+			TextTransparency = 0.05,
+			Position = UDim2.fromOffset(0, 0),
+			Size = UDim2.new(1, 0, 0, 16),
+		})
+		local search = U.frame(card, {
+			BackgroundColor3 = Theme.FieldDeep,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(0, 23),
+			Size = UDim2.new(1, 0, 0, 26),
+		})
+		U.corner(search, 5)
+		U.stroke(search, Theme.Stroke, 0.6, 1)
+		local box = U.new("TextBox", {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Font = Fonts.Regular,
+			Text = "",
+			PlaceholderText = config.Placeholder or "Filter...",
+			PlaceholderColor3 = Theme.Faint,
+			TextColor3 = Theme.Text,
+			TextSize = 10,
+			ClearTextOnFocus = false,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Position = UDim2.fromOffset(9, 0),
+			Size = UDim2.new(1, -18, 1, 0),
+		}, search)
+
+		local scroll = U.new("ScrollingFrame", {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(0, 56),
+			Size = UDim2.new(1, 0, 1, -56),
+			CanvasSize = UDim2.fromOffset(0, 0),
+			AutomaticCanvasSize = Enum.AutomaticSize.Y,
+			ScrollBarThickness = 3,
+			ScrollBarImageColor3 = Theme.Faint,
+			ScrollBarImageTransparency = 0.35,
+			ScrollingDirection = Enum.ScrollingDirection.Y,
+			ElasticBehavior = Enum.ElasticBehavior.Never,
+		}, card)
+		U.list(scroll, 2)
+		local rows = {}
+
+		renderList = function()
+			for _, row in ipairs(rows) do
+				if row and row.Parent then
+					row:Destroy()
+				end
+			end
+			table.clear(rows)
+			local count = 0
+			for _, item in ipairs(items) do
+				local labelText = tostring(item.Label or item.Name or "")
+				local detailText = tostring(item.Detail or "")
+				if query == ""
+					or string.find(string.lower(labelText), query, 1, true)
+					or string.find(string.lower(detailText), query, 1, true) then
+					count = count + 1
+					local row = U.frame(scroll, {
+						BackgroundColor3 = Theme.White,
+						BackgroundTransparency = 1,
+						BorderSizePixel = 0,
+						Size = UDim2.new(1, 0, 0, detailText ~= "" and 34 or 28),
+					})
+					U.corner(row, 5)
+					U.label(row, {
+						Text = labelText,
+						TextSize = 10,
+						TextColor3 = item.Selected and Theme.Text or Theme.Muted,
+						TextTransparency = item.Selected and 0.05 or 0.2,
+						Position = UDim2.fromOffset(9, detailText ~= "" and 3 or 0),
+						Size = UDim2.new(1, -26, 0, detailText ~= "" and 14 or 28),
+						TextTruncate = Enum.TextTruncate.AtEnd,
+					})
+					if detailText ~= "" then
+						U.label(row, {
+							Text = detailText,
+							TextSize = 7.5,
+							TextColor3 = Theme.Faint,
+							TextTransparency = 0.25,
+							Position = UDim2.fromOffset(9, 17),
+							Size = UDim2.new(1, -26, 0, 12),
+							TextTruncate = Enum.TextTruncate.AtEnd,
+						})
+					end
+					if item.Selected then
+						U.icon(row, "circle-check", 10, Theme.Accent, {
+							AnchorPoint = Vector2.new(1, 0.5),
+							Position = UDim2.new(1, -9, 0.5, 0),
+							Size = UDim2.fromOffset(14, 14),
+							TextTransparency = 0.1,
+						})
+					end
+					local input = U.inputButton(row, function()
+						Nerx:ClosePopup(true)
+						if config.OnSelect then
+							config.OnSelect(item)
+						end
+					end)
+					U.connect(input.MouseEnter, function()
+						U.tween(row, U.Tween.Fast, { BackgroundTransparency = 0.94 })
+					end)
+					U.connect(input.MouseLeave, function()
+						U.tween(row, U.Tween.Fast, { BackgroundTransparency = 1 })
+					end)
+					rows[#rows + 1] = row
+				end
+			end
+			if count == 0 then
+				local empty = U.label(scroll, {
+					Text = config.EmptyText or "Nothing matches",
+					TextSize = 9.5,
+					TextColor3 = Theme.Faint,
+					TextTransparency = 0.3,
+					Position = UDim2.fromOffset(9, 8),
+					Size = UDim2.new(1, -18, 0, 18),
+				})
+				rows[#rows + 1] = empty
+			end
+		end
+
+		U.connect(box:GetPropertyChangedSignal("Text"), function()
+			query = string.lower(tostring(box.Text or ""))
+			renderList()
+		end)
+		renderList()
+		task.defer(function()
+			pcall(function()
+				box:CaptureFocus()
+			end)
+		end)
+	end)
+end
+
+function UIHelpers.CopyPath(fileName)
+	local path = Nerx.Storage:Path(fileName)
+	local copied = Nerx.Storage:Copy(path)
+	UIKit.Notify("Storage", (copied and "Path copied: " or "") .. path, "floppy-disk", copied and Theme.Green or Theme.Amber)
+	return path, copied
+end
+
+function UIHelpers.FormatAgo(timestamp)
+	if not timestamp then
+		return "never"
+	end
+	local delta = math.max(0, os.time() - timestamp)
+	if delta < 60 then
+		return "just now"
+	elseif delta < 3600 then
+		return math.floor(delta / 60) .. "m ago"
+	elseif delta < 86400 then
+		return math.floor(delta / 3600) .. "h ago"
+	end
+	return math.floor(delta / 86400) .. "d ago"
+end
+
+function UIHelpers.FormatSize(bytes)
+	bytes = tonumber(bytes) or 0
+	if bytes >= 1024 * 1024 then
+		return string.format("%.1f MB", bytes / (1024 * 1024))
+	end
+	return string.format("%.1f KB", math.max(1, bytes) / 1024)
+end
+
+function UIHelpers.ConfigTint(name)
+	local hash = 0
+	local text = tostring(name or "")
+	for index = 1, #text do
+		hash = (hash * 31 + string.byte(text, index)) % 2147483647
+	end
+	local hue = (hash % 360) / 360
+	return Color3.fromHSV(hue, 0.38, 0.24), Color3.fromHSV(hue, 0.3, 0.08)
+end
+
+
+-- ---------------------------------------------------------------------------------------
+-- Locale: menu-wide runtime translation for text objects
+-- ---------------------------------------------------------------------------------------
+Nerx.Locale = {}
+local Locale = Nerx.Locale
+
+Locale.Language = "zh"
+Locale.Enabled = false
+Locale.Exact = {}
+Locale.Words = {}
+Locale.Skip = nil
+Locale.Pairs = {}
+Locale.ZhToEn = {}
+Locale.EnToZh = {}
+
+local localeOriginal = setmetatable({}, { __mode = "k" })
+local localeWatched = setmetatable({}, { __mode = "k" })
+local localeRoots = {}
+local localeHooked = {}
+local localeApplying = false
+
+local function localeIsTextObject(object)
+	local className = object.ClassName
+	return className == "TextLabel" or className == "TextButton" or className == "TextBox"
+end
+
+function Locale:LooksChinese(text)
+	for index = 1, #text do
+		if string.byte(text, index) >= 128 then
+			return true
+		end
+	end
+	return false
+end
+
+function Locale:SetDictionary(exact, words)
+	self.Exact = exact or {}
+	self.Words = words or {}
+end
+
+-- 内置双语词条：库自己的 UI（背景向导、毛玻璃参数等）中英互切。
+function Locale:RegisterPairs(pairs)
+	for _, pair in ipairs(pairs or {}) do
+		local zh, en = pair[1], pair[2]
+		if type(zh) == "string" and type(en) == "string" then
+			self.ZhToEn[zh] = en
+			self.EnToZh[en] = zh
+		end
+	end
+end
+
+function Locale:SetSkip(predicate)
+	self.Skip = predicate
+end
+
+function Locale:ShouldSkip(object)
+	return self.Skip ~= nil and self.Skip(object) == true
+end
+
+-- 运行时拼接文案用：根据当前语言返回中/英版本。
+function Locale:Pick(zh, en)
+	if self.Language ~= "zh" and type(en) == "string" then
+		return en
+	end
+	return zh
+end
+
+function Locale:Translate(text)
+	if type(text) ~= "string" or text == "" then
+		return text
+	end
+	if self.Language ~= "zh" then
+		return self.ZhToEn[text] or text
+	end
+	local exact = self.Exact[text] or self.EnToZh[text]
+	if exact then
+		return exact
+	end
+	local dynamicTitle = string.match(text, "^Hotkeys · (.*)$")
+	if dynamicTitle then
+		local prefix = self.Exact["Hotkeys"] or "Hotkeys"
+		local name = self.Exact[dynamicTitle] or self.EnToZh[dynamicTitle] or dynamicTitle
+		return prefix .. " · " .. name
+	end
+	if string.find(text, "<") then
+		return (text:gsub(">(%a[%w%s%-]-)<", function(name)
+			local trimmed = string.match(name, "^%s*(.-)%s*$") or name
+			return ">" .. (self.Exact[trimmed] or self.EnToZh[trimmed] or trimmed) .. "<"
+		end))
+	end
+	if string.find(text, "[%d%[%]{}<>#%$\\/]") then
+		return text
+	end
+	if string.find(text, "-") then
+		return text
+	end
+	local parts = {}
+	for word in string.gmatch(text, "%a[%a]*") do
+		local translated = self.Words[word] or self.Words[string.lower(word)]
+		if not translated then
+			return text
+		end
+		parts[#parts + 1] = translated
+	end
+	if #parts == 0 then
+		return text
+	end
+	return table.concat(parts)
+end
+
+function Locale:SetText(object, text)
+	localeApplying = true
+	object.Text = text
+	localeApplying = false
+end
+
+local function localeEnsureStore(object)
+	local store = localeOriginal[object]
+	if not store then
+		store = {}
+		localeOriginal[object] = store
+	end
+	return store
+end
+
+local function localeLocalize(object)
+	if not object or not object.Parent or Locale:ShouldSkip(object) then
+		return
+	end
+	local store = localeEnsureStore(object)
+	if object.ClassName == "TextBox" then
+		local current = object.PlaceholderText
+		if type(current) ~= "string" or current == "" then
+			return
+		end
+		local original = store.Placeholder
+		if original == nil or (store.PlaceholderOut ~= nil and current ~= store.PlaceholderOut) then
+			original = current
+			store.Placeholder = current
+		end
+		local mapped = Locale:Translate(original)
+		if mapped ~= current then
+			localeApplying = true
+			object.PlaceholderText = mapped
+			localeApplying = false
+		end
+		store.PlaceholderOut = mapped
+		return
+	end
+
+	local current = object.Text
+	if type(current) ~= "string" or current == "" then
+		return
+	end
+	local original = store.Text
+	if original == nil or (store.Out ~= nil and current ~= store.Out) then
+		original = current
+		store.Text = current
+	end
+	local mapped = Locale:Translate(original)
+	if mapped ~= current then
+		localeApplying = true
+		object.Text = mapped
+		localeApplying = false
+	end
+	store.Out = mapped
+end
+
+local function localeWatch(object)
+	if localeWatched[object] then
+		return
+	end
+	localeWatched[object] = true
+	local store = localeEnsureStore(object)
+	if object.ClassName == "TextBox" then
+		U.connect(object:GetPropertyChangedSignal("PlaceholderText"), function()
+			if localeApplying or Locale:ShouldSkip(object) then
+				return
+			end
+			local current = object.PlaceholderText
+			if store.PlaceholderOut ~= nil and current == store.PlaceholderOut then
+				return
+			end
+			store.Placeholder = current
+			local mapped = Locale:Translate(current)
+			if mapped ~= current then
+				localeApplying = true
+				object.PlaceholderText = mapped
+				localeApplying = false
+			end
+			store.PlaceholderOut = mapped
+		end)
+		return
+	end
+	U.connect(object:GetPropertyChangedSignal("Text"), function()
+		if localeApplying or Locale:ShouldSkip(object) then
+			return
+		end
+		local current = object.Text
+		if store.Out ~= nil and current == store.Out then
+			return
+		end
+		store.Text = current
+		local mapped = Locale:Translate(current)
+		if mapped ~= current then
+			localeApplying = true
+			object.Text = mapped
+			localeApplying = false
+		end
+		store.Out = mapped
+	end)
+end
+
+function Locale:Attach(root)
+	if not root then
+		return
+	end
+	for _, existing in ipairs(localeRoots) do
+		if existing == root then
+			return
+		end
+	end
+	localeRoots[#localeRoots + 1] = root
+	if not localeHooked[root] then
+		localeHooked[root] = true
+		U.connect(root.DescendantAdded, function(object)
+			task.defer(function()
+				if not object or not object.Parent or not localeIsTextObject(object) then
+					return
+				end
+				localeWatch(object)
+				localeLocalize(object)
+			end)
+		end)
+	end
+end
+
+function Locale:Refresh()
+	for _, root in ipairs(localeRoots) do
+		if root.Parent then
+			local objects = { root }
+			for _, object in ipairs(root:GetDescendants()) do
+				objects[#objects + 1] = object
+			end
+			for _, object in ipairs(objects) do
+				if localeIsTextObject(object) then
+					localeWatch(object)
+					localeLocalize(object)
+				end
+			end
+		end
+	end
+end
+
+function Locale:SetEnabled(enabled)
+	self.Enabled = enabled == true
+	self.Language = self.Enabled and "zh" or "en"
+	self:Refresh()
+end
+
+function Locale:SetLanguage(language)
+	self.Language = language == "en" and "en" or "zh"
+	self.Enabled = self.Language == "zh"
+	self:Refresh()
+end
+
+-- 库自带界面的中英词条（示例的 SetDictionary 只负责英文→中文的菜单文本）。
+Locale:RegisterPairs({
+	{ "我的背景", "My Background" },
+	{ "填充方式", "Fill mode" },
+	{ "填充", "Fill" },
+	{ "适应", "Fit" },
+	{ "镜像", "Mirror" },
+	{ "平铺", "Tile" },
+	{ "保存并应用", "Save & apply" },
+	{ "下一步", "Next" },
+	{ "上一步", "Back" },
+	{ "未设置", "Not set" },
+	{ "同时保存到当前配置", "Also save to active config" },
+	{ "背景图片", "Background image" },
+	{ "菜单底色", "Menu base color" },
+	{ "强调色", "Accent color" },
+	{ "文字颜色", "Text color" },
+	{ "暗度 / 柔化", "Dim / Soften" },
+	{ "背景暗度", "Background dim" },
+	{ "底色浓度", "Base tint" },
+	{ "背景柔化", "Background softening" },
+	{ "暗度越高文字越清晰；Roblox 无法对 UI 背景做真模糊，柔化会降低图片不透明度。",
+		"Higher dim keeps text readable; Roblox cannot truly blur UI backgrounds, so softening lowers the image opacity." },
+	{ "保存到「我的主题」", "Save to My Themes" },
+	{ "给这套背景起个名字", "Name this background" },
+	{ "请先填写主题名称", "Enter a theme name first" },
+	{ "URL 图片 · 三步完成", "URL image · three steps" },
+	{ "01 · 图片", "01 · Image" },
+	{ "02 · 调色", "02 · Colors" },
+	{ "03 · 保存", "03 · Save" },
+	{ "拖动 / 缩放选择要显示的区域", "Drag / zoom to frame the visible area" },
+	{ "图片链接", "Image link" },
+	{ "粘贴图床直链（PNG/JPG），留空恢复纯色", "Paste a direct image URL (PNG/JPG). Leave empty to restore the solid color." },
+	{ "应用", "Apply" },
+	{ "裁剪图片", "Crop image" },
+	{ "16:9 · 菜单背景", "16:9 · Menu background" },
+	{ "拖动图片 · 滑条缩放", "Drag the image · zoom with the slider" },
+	{ "缩放", "Zoom" },
+	{ "菜单预览", "Menu preview" },
+	{ "应用裁剪", "Apply crop" },
+	{ "取消", "Cancel" },
+	{ "重置", "Reset" },
+	{ "创建", "Create" },
+	{ "选择", "Select" },
+	{ "操作", "Action" },
+	{ "没有匹配项", "Nothing matches" },
+	{ "输入名称...", "Type a name..." },
+	{ "筛选...", "Filter..." },
+	{ "在此粘贴导出的 JSON...", "Paste exported JSON here..." },
+	{ "自定义背景图", "Custom background" },
+	{ "毛玻璃模式", "Frosted mode" },
+	{ "同步到 Hotkeys", "Sync to Hotkeys" },
+	{ "同步到头像 HUD", "Sync to avatar HUD" },
+	{ "毛玻璃参数", "Frosted parameters" },
+	{ "拖动实时生效", "Live update while dragging" },
+	{ "画面模糊(全局)", "Scene blur (global)" },
+	{ "玻璃浓度", "Glass density" },
+	{ "玻璃色调", "Glass tint" },
+	{ "颗粒质感", "Grain" },
+	{ "高光强度", "Sheen strength" },
+	{ "扫光速度", "Sweep speed" },
+	{ "色散强度", "Dispersion" },
+	{ "轮廓亮度", "Outline brightness" },
+	{ "描边厚度", "Border thickness" },
+	{ "圆角", "Corner radius" },
+	{ "按压深度", "Press depth" },
+	{ "回弹阻力", "Spring" },
+	{ "恢复默认", "Reset to default" },
+})
+
+
+
+-- ---------------------------------------------------------------------------------------
+-- ThemePage: reusable Themes page (cards, preview, palette editor)
+-- ---------------------------------------------------------------------------------------
+Nerx.ThemePage = {}
+local ThemePage = Nerx.ThemePage
+
+function ThemePage.Build(themesPage, config)
+	config = config or {}
+	local window = config.Window or (Nerx.Windows and Nerx.Windows[1])
+	local themes = themesPage:SetCustomMode()
+	local T = Theme
+	local F = Fonts
+	local W = Nerx.Widgets
+	local UIHelpers = UIKit.UIHelpers
+	local notify = UIKit.Notify
+	local titleText = UIKit.TitleText
+	local surfaceCard = UIKit.SurfaceCard
+	local toolbarButton = UIKit.ToolbarButton
+	local toolbarPrimary = UIKit.ToolbarPrimary
+	local filterField = UIKit.FilterField
+
+	local renderThemes
+
+	local customColors = {
+		Base = T.Sidebar,
+		Panel = T.SurfaceRaised,
+		Text = T.Text,
+		Accent = T.Accent,
+	}
+
+	local themesTitle = titleText(themes, "Themes")
+
+	-- 毛玻璃入口：紧贴标题右侧的三点（需 NerxUI 1.3.2+ 的 Nerx.Frosted）
+	local Frosted = Nerx.Frosted
+	if not Frosted then
+		warn("[Nerx UI] 当前库缺少 Nerx.Frosted，请更新到 1.3.2；毛玻璃入口已跳过")
+	end
+
+	local frostDots, frostDotsInput
+	if Frosted then
+		frostDots = U.icon(themes, "three-dots-horizontal", 14, T.Accent, {
+			Position = UDim2.fromOffset(themesTitle.Size.X.Offset + 5, 7),
+			Size = UDim2.fromOffset(16, 14),
+			TextTransparency = 0.15,
+			TextStrokeColor3 = T.Window,
+			TextStrokeTransparency = 0.55,
+		})
+		frostDotsInput = U.inputButton(themes, nil)
+		frostDotsInput.Position = UDim2.fromOffset(themesTitle.Size.X.Offset, 0)
+		frostDotsInput.Size = UDim2.fromOffset(28, 28)
+	end
+
+	-- ---------------------------------------------------------------------------------------
+	-- 自定义背景图入口（背景层 / 向导 / 裁剪 / 保存都在库内 Nerx.Background）
+	-- ---------------------------------------------------------------------------------------
+	if Nerx.Background then
+		Nerx.Background:Attach(window)
+	end
+	local bgButton = W.Button(themes, "自定义背景图", function()
+		if Nerx.Background then
+			Nerx.Background:Open(window)
+		end
+	end)
+	bgButton.Root.Position = UDim2.fromOffset(themesTitle.Size.X.Offset + 34, 0)
+	bgButton.Root.Size = UDim2.fromOffset(92, 28)
+
+	local FROST_FILE = "frosted.json"
+	local frostSyncHotkeys = false
+	local frostSyncAvatar = false
+
+	local function frostSave()
+		Nerx.Storage:WriteJSON(FROST_FILE, {
+			Enabled = Frosted.Enabled,
+			Params = Frosted:GetParams(),
+			SyncHotkeys = frostSyncHotkeys,
+			SyncAvatar = frostSyncAvatar,
+		})
+	end
+
+	local frostSaveToken = 0
+	local function frostQueueSave()
+		frostSaveToken = frostSaveToken + 1
+		local token = frostSaveToken
+		task.delay(0.35, function()
+			if token == frostSaveToken then
+				frostSave()
+			end
+		end)
+	end
+
+	local function frostApply(partial)
+		Frosted:Apply(partial)
+		frostQueueSave()
+	end
+
+	local function frostSetEnabled(enabled)
+		Frosted:SetEnabled(enabled)
+		frostSave()
+	end
+
+	-- 毛玻璃同步：Hotkeys 浮层 / 左下角头像卡
+	local frostSyncWarned = false
+
+	local function frostSetSyncHotkeys(value)
+		frostSyncHotkeys = value == true
+		local manager = Nerx.BindManager
+		if manager then
+			if manager.SetFrosted then
+				if frostSyncHotkeys and manager.SetOverlayEnabled and manager.IsOverlayEnabled
+					and not manager:IsOverlayEnabled() then
+					manager:SetOverlayEnabled(true)
+				end
+				manager:SetFrosted(frostSyncHotkeys)
+				if manager.RefreshOverlay then
+					manager:RefreshOverlay()
+				end
+			elseif frostSyncHotkeys and not frostSyncWarned then
+				frostSyncWarned = true
+				warn("[Nerx UI] 当前 NerxUI.luau 缺少 BindManager:SetFrosted，Hotkeys 毛玻璃同步不可用；请重新复制最新的 NerxUI.luau")
+			end
+		end
+		if Frosted then
+			Frosted:Refresh()
+		end
+		frostSave()
+	end
+
+	local function frostSetSyncAvatar(value)
+		frostSyncAvatar = value == true
+		if Frosted and window and window.Account then
+			if frostSyncAvatar then
+				Frosted:Register(window.Account, { Kind = "card", SheenScale = 1.5, Halo = false, Chroma = false })
+			else
+				pcall(function()
+					Frosted:Unregister(window.Account)
+				end)
+			end
+			Frosted:Refresh()
+		end
+		frostSave()
+	end
+
+	-- 9 行参数滑块：轨道 + 填充 + 圆钮，拖动时实时应用
+	local function frostSlider(parent, y, label, key, min, max, step, format)
+		local params = Frosted.Params
+		local value = tonumber(params[key]) or min
+		local row = U.frame(parent, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(10, y),
+			Size = UDim2.new(1, -20, 0, 32),
+		})
+		U.label(row, {
+			Text = label,
+			TextSize = 10,
+			TextColor3 = T.Text,
+			Position = UDim2.fromOffset(0, 0),
+			Size = UDim2.fromOffset(96, 16),
+		})
+		local valueLabel = U.label(row, {
+			Text = format and format(value) or tostring(value),
+			TextSize = 9.5,
+			TextColor3 = T.Muted,
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.new(1, 0, 0, 0),
+			Size = UDim2.fromOffset(58, 16),
+			TextXAlignment = Enum.TextXAlignment.Right,
+		})
+		local track = U.frame(row, {
+			BackgroundColor3 = T.Field,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(0, 22),
+			Size = UDim2.new(1, 0, 0, 3),
+		})
+		U.corner(track, 2)
+		local fill = U.frame(track, {
+			BackgroundColor3 = T.Accent,
+			BorderSizePixel = 0,
+			Size = UDim2.new((value - min) / math.max(max - min, 0.0001), 0, 1, 0),
+		})
+		U.corner(fill, 2)
+		local knob = U.frame(row, {
+			BackgroundColor3 = T.Accent,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BorderSizePixel = 0,
+			Position = UDim2.new((value - min) / math.max(max - min, 0.0001), 0, 0, 23),
+			Size = UDim2.fromOffset(9, 9),
+		})
+		U.corner(knob, 5)
+
+		local dragging = false
+		local function setFromX(x)
+			local origin = track.AbsolutePosition.X
+			local width = math.max(track.AbsoluteSize.X, 1)
+			local alpha = math.clamp((x - origin) / width, 0, 1)
+			local raw = min + (max - min) * alpha
+			if step and step > 0 then
+				raw = math.floor(raw / step + 0.5) * step
+			end
+			raw = math.clamp(raw, min, max)
+			fill.Size = UDim2.new(alpha, 0, 1, 0)
+			knob.Position = UDim2.new(alpha, 0, 0, 23)
+			valueLabel.Text = format and format(raw) or tostring(raw)
+			frostApply({ [key] = raw })
+		end
+
+		local input = U.inputButton(row, nil)
+		input.Size = UDim2.new(1, 0, 0, 32)
+		U.connect(input.InputBegan, function(inputObject)
+			if inputObject.UserInputType == Enum.UserInputType.MouseButton1
+				or inputObject.UserInputType == Enum.UserInputType.Touch then
+				dragging = true
+				setFromX(inputObject.Position.X)
+			end
+		end)
+		U.connect(UserInputService.InputEnded, function(inputObject)
+			if inputObject.UserInputType == Enum.UserInputType.MouseButton1
+				or inputObject.UserInputType == Enum.UserInputType.Touch then
+				dragging = false
+			end
+		end)
+		U.connect(UserInputService.InputChanged, function(inputObject)
+			if not dragging then
+				return
+			end
+			if inputObject.UserInputType == Enum.UserInputType.MouseMovement
+				or inputObject.UserInputType == Enum.UserInputType.Touch then
+				setFromX(inputObject.Position.X)
+			end
+		end)
+	end
+
+	local frostParamsOpen = false
+	local openFrostPanel
+
+	-- 单张卡片同时容纳「毛玻璃模式」和参数列：模式行固定 208 宽在左，
+	-- 参数列出现在开关右侧（x=220），不会覆盖模式行。
+	openFrostPanel = function(showParams)
+		frostParamsOpen = showParams == true
+
+		local width = frostParamsOpen and 432 or 208
+		local height = frostParamsOpen and 466 or 52
+
+		U.popup(frostDotsInput, width, height, function(card)
+			local mainCol = U.frame(card, {
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Size = UDim2.fromOffset(208, height),
+			})
+
+			U.label(mainCol, {
+				Text = "毛玻璃模式",
+				TextSize = 11.5,
+				TextColor3 = T.Text,
+				Position = UDim2.fromOffset(12, 17),
+				Size = UDim2.fromOffset(110, 18),
+			})
+
+			local toggle = W.Toggle(mainCol, Frosted.Enabled, function(value)
+				frostSetEnabled(value)
+			end, false)
+			toggle.Root.AnchorPoint = Vector2.new(1, 0)
+			toggle.Root.Position = UDim2.new(1, -12, 0, 16)
+
+			-- 参数入口：紧贴开关左侧的三点，点击展开/收起右侧参数列
+			local dots = U.icon(mainCol, "three-dots-horizontal", 13, T.Accent, {
+				AnchorPoint = Vector2.new(1, 0),
+				Position = UDim2.new(1, -52, 0, 18),
+				Size = UDim2.fromOffset(16, 14),
+				TextTransparency = frostParamsOpen and 0 or 0.15,
+				TextStrokeColor3 = T.Window,
+				TextStrokeTransparency = 0.55,
+			})
+			local dotsInput = U.inputButton(dots, function()
+				openFrostPanel(not frostParamsOpen)
+			end)
+			dotsInput.Size = UDim2.fromScale(1, 1)
+
+			if not frostParamsOpen then
+				return
+			end
+
+			-- 模式行下方的分划线 + 同步设置
+			U.frame(mainCol, {
+				BackgroundColor3 = Theme.StrokeSoft,
+				BackgroundTransparency = 0.45,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset(12, 52),
+				Size = UDim2.new(1, -24, 0, 1),
+			})
+
+			local syncY = 64
+			local function syncRow(text, value, callback)
+				U.label(mainCol, {
+					Text = text,
+					TextSize = 10.5,
+					TextColor3 = T.Text,
+					Position = UDim2.fromOffset(12, syncY + 3),
+					Size = UDim2.fromOffset(126, 18),
+				})
+				local toggle = W.Toggle(mainCol, value, callback, false)
+				toggle.Root.AnchorPoint = Vector2.new(1, 0)
+				toggle.Root.Position = UDim2.new(1, -12, 0, syncY)
+				syncY = syncY + 32
+			end
+
+			syncRow("同步到 Hotkeys", frostSyncHotkeys, function(value)
+				frostSetSyncHotkeys(value)
+			end)
+			syncRow("同步到头像 HUD", frostSyncAvatar, function(value)
+				frostSetSyncAvatar(value)
+			end)
+
+			U.frame(card, {
+				BackgroundColor3 = Theme.StrokeSoft,
+				BackgroundTransparency = 0.35,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset(208, 10),
+				Size = UDim2.new(0, 1, 1, -20),
+			})
+
+			local paramCol = U.frame(card, {
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset(220, 0),
+				Size = UDim2.fromOffset(212, height),
+			})
+
+			U.label(paramCol, {
+				Text = "毛玻璃参数",
+				Font = F.Bold,
+				TextSize = 11,
+				TextColor3 = T.Text,
+				Position = UDim2.fromOffset(10, 10),
+				Size = UDim2.fromOffset(160, 18),
+			})
+			U.label(paramCol, {
+				Text = "拖动实时生效",
+				TextSize = 8.5,
+				TextColor3 = T.Faint,
+				AnchorPoint = Vector2.new(1, 0),
+				Position = UDim2.new(1, -10, 0, 12),
+				Size = UDim2.fromOffset(120, 14),
+				TextXAlignment = Enum.TextXAlignment.Right,
+			})
+
+			local y = 34
+			local function row(label, key, min, max, step, pattern)
+				frostSlider(paramCol, y, label, key, min, max, step, function(v)
+					return string.format(pattern, v)
+				end)
+				y = y + 32
+			end
+
+			row("画面模糊(全局)", "Blur", 0, 30, 1, "%d")
+			row("玻璃浓度", "Opacity", 0, 0.9, 0.01, "%.2f")
+			row("玻璃色调", "Tint", 0, 1, 0.01, "%.2f")
+			row("颗粒质感", "Grain", 0, 1, 0.01, "%.2f")
+			row("高光强度", "Sheen", 0, 1, 0.01, "%.2f")
+			row("扫光速度", "Sweep", 0, 1, 0.01, "%.2f")
+			row("色散强度", "Dispersion", 0, 1, 0.01, "%.2f")
+			row("轮廓亮度", "Outline", 0, 1, 0.01, "%.2f")
+			row("描边厚度", "Thickness", 0.5, 3, 0.5, "%.1f")
+			row("圆角", "Radius", 0, 24, 1, "%d")
+			row("按压深度", "Press", 0.9, 1, 0.005, "%.3f")
+			row("回弹阻力", "Spring", 8, 40, 1, "%d")
+
+			local reset = W.Button(paramCol, "恢复默认", function()
+				Frosted:Reset()
+				frostSave()
+				openFrostPanel(true)
+			end)
+			reset.Root.AnchorPoint = Vector2.new(0.5, 0)
+			reset.Root.Position = UDim2.new(0.5, 0, 0, 424)
+			reset.Root.Size = UDim2.fromOffset(120, 28)
+		end, false)
+	end
+
+	local function openFrostMenu()
+		openFrostPanel(false)
+	end
+
+	local function openFrostParams()
+		openFrostPanel(true)
+	end
+
+	if frostDotsInput then
+		U.inputButton(frostDotsInput, function()
+			openFrostMenu()
+		end)
+
+		do
+			local saved = Nerx.Storage:ReadJSON(FROST_FILE)
+			if type(saved) == "table" then
+				if type(saved.Params) == "table" then
+					-- Scene blur is opt-in per session: never restore it from disk,
+					-- otherwise an old config keeps blurring the game on inject.
+					saved.Params.Blur = 0
+					Frosted:SetParams(saved.Params)
+				end
+				if saved.Enabled == true then
+					Frosted:SetEnabled(true)
+				end
+				if saved.SyncHotkeys == true then
+					frostSyncHotkeys = true
+					if Nerx.BindManager then
+						Nerx.BindManager:SetFrosted(true)
+					end
+				end
+				if saved.SyncAvatar == true then
+					frostSyncAvatar = true
+					if window and window.Account then
+						Frosted:Register(window.Account, { Kind = "card", SheenScale = 1.5, Halo = false, Chroma = false })
+					end
+				end
+			end
+		end
+	end
+
+	local themeFilter = filterField(themes, 196, 0, 118, "Filter themes...")
+	local themeSort = W.Segmented(themes, {
+		Width = 104,
+		Height = 28,
+		Items = { "Name", "Recent" },
+		Selected = "Name",
+		Callback = function()
+			if renderThemes then
+				renderThemes()
+			end
+		end,
+	})
+	themeSort.Root.Position = UDim2.fromOffset(322, 0)
+	local openThemesButton = toolbarButton(themes, "Open folder", 258, 0, 84, 28, function()
+		UIHelpers.CopyPath("themes.json")
+	end)
+	local importThemeButton
+	importThemeButton = toolbarButton(themes, "Import", 194, 0, 58, 28, function()
+		UIHelpers.ImportPrompt(importThemeButton.Root, {
+			Title = "Import theme",
+			Placeholder = "Paste an exported Nerx theme here...",
+			Submit = "Import",
+			OnSubmit = function(text)
+				local ok, reason = Nerx.Themes:Import(text)
+				if ok then
+					notify("Themes", "Theme imported into My Themes", "paint-bucket", T.Green)
+					renderThemes()
+				else
+					notify("Themes", "Theme import failed: " .. tostring(reason), "triangle-exclamation", T.Red)
+				end
+			end,
+		})
+	end)
+	local exportThemeButton = toolbarButton(themes, "Export", 130, 0, 58, 28, function()
+		local json = Nerx.Themes:Export()
+		if not json then
+			notify("Themes", "No active theme to export", "paint-bucket", T.Amber)
+			return
+		end
+		local copied = Nerx.Storage:Copy(json)
+		notify("Themes", "Exported \"" .. tostring(Nerx.Themes.ActiveName) .. "\"" .. (copied and " to clipboard" or ""), "paint-bucket", copied and T.Green or T.Amber)
+	end)
+	local saveThemeButton
+	saveThemeButton = toolbarPrimary(themes, "+ Save as", 0, 0, 92, 28, function()
+		UIHelpers.InputPrompt(saveThemeButton.Root, {
+			Title = "Save current theme",
+			Placeholder = "Theme name...",
+			Submit = "Save",
+			OnSubmit = function(name)
+				local ok = Nerx.Themes:SaveCustom(name)
+				if ok then
+					notify("Themes", "Saved \"" .. name .. "\" to My Themes", "paint-bucket", T.Green)
+				else
+					notify("Themes", "Could not save that theme", "triangle-exclamation", T.Red)
+				end
+			end,
+		})
+	end)
+
+	local themeScroll = U.new("ScrollingFrame", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, 48),
+		Size = UDim2.new(1, 0, 1, -48),
+		CanvasSize = UDim2.fromOffset(0, 0),
+		ScrollBarThickness = 3,
+		ScrollBarImageColor3 = T.Faint,
+		ScrollBarImageTransparency = 0.35,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		ElasticBehavior = Enum.ElasticBehavior.Never,
+	}, themes)
+	local themeContent = U.frame(themeScroll, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 0, 300),
+	})
+
+	local themeCards = {}
+
+	local THEME_CARD_W = 183
+	local THEME_CARD_H = 132
+	local THEME_CARD_STEP = 192
+	local THEME_ROW_STEP = 142
+	local THEME_CUSTOM_H = 112
+	local THEME_CUSTOM_STEP = 124
+
+	local function themeBaseIsLight(color)
+		return ((color.R or 0) * 0.299 + (color.G or 0) * 0.587 + (color.B or 0) * 0.114) > 0.58
+	end
+
+	local function previewDot(parent, x, y, size, color, transparency, zIndex)
+		local dot = U.frame(parent, {
+			BackgroundColor3 = color,
+			BackgroundTransparency = transparency or 0,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(x, y),
+			Size = UDim2.fromOffset(size, size),
+			ZIndex = zIndex or 2,
+		})
+		U.new("UICorner", { CornerRadius = UDim.new(1, 0) }, dot)
+		return dot
+	end
+
+	local function miniPreview(parent, preset, height)
+		local h = height or 78
+		local light = themeBaseIsLight(preset.Base)
+		local ink = light and T.Black or T.White
+		local preview = U.frame(parent, {
+			BackgroundColor3 = preset.Base,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(7, 7),
+			Size = UDim2.new(1, -14, 0, h),
+			ClipsDescendants = true,
+		})
+		U.corner(preview, 5)
+		U.stroke(preview, ink, light and 0.82 or 0.88, 1)
+		-- Top chrome strip with the accent tick, like the reference previews.
+		U.frame(preview, {
+			BackgroundColor3 = preset.Panel,
+			BackgroundTransparency = 0.2,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, 7),
+		})
+		local tick = U.frame(preview, {
+			BackgroundColor3 = preset.Accent,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(6, 2),
+			Size = UDim2.fromOffset(10, 2),
+		})
+		U.corner(tick, 1)
+		local accentInk = themeBaseIsLight(preset.Accent) and T.Black or T.White
+		-- Sidebar block.
+		local side = U.frame(preview, {
+			BackgroundColor3 = preset.Panel,
+			BackgroundTransparency = 0.15,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(5, 11),
+			Size = UDim2.fromOffset(28, h - 16),
+		})
+		U.corner(side, 3)
+		U.stroke(side, ink, 0.86, 1)
+		previewDot(side, 4, 5, 3, preset.Accent, 0.1, 3)
+		U.frame(side, {
+			BackgroundColor3 = ink,
+			BackgroundTransparency = 0.55,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(9, 5),
+			Size = UDim2.fromOffset(11, 3),
+		})
+		-- Selected row pill in the sidebar.
+		local pill = U.frame(side, {
+			BackgroundColor3 = preset.Accent,
+			BackgroundTransparency = 0.42,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(3, 13),
+			Size = UDim2.fromOffset(22, 7),
+		})
+		U.corner(pill, 3)
+		previewDot(pill, 2, 2, 3, accentInk, 0.05, 4)
+		U.frame(pill, {
+			BackgroundColor3 = accentInk,
+			BackgroundTransparency = 0.15,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(7, 2),
+			Size = UDim2.fromOffset(9, 3),
+		})
+		for index = 1, (h >= 74 and 5 or 3) do
+			local rowY = 25 + (index - 1) * 8
+			previewDot(side, 4, rowY, 2, ink, 0.55, 3)
+			U.frame(side, {
+				BackgroundColor3 = ink,
+				BackgroundTransparency = 0.72,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset(9, rowY),
+				Size = UDim2.fromOffset(index == 1 and 11 or 8, 2),
+			})
+		end
+		-- Main column rows + accent slider.
+		for index = 1, (h >= 74 and 4 or 3) do
+			local rowY = 13 + (index - 1) * 12
+			previewDot(preview, 39, rowY, 3, ink, 0.5, 2)
+			U.frame(preview, {
+				BackgroundColor3 = ink,
+				BackgroundTransparency = 0.62,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset(45, rowY),
+				Size = UDim2.fromOffset(index == 1 and 60 or 52, 3),
+			})
+		end
+		-- Right column keeps the preview from looking left-heavy.
+		U.frame(preview, {
+			BackgroundColor3 = ink,
+			BackgroundTransparency = 0.88,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(112, 10),
+			Size = UDim2.fromOffset(1, h - 22),
+		})
+		for index = 1, (h >= 74 and 4 or 3) do
+			U.frame(preview, {
+				BackgroundColor3 = ink,
+				BackgroundTransparency = 0.7,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset(119, 11 + (index - 1) * 9),
+				Size = UDim2.fromOffset(38, 3),
+			})
+		end
+		local previewToggle = U.frame(preview, {
+			BackgroundColor3 = preset.Accent,
+			BackgroundTransparency = 0.35,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(119, h - 30),
+			Size = UDim2.fromOffset(28, 9),
+			ZIndex = 2,
+		})
+		U.corner(previewToggle, 5)
+		previewDot(previewToggle, 19, 1.5, 6, accentInk, 0.05, 4)
+
+		local trackW = 54
+		local trackX = 39
+		local trackY = h - 16
+		U.frame(preview, {
+			BackgroundColor3 = ink,
+			BackgroundTransparency = 0.78,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(trackX, trackY),
+			Size = UDim2.fromOffset(trackW, 3),
+		})
+		U.frame(preview, {
+			BackgroundColor3 = preset.Accent,
+			BackgroundTransparency = 0.15,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(trackX, trackY),
+			Size = UDim2.fromOffset(math.floor(trackW * 0.55), 3),
+		})
+		previewDot(preview, trackX + math.floor(trackW * 0.55) - 2, trackY - 2, 7, preset.Accent, 0, 4)
+	end
+
+	local function hexColor(color)
+		return string.format(
+			"#%02X%02X%02X",
+			math.floor((color.R or 0) * 255),
+			math.floor((color.G or 0) * 255),
+			math.floor((color.B or 0) * 255)
+		)
+	end
+
+	local function applyTheme(name)
+		local ok = Nerx.Themes:ApplyPreset(name)
+		if ok then
+			customColors.Base = T.Sidebar
+			customColors.Panel = T.SurfaceRaised
+			customColors.Accent = T.Accent
+			notify("Themes", "Applied \"" .. tostring(name) .. "\"", "paint-bucket", T.Accent)
+			renderThemes()
+		else
+			notify("Themes", "Could not apply that theme", "triangle-exclamation", T.Red)
+		end
+	end
+
+	local function accentGem(parent, x, y, size, color, glow)
+		local gem = U.frame(parent, {
+			BackgroundColor3 = color,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(x, y),
+			Size = UDim2.fromOffset(size, size),
+			ZIndex = 5,
+		})
+		U.new("UICorner", { CornerRadius = UDim.new(1, 0) }, gem)
+		U.stroke(gem, T.White, 0.7, 1)
+		local shine = U.frame(gem, {
+			BackgroundColor3 = T.White,
+			BackgroundTransparency = 0.45,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(size * 0.18, size * 0.12),
+			Size = UDim2.fromOffset(size * 0.44, size * 0.34),
+			ZIndex = 6,
+		})
+		U.new("UICorner", { CornerRadius = UDim.new(1, 0) }, shine)
+		if glow then
+			local ok, shadow = pcall(function()
+				return Instance.new("UIShadow")
+			end)
+			if ok and shadow then
+				pcall(function()
+					shadow.BlurRadius = UDim.new(0, 7)
+					shadow.Color = color
+					shadow.Offset = UDim2.new()
+					shadow.Spread = UDim2.fromOffset(1, 1)
+					shadow.Transparency = 0.5
+					shadow.Inset = false
+					shadow.Mode = Enum.ApplyShadowMode.Shape
+					shadow.ShowBehindParent = true
+				end)
+				shadow.Parent = gem
+			end
+		end
+		return gem
+	end
+
+	local function exportTheme(name)
+		local json = Nerx.Themes:Export(name)
+		if not json then
+			notify("Themes", "Nothing to export", "paint-bucket", T.Amber)
+			return
+		end
+		local copied = Nerx.Storage:Copy(json)
+		notify("Themes", "Exported \"" .. tostring(name) .. "\"" .. (copied and " to clipboard" or ""), "paint-bucket", copied and T.Green or T.Amber)
+	end
+
+	local function drawThemeCard(parent, x, y, name, colors, kind, bgRecord)
+		local isCustom = kind == "custom"
+		local cardHeight = isCustom and THEME_CUSTOM_H or THEME_CARD_H
+		local previewHeight = isCustom and 62 or 78
+		local lightBase = themeBaseIsLight(colors.Base)
+		local ink = lightBase and T.Black or T.White
+		-- No ClipsDescendants here: every child is inset, and a clipped canvas
+		-- would eat the blur of the card's own drop shadow.
+		local card, stroke = surfaceCard(parent, x, y, THEME_CARD_W, cardHeight, {
+			Radius = 9,
+			Background = colors.Base,
+			StrokeColor = ink,
+			StrokeTransparency = lightBase and 0.6 or 0.84,
+		})
+		local cardShadow = U.shadow(card, "soft")
+		if cardShadow and cardShadow.ClassName == "UIShadow" then
+			cardShadow.BlurRadius = UDim.new(0, 16)
+			cardShadow.Transparency = 0.58
+			cardShadow.Offset = UDim2.fromOffset(0, 5)
+		end
+		-- Inner top reflection: the card reads as a raised glass tile instead of a
+		-- flat rectangle, and it never becomes a gradient rim on the outer edge.
+		local sheen = U.frame(card, {
+			BackgroundColor3 = T.White,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(10, 1),
+			Size = UDim2.new(1, -20, 0, 1),
+			ZIndex = 6,
+		})
+		local sheenFade = Instance.new("UIGradient")
+		sheenFade.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1),
+			NumberSequenceKeypoint.new(0.5, 0.72),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		sheenFade.Parent = sheen
+		if bgRecord and bgRecord.url and bgRecord.url ~= "" then
+			local cover = U.frame(card, {
+				BackgroundColor3 = colors.Base,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset(7, 7),
+				Size = UDim2.new(1, -14, 0, previewHeight),
+				ClipsDescendants = true,
+				ZIndex = 2,
+			})
+			U.corner(cover, 5)
+			U.stroke(cover, ink, lightBase and 0.82 or 0.88, 1)
+			local coverImage = U.new("ImageLabel", {
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(0.5, 0.5),
+				Size = UDim2.fromScale(1, 1),
+				Image = (Nerx.Background and Nerx.Background:GetAsset(bgRecord.url)) or "",
+				ImageTransparency = 0,
+				ZIndex = 2,
+			}, cover)
+			if Nerx.Background and Nerx.Background.Layout then
+				Nerx.Background:Layout(coverImage, THEME_CARD_W - 14, previewHeight, bgRecord)
+			end
+		else
+			miniPreview(card, colors, previewHeight)
+		end
+
+		local labelY = isCustom and 72 or 97
+		U.label(card, {
+			Text = name,
+			TextSize = 12,
+			TextColor3 = ink,
+			TextTransparency = lightBase and 0.3 or 0.26,
+			Position = UDim2.fromOffset(11, labelY),
+			Size = UDim2.fromOffset(THEME_CARD_W - 66, 18),
+			ZIndex = 4,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		})
+		if isCustom then
+			U.label(card, {
+				Text = "custom",
+				Font = F.Bold,
+				TextSize = 7,
+				TextColor3 = ink,
+				TextTransparency = 0.55,
+				Position = UDim2.fromOffset(11, 90),
+				Size = UDim2.fromOffset(80, 9),
+				ZIndex = 4,
+			})
+		end
+		-- Reference detail: three palette gems (accent / white / black) at the
+		-- bottom right, each with its own rim, instead of one hard 8x8 square.
+		local dotY = isCustom and 78 or 103
+		local dotSize = 6
+		accentGem(card, THEME_CARD_W - 34, dotY, dotSize, colors.Accent, true)
+		local whiteDot = U.frame(card, {
+			BackgroundColor3 = T.White,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(THEME_CARD_W - 25, dotY),
+			Size = UDim2.fromOffset(dotSize, dotSize),
+			ZIndex = 5,
+		})
+		U.new("UICorner", { CornerRadius = UDim.new(1, 0) }, whiteDot)
+		U.stroke(whiteDot, T.Black, 0.86, 1)
+		local blackDot = U.frame(card, {
+			BackgroundColor3 = T.Black,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(THEME_CARD_W - 16, dotY),
+			Size = UDim2.fromOffset(dotSize, dotSize),
+			ZIndex = 5,
+		})
+		U.new("UICorner", { CornerRadius = UDim.new(1, 0) }, blackDot)
+		U.stroke(blackDot, T.White, 0.72, 1)
+
+		local activeTag = U.label(card, {
+			Text = "ACTIVE",
+			Font = F.Bold,
+			TextSize = 7,
+			TextColor3 = colors.Accent,
+			TextTransparency = 0.1,
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.new(1, -9, 0, 9),
+			Size = UDim2.fromOffset(60, 9),
+			TextXAlignment = Enum.TextXAlignment.Right,
+			ZIndex = 5,
+			Visible = false,
+		})
+
+		-- Selected halo + crisp accent outline live above the card so the rounded
+		-- corners are never clipped by the preview.
+		local haloOuter = U.frame(parent, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(x - 4, y - 4),
+			Size = UDim2.fromOffset(THEME_CARD_W + 8, cardHeight + 8),
+			ZIndex = 27,
+			Visible = false,
+			Active = false,
+		})
+		U.corner(haloOuter, 13)
+		U.stroke(haloOuter, colors.Accent, 0.8, 3.5)
+		local halo = U.frame(parent, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(x - 2, y - 2),
+			Size = UDim2.fromOffset(THEME_CARD_W + 4, cardHeight + 4),
+			ZIndex = 28,
+			Visible = false,
+			Active = false,
+		})
+		U.corner(halo, 11)
+		U.stroke(halo, colors.Accent, 0.5, 2)
+		local outline = U.frame(parent, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(x, y),
+			Size = UDim2.fromOffset(THEME_CARD_W, cardHeight),
+			ZIndex = 30,
+			Active = false,
+		})
+		U.corner(outline, 9)
+		local outlineStroke = U.stroke(outline, ink, 1, 1)
+
+		local isActive = Nerx.Themes.ActiveName == name
+		local entry = {
+			Name = name,
+			Card = card,
+			Stroke = stroke,
+			Accent = colors.Accent,
+			X = x,
+			Y = y,
+			Width = THEME_CARD_W,
+			Height = cardHeight,
+			Outline = outline,
+			Halo = halo,
+			HaloOuter = haloOuter,
+			Intro = false,
+		}
+		themeCards[#themeCards + 1] = entry
+		function entry.Render(active)
+			outline.Visible = true
+			halo.Visible = active
+			haloOuter.Visible = active
+			activeTag.Visible = active
+			stroke.Color = active and colors.Accent or ink
+			stroke.Transparency = active and 0.35 or (lightBase and 0.6 or 0.84)
+			outlineStroke.Color = colors.Accent
+			outlineStroke.Transparency = active and 0.1 or 1
+			outlineStroke.Thickness = active and 1.4 or 1
+		end
+		entry.Render(isActive)
+
+		local function setHover(hovering)
+			-- 入场动画期间卡片的 AnchorPoint 是 0.5/0.5，此时按最终坐标做 hover
+			-- 位移会让卡片瞬间飞出去；直接忽略入场期间的 hover。
+			if entry.Intro or not card.Parent then
+				return
+			end
+			local lift = hovering and -1 or 0
+			U.tween(card, U.Tween.Fast, { Position = UDim2.fromOffset(x, y + lift) })
+			U.tween(outline, U.Tween.Fast, { Position = UDim2.fromOffset(x, y + lift) })
+			U.tween(halo, U.Tween.Fast, { Position = UDim2.fromOffset(x - 2, y - 2 + lift) })
+			U.tween(haloOuter, U.Tween.Fast, { Position = UDim2.fromOffset(x - 4, y - 4 + lift) })
+			if not isActive then
+				outlineStroke.Color = hovering and colors.Accent or ink
+				outlineStroke.Transparency = hovering and 0.55 or 1
+			end
+			stroke.Transparency = (not hovering and not isActive) and (lightBase and 0.6 or 0.84)
+				or (isActive and 0.35 or 0.5)
+		end
+
+		local input = U.inputButton(card, function()
+			if entry.Intro then
+				return
+			end
+			-- Theme switch rebuilds the grid, so let the press rebound play first.
+			task.delay(0.14, function()
+				applyTheme(name)
+				if Nerx.Background then
+					Nerx.Background:ApplyForTheme(name)
+				end
+			end)
+		end)
+		U.pressFx(input, card, 0.975)
+		U.connect(input.MouseEnter, function()
+			setHover(true)
+		end)
+		U.connect(input.MouseLeave, function()
+			setHover(false)
+		end)
+		U.connect(input.InputBegan, function(inputObject)
+			if entry.Intro or inputObject.UserInputType ~= Enum.UserInputType.MouseButton2 then
+				return
+			end
+			local items = {
+				{ Text = "Apply theme", Callback = function()
+					applyTheme(name)
+				end },
+				{ Text = "Export to clipboard", Callback = function()
+					exportTheme(name)
+				end },
+			}
+			if kind == "custom" then
+				items[#items + 1] = { Text = "Rename", Callback = function()
+					UIHelpers.InputPrompt(card, {
+						Title = "Rename theme",
+						Initial = name,
+						Submit = "Rename",
+						OnSubmit = function(newName)
+							local ok = Nerx.Themes:RenameCustom(name, newName)
+							if ok and Nerx.Background then
+								Nerx.Background:RenameCustom(name, newName)
+								renderThemes()
+							end
+							notify("Themes", ok and ("Renamed to \"" .. newName .. "\"") or "Rename failed", "paint-bucket", ok and T.Green or T.Red)
+						end,
+					})
+				end }
+				items[#items + 1] = { Text = "Delete", Color = T.Red, Callback = function()
+					local ok = Nerx.Themes:DeleteCustom(name)
+					if Nerx.Background then
+						Nerx.Background:DeleteCustom(name)
+						renderThemes()
+					end
+					notify("Themes", ok and ("Deleted \"" .. name .. "\"") or "Delete failed", "trash-can", ok and T.Muted or T.Red)
+				end }
+			end
+			UIHelpers.ContextMenu(card, items)
+		end)
+	end
+
+	local function drawColorField(parent, x, label, color, onPick)
+		U.label(parent, {
+			Text = label,
+			TextSize = 8.5,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.3,
+			Position = UDim2.fromOffset(x, 34),
+			Size = UDim2.fromOffset(80, 12),
+		})
+		local swatch = U.frame(parent, {
+			BackgroundColor3 = color,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(x, 50),
+			Size = UDim2.fromOffset(42, 24),
+		})
+		U.corner(swatch, 5)
+		U.stroke(swatch, T.White, 0.75, 1)
+		local hex = U.label(parent, {
+			Text = hexColor(color),
+			Font = F.Mono,
+			TextSize = 8.5,
+			TextColor3 = T.Text,
+			TextTransparency = 0.25,
+			Position = UDim2.fromOffset(x + 50, 50),
+			Size = UDim2.fromOffset(120, 24),
+		})
+		U.inputButton(swatch, function()
+			U.colorPicker(swatch, color, function(picked)
+				color = picked
+				swatch.BackgroundColor3 = picked
+				hex.Text = hexColor(picked)
+				onPick(picked)
+			end)
+		end)
+	end
+
+	local function drawPaletteEditor(parent, y)
+		local card = U.frame(parent, {
+			BackgroundColor3 = T.Surface,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(0, y),
+			Size = UDim2.fromOffset(772, 196),
+		})
+		U.corner(card, 8)
+		U.stroke(card, T.Stroke, 0.55, 1)
+		U.label(card, {
+			Text = "CUSTOM PALETTE",
+			Font = F.Bold,
+			TextSize = 9.5,
+			TextColor3 = T.Text,
+			TextTransparency = 0.1,
+			Position = UDim2.fromOffset(14, 12),
+			Size = UDim2.fromOffset(140, 16),
+		})
+		U.label(card, {
+			Text = "Base = shell · Panel = cards and fields · Accent = highlights",
+			TextSize = 8.5,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.35,
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.new(1, -14, 0, 12),
+			Size = UDim2.fromOffset(420, 16),
+			TextXAlignment = Enum.TextXAlignment.Right,
+		})
+		drawColorField(card, 14, "BASE", customColors.Base, function(color)
+			customColors.Base = color
+		end)
+		drawColorField(card, 204, "PANEL", customColors.Panel, function(color)
+			customColors.Panel = color
+		end)
+		drawColorField(card, 394, "TEXT", customColors.Text, function(color)
+			customColors.Text = color
+		end)
+		drawColorField(card, 584, "ACCENT", customColors.Accent, function(color)
+			customColors.Accent = color
+		end)
+		U.label(card, {
+			Text = "Pick base, panel, text and accent. Derived shades keep borders readable.",
+			TextSize = 8,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.4,
+			Position = UDim2.fromOffset(14, 92),
+			Size = UDim2.new(1, -28, 0, 14),
+		})
+
+		local function applyCustomPalette(persist)
+			local palette = Nerx.Themes:BuildPalette({
+				Base = customColors.Base,
+				Panel = customColors.Panel,
+				Accent = customColors.Accent,
+			})
+			palette.Text = customColors.Text
+			palette.Muted = customColors.Text:Lerp(customColors.Base, 0.38)
+			palette.Faint = customColors.Text:Lerp(customColors.Base, 0.6)
+			return Nerx.Themes:ApplyPalette(palette, "Custom", { noPersist = not persist })
+		end
+
+		local applyButton = W.PrimaryButton(card, "Apply colors", 104, 26, function()
+			applyCustomPalette(true)
+			notify("Themes", "Applied custom base, panel, text and accent", "paint-bucket", customColors.Accent)
+			renderThemes()
+		end)
+		applyButton.Root.AnchorPoint = Vector2.new(1, 0)
+		applyButton.Root.Position = UDim2.new(1, -126, 0, 152)
+		local saveButton = W.Button(card, "Save as theme", function()
+			UIHelpers.InputPrompt(card, {
+				Title = "Save custom palette",
+				Placeholder = "Theme name...",
+				Submit = "Save",
+				OnSubmit = function(name)
+					applyCustomPalette(false)
+					local ok = Nerx.Themes:SaveCustom(name)
+					if ok then
+						notify("Themes", "Saved \"" .. name .. "\" from the palette editor", "paint-bucket", T.Green)
+						renderThemes()
+					else
+						notify("Themes", "Could not save that theme", "triangle-exclamation", T.Red)
+					end
+				end,
+			})
+		end)
+		saveButton.Root.AnchorPoint = Vector2.new(1, 0)
+		saveButton.Root.Position = UDim2.new(1, -14, 0, 152)
+		saveButton.Root.Size = UDim2.fromOffset(100, 26)
+	end
+
+	renderThemes = function()
+		for _, child in ipairs(themeContent:GetChildren()) do
+			if child:IsA("GuiObject") then
+				child:Destroy()
+			end
+		end
+		table.clear(themeCards)
+
+		local query = string.lower(tostring(themeFilter.Box.Text or ""))
+		local sortMode = themeSort.Value or "Name"
+		local presets = {}
+		for _, preset in ipairs(Nerx.Themes.Presets) do
+			if query == "" or string.find(string.lower(preset.Name), query, 1, true) then
+				presets[#presets + 1] = preset
+			end
+		end
+		if sortMode == "Name" then
+			table.sort(presets, function(a, b)
+				return string.lower(a.Name) < string.lower(b.Name)
+			end)
+		end
+
+		local custom = Nerx.Themes:ListCustom(query)
+		if sortMode == "Recent" then
+			table.sort(custom, function(a, b)
+				return (a.savedAt or 0) > (b.savedAt or 0)
+			end)
+		end
+
+		U.label(themeContent, {
+			Text = "PRESETS",
+			Font = F.Bold,
+			TextSize = 9.5,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.4,
+			Position = UDim2.fromOffset(0, 0),
+			Size = UDim2.fromOffset(100, 14),
+		})
+		U.label(themeContent, {
+			Text = "Click a card to apply the full palette",
+			TextSize = 8.5,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.35,
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.new(1, 0, 0, 0),
+			Size = UDim2.fromOffset(260, 14),
+			TextXAlignment = Enum.TextXAlignment.Right,
+		})
+
+		local presetRows = math.max(1, math.ceil(#presets / 4))
+		for index, preset in ipairs(presets) do
+			local column = (index - 1) % 4
+			local rowIndex = math.floor((index - 1) / 4)
+			drawThemeCard(themeContent, 10 + column * THEME_CARD_STEP, 28 + rowIndex * THEME_ROW_STEP, preset.Name, {
+				Base = preset.Base,
+				Panel = preset.Panel,
+				Accent = preset.Accent,
+			}, "preset")
+		end
+		if #presets == 0 then
+			U.label(themeContent, {
+				Text = "No presets match this filter",
+				TextSize = 9,
+				TextColor3 = T.Faint,
+				TextTransparency = 0.3,
+				Position = UDim2.fromOffset(0, 36),
+				Size = UDim2.fromOffset(300, 20),
+			})
+		end
+		local presetEnd = 28 + presetRows * THEME_ROW_STEP - 10
+
+		U.label(themeContent, {
+			Text = "MY THEMES",
+			Font = F.Bold,
+			TextSize = 9.5,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.4,
+			Position = UDim2.fromOffset(0, presetEnd + 12),
+			Size = UDim2.fromOffset(100, 14),
+		})
+		U.label(themeContent, {
+			Text = "Saved palettes · right-click for rename, export or delete",
+			TextSize = 8.5,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.35,
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.new(1, 0, 0, presetEnd + 12),
+			Size = UDim2.fromOffset(380, 14),
+			TextXAlignment = Enum.TextXAlignment.Right,
+		})
+
+		local customStart = presetEnd + 32
+		for index, record in ipairs(custom) do
+			local palette = Nerx._Internal.decodePalette(record.palette)
+			local column = (index - 1) % 4
+			local rowIndex = math.floor((index - 1) / 4)
+			local themeName = tostring(record.name or "Theme")
+			local bgRecord = Nerx.Background and Nerx.Background:GetCustom(themeName) or nil
+			drawThemeCard(themeContent, 10 + column * THEME_CARD_STEP, customStart + rowIndex * THEME_CUSTOM_STEP, themeName, {
+				Base = bgRecord and bgRecord.base or palette.Window or T.Sidebar,
+				Panel = palette.SurfaceRaised or T.SurfaceRaised,
+				Accent = bgRecord and bgRecord.accent or palette.Accent or T.Accent,
+			}, "custom", bgRecord)
+		end
+		local customRows = math.ceil(#custom / 4)
+		if #custom == 0 then
+			U.label(themeContent, {
+				Text = "No custom themes yet · use + Save as or the palette editor below",
+				TextSize = 9,
+				TextColor3 = T.Faint,
+				TextTransparency = 0.3,
+				Position = UDim2.fromOffset(0, customStart + 4),
+				Size = UDim2.fromOffset(500, 20),
+			})
+		end
+		local customEnd = customStart + math.max(1, customRows) * THEME_CUSTOM_STEP
+
+		drawPaletteEditor(themeContent, customEnd + 8)
+		local height = customEnd + 8 + 196 + 12
+		themeContent.Size = UDim2.new(1, 0, 0, height)
+		themeScroll.CanvasSize = UDim2.fromOffset(0, height)
+
+		for _, entry in ipairs(themeCards) do
+			entry.Render(entry.Name == Nerx.Themes.ActiveName)
+		end
+	end
+
+	U.connect(themeFilter.Box:GetPropertyChangedSignal("Text"), function()
+		renderThemes()
+	end)
+	table.insert(Nerx.Themes.OnChanged, function()
+		customColors.Base = T.Sidebar
+		customColors.Panel = T.SurfaceRaised
+		customColors.Text = T.Text
+		customColors.Accent = T.Accent
+		renderThemes()
+	end)
+	U.onAccent(function()
+		renderThemes()
+	end)
+	renderThemes()
+
+	-- ---------------------------------------------------------------------------------------
+	-- 进入主题页的卡片入场动画：从左到右、从上到下逐个弹起再丝滑归位
+	-- ---------------------------------------------------------------------------------------
+	local themeIntroToken = {}
+	local function resetThemeCard(entry)
+		local card = entry.Card
+		if card and card.Parent then
+			card.AnchorPoint = Vector2.new(0, 0)
+			card.Position = UDim2.fromOffset(entry.X, entry.Y)
+			card.Visible = true
+			local press = card:FindFirstChild("NerxPressScale")
+			if press then
+				press.Scale = 1
+			end
+		end
+		if entry.Outline and entry.Outline.Parent then
+			entry.Outline.Visible = false
+			entry.Outline.Position = UDim2.fromOffset(entry.X, entry.Y)
+		end
+		if entry.Halo and entry.Halo.Parent then
+			entry.Halo.Visible = false
+			entry.Halo.Position = UDim2.fromOffset(entry.X - 2, entry.Y - 2)
+		end
+		if entry.HaloOuter and entry.HaloOuter.Parent then
+			entry.HaloOuter.Visible = false
+			entry.HaloOuter.Position = UDim2.fromOffset(entry.X - 4, entry.Y - 4)
+		end
+	end
+
+	local function playThemeIntro()
+		themeIntroToken = {}
+		local token = themeIntroToken
+		local total = #themeCards
+		if total == 0 then
+			return
+		end
+		-- 每次进场都从第一张卡开始，保证弹跳顺序与视频一致。
+		themeScroll.CanvasPosition = Vector2.new(0, 0)
+		for _, entry in ipairs(themeCards) do
+			resetThemeCard(entry)
+			entry.Intro = true
+		end
+		for index, entry in ipairs(themeCards) do
+			local card = entry.Card
+			if card and card.Parent then
+				local centerX = entry.X + entry.Width * 0.5
+				local centerY = entry.Y + entry.Height * 0.5
+				local press = card:FindFirstChild("NerxPressScale")
+				card.AnchorPoint = Vector2.new(0.5, 0.5)
+				card.Position = UDim2.fromOffset(centerX, centerY + 24)
+				card.Visible = false
+				if press then
+					press.Scale = 0.84
+				end
+				local delay = 0.03 + (index - 1) * 0.04
+				task.delay(delay, function()
+					if themeIntroToken ~= token or not card.Parent then
+						return
+					end
+					card.Visible = true
+					local spring = TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+					U.tween(card, spring, {
+						Position = UDim2.fromOffset(centerX, centerY),
+					})
+					if press then
+						U.tween(press, spring, { Scale = 1 })
+					end
+					task.delay(0.45, function()
+						if themeIntroToken ~= token or not card.Parent then
+							return
+						end
+						card.AnchorPoint = Vector2.new(0, 0)
+						card.Position = UDim2.fromOffset(entry.X, entry.Y)
+						if press then
+							press.Scale = 1
+						end
+						if entry.Outline and entry.Outline.Parent then
+							entry.Outline.Position = UDim2.fromOffset(entry.X, entry.Y)
+						end
+						if entry.Halo and entry.Halo.Parent then
+							entry.Halo.Position = UDim2.fromOffset(entry.X - 2, entry.Y - 2)
+						end
+						if entry.HaloOuter and entry.HaloOuter.Parent then
+							entry.HaloOuter.Position = UDim2.fromOffset(entry.X - 4, entry.Y - 4)
+						end
+						entry.Intro = false
+						entry.Render(entry.Name == Nerx.Themes.ActiveName)
+					end)
+				end)
+			end
+		end
+	end
+
+	local themePageAnimateIn = themesPage.AnimateIn
+	if type(themePageAnimateIn) == "function" then
+		themesPage.AnimateIn = function(self, ...)
+			themePageAnimateIn(self, ...)
+			playThemeIntro()
+		end
+	end
+end
+
+
+
+-- ---------------------------------------------------------------------------------------
+-- ConfigPage: reusable Configs page (cards, banner, search/sort/import/export)
+-- ---------------------------------------------------------------------------------------
+Nerx.ConfigPage = {}
+local ConfigPage = Nerx.ConfigPage
+
+function ConfigPage.Build(page, config)
+	config = config or {}
+	local configs = page:SetCustomMode()
+	local T = Theme
+	local F = Fonts
+	local W = Nerx.Widgets
+	local UIHelpers = UIKit.UIHelpers
+	local notify = UIKit.Notify
+	local titleText = UIKit.TitleText
+	local surfaceCard = UIKit.SurfaceCard
+	local toolbarButton = UIKit.ToolbarButton
+	local toolbarPrimary = UIKit.ToolbarPrimary
+	local filterField = UIKit.FilterField
+
+	local renderConfigList
+	local refreshBanner
+
+	titleText(configs, "Configs", nil, "local storage")
+	local configFilter = filterField(configs, 100, 0, 154, "Filter configs...")
+	local configSort = W.Segmented(configs, {
+		Width = 116,
+		Height = 28,
+		Items = { "Name", "Recent" },
+		Selected = "Name",
+		Callback = function()
+			if renderConfigList then
+				renderConfigList()
+			end
+		end,
+	})
+	configSort.Root.Position = UDim2.fromOffset(262, 0)
+
+	local openFolderButton = toolbarButton(configs, "Open folder", 238, 0, 84, 28, function()
+		UIHelpers.CopyPath("configs.json")
+	end)
+	local importConfigButton
+	importConfigButton = toolbarButton(configs, "Import", 146, 0, 58, 28, function()
+		UIHelpers.ImportPrompt(importConfigButton.Root, {
+			Title = "Import config",
+			Placeholder = "Paste a Nerx config export here...",
+			Submit = "Import",
+			OnSubmit = function(text)
+				local ok, name = Nerx.Configs:Import(text)
+				if ok then
+					notify("Configs", "Imported config \"" .. tostring(name) .. "\"", "file-box", T.Green)
+					renderConfigList()
+				else
+					notify("Configs", "Import failed: " .. tostring(name), "triangle-exclamation", T.Red)
+				end
+			end,
+		})
+	end)
+	local newConfigButton
+	newConfigButton = toolbarPrimary(configs, "+ New", 0, 0, 72, 28, function()
+		UIHelpers.InputPrompt(newConfigButton.Root, {
+			Title = "New config",
+			Placeholder = "Config name...",
+			Submit = "Create",
+			OnSubmit = function(name)
+				local ok, reason = Nerx.Configs:SaveAs(name)
+				if ok then
+					notify("Configs", "Created \"" .. name .. "\" from current settings", "floppy-disk", T.Green)
+				elseif reason == "exists" then
+					notify("Configs", "A config with that name already exists", "triangle-exclamation", T.Amber)
+				else
+					notify("Configs", "Could not create config: " .. tostring(reason), "triangle-exclamation", T.Red)
+				end
+			end,
+		})
+	end)
+
+	local banner = U.frame(configs, {
+		BackgroundColor3 = Color3.fromRGB(34, 29, 19),
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, 44),
+		Size = UDim2.new(1, 0, 0, 34),
+	})
+	U.corner(banner, 6)
+	local bannerStroke = U.stroke(banner, Color3.fromRGB(96, 76, 38), 0.4, 1)
+	local bannerDot = U.frame(banner, {
+		AnchorPoint = Vector2.new(0, 0.5),
+		BackgroundColor3 = T.Amber,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0, 12, 0.5, 0),
+		Size = UDim2.fromOffset(6, 6),
+	})
+	U.corner(bannerDot, 3)
+	local bannerTitle = U.label(banner, {
+		Text = 'No active config',
+		TextSize = 10,
+		TextColor3 = T.Text,
+		TextTransparency = 0.15,
+		Position = UDim2.fromOffset(26, 0),
+		Size = UDim2.fromOffset(196, 34),
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	})
+	local bannerChanged = U.label(banner, {
+		Text = "Save to create one",
+		TextSize = 9.5,
+		TextColor3 = T.Amber,
+		TextTransparency = 0.2,
+		Position = UDim2.fromOffset(226, 0),
+		Size = UDim2.fromOffset(150, 34),
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	})
+	local revertButton = toolbarButton(banner, "Revert", 88, 5, 68, 24, function()
+		if not Nerx.Configs.ActiveName then
+			notify("Configs", "Nothing to revert", "arrow-spin-counter-clockwise-15", T.Muted)
+			return
+		end
+		local ok = Nerx.Configs:LoadActive()
+		if ok then
+			notify("Configs", "Reverted to \"" .. tostring(Nerx.Configs.ActiveName) .. "\"", "arrow-spin-counter-clockwise-15", T.Green)
+		else
+			notify("Configs", "Could not revert this config", "triangle-exclamation", T.Red)
+		end
+	end)
+	local bannerSave = toolbarPrimary(banner, "Save", 12, 4, 68, 26, function()
+		if Nerx.Configs.ActiveName then
+			Nerx.Configs:SaveActive()
+			notify("Configs", "Saved \"" .. tostring(Nerx.Configs.ActiveName) .. "\"", "circle-check", T.Green)
+		else
+			Nerx.Configs:Save("Default")
+			notify("Configs", "Saved current settings to \"Default\"", "circle-check", T.Green)
+		end
+		refreshBanner()
+	end)
+
+	local configGrid = U.new("ScrollingFrame", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, 92),
+		Size = UDim2.new(1, 0, 1, -92),
+		CanvasSize = UDim2.fromOffset(0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollBarThickness = 3,
+		ScrollBarImageColor3 = T.Faint,
+		ScrollBarImageTransparency = 0.35,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		ElasticBehavior = Enum.ElasticBehavior.Never,
+	}, configs)
+	local configLayout = Instance.new("UIGridLayout")
+	configLayout.CellSize = UDim2.fromOffset(382, 150)
+	configLayout.CellPadding = UDim2.fromOffset(8, 6)
+	configLayout.FillDirectionMaxCells = 2
+	configLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	configLayout.Parent = configGrid
+	local configEmpty = U.label(configs, {
+		Text = "No configs found",
+		TextSize = 10,
+		TextColor3 = T.Faint,
+		TextTransparency = 0.25,
+		Position = UDim2.fromOffset(0, 150),
+		Size = UDim2.new(1, 0, 0, 20),
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Visible = false,
+	})
+
+	local configCards = {}
+
+	local function configCover(parent, colorA, colorB)
+		local cover = U.frame(parent, {
+			BackgroundColor3 = colorA,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, 92),
+			ClipsDescendants = true,
+		})
+		local gradient = Instance.new("UIGradient")
+		gradient.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, colorA),
+			ColorSequenceKeypoint.new(1, colorB),
+		})
+		gradient.Rotation = 90
+		gradient.Parent = cover
+		U.frame(cover, {
+			BackgroundColor3 = Color3.fromRGB(20, 20, 24),
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(12, 12),
+			Size = UDim2.fromOffset(34, 68),
+		})
+		for index = 1, 4 do
+			U.frame(cover, {
+				BackgroundColor3 = Color3.fromRGB(38, 38, 44),
+				BackgroundTransparency = 0.1,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset(54, 16 + (index - 1) * 15),
+				Size = UDim2.fromOffset(70 + index * 12, 5),
+			})
+		end
+		U.frame(cover, {
+			BackgroundColor3 = Color3.fromRGB(48, 48, 56),
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(210, 44),
+			Size = UDim2.fromOffset(70, 5),
+		})
+		U.frame(cover, {
+			BackgroundColor3 = T.Green,
+			BorderSizePixel = 0,
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.new(1, -14, 0, 14),
+			Size = UDim2.fromOffset(12, 12),
+		})
+	end
+
+	local function exportConfig(name)
+		local json = Nerx.Configs:Export(name)
+		if not json then
+			notify("Configs", "Nothing to export", "file-box", T.Amber)
+			return
+		end
+		local copied = Nerx.Storage:Copy(json)
+		notify("Configs", "Exported \"" .. tostring(name) .. "\"" .. (copied and " to clipboard" or ""), "file-box", copied and T.Green or T.Amber)
+	end
+
+	local function drawConfigCard(index, record)
+		local name = tostring(record.name or record.Name or "Config")
+		local colorA, colorB = UIHelpers.ConfigTint(name)
+		local card, stroke = surfaceCard(configGrid, 0, 0, 382, 150, {
+			Radius = 7,
+			Background = T.Surface,
+			Clip = true,
+			InsetStroke = true,
+		})
+		card.LayoutOrder = index
+		configCover(card, colorA, colorB)
+		U.label(card, {
+			Text = name,
+			Font = F.Bold,
+			TextSize = 11,
+			TextColor3 = T.Text,
+			TextTransparency = 0.08,
+			Position = UDim2.fromOffset(12, 98),
+			Size = UDim2.fromOffset(230, 16),
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		})
+		U.label(card, {
+			Text = "Saved " .. UIHelpers.FormatAgo(record.savedAt),
+			TextSize = 8,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.35,
+			Position = UDim2.fromOffset(12, 116),
+			Size = UDim2.fromOffset(220, 12),
+		})
+		U.label(card, {
+			Text = UIHelpers.FormatSize(record.size) .. "  ·  " .. tostring(record.values or 0) .. " values",
+			TextSize = 8,
+			TextColor3 = T.Faint,
+			TextTransparency = 0.25,
+			Position = UDim2.fromOffset(12, 130),
+			Size = UDim2.fromOffset(220, 12),
+		})
+
+		local isActive = Nerx.Configs.ActiveName == name
+		local changed = isActive and Nerx.Configs:CountChanged(name) or 0
+		local statusText, statusColor, statusBackground
+		if isActive then
+			if changed > 0 then
+				statusText = "UNSAVED"
+				statusColor = T.Amber
+				statusBackground = Color3.fromRGB(46, 36, 18)
+			else
+				statusText = "ACTIVE"
+				statusColor = T.Green
+				statusBackground = T.Field
+			end
+		else
+			statusText = "SAVED"
+			statusColor = T.Muted
+			statusBackground = T.Field
+		end
+		local statusWidth = U.measure(statusText, 7.5, F.Bold).X + 14
+		local status = U.frame(card, {
+			AnchorPoint = Vector2.new(1, 0),
+			BackgroundColor3 = statusBackground,
+			BorderSizePixel = 0,
+			Position = UDim2.new(1, -10, 0, 10),
+			Size = UDim2.fromOffset(statusWidth, 18),
+		})
+		U.corner(status, 4)
+		U.label(status, {
+			Text = statusText,
+			Font = F.Bold,
+			TextSize = 7.5,
+			TextColor3 = statusColor,
+			Position = UDim2.fromOffset(0, 0),
+			Size = UDim2.fromScale(1, 1),
+			TextXAlignment = Enum.TextXAlignment.Center,
+		})
+
+		local entry = { Name = name, Card = card, Stroke = stroke }
+		configCards[#configCards + 1] = entry
+		function entry.Render(active)
+			card.BackgroundColor3 = active and T.SurfaceHover or T.Surface
+			stroke.Color = active and T.Accent or T.Stroke
+			stroke.Transparency = active and 0.25 or 0.6
+		end
+		entry.Render(isActive)
+
+		local input = U.inputButton(card, function()
+			local ok = Nerx.Configs:Load(name)
+			if ok then
+				notify("Configs", "Loaded \"" .. name .. "\"", "file-box", T.Green)
+			else
+				notify("Configs", "Could not load \"" .. name .. "\"", "triangle-exclamation", T.Red)
+			end
+		end)
+		U.connect(input.InputBegan, function(inputObject)
+			if inputObject.UserInputType ~= Enum.UserInputType.MouseButton2 then
+				return
+			end
+			UIHelpers.ContextMenu(card, {
+				{ Text = "Load config", Callback = function()
+					Nerx.Configs:Load(name)
+				end },
+				{ Text = "Save over this config", Callback = function()
+					Nerx.Configs:Save(name)
+					notify("Configs", "Saved \"" .. name .. "\"", "circle-check", T.Green)
+				end },
+				{ Text = "Rename", Callback = function()
+					UIHelpers.InputPrompt(card, {
+						Title = "Rename config",
+						Initial = name,
+						Submit = "Rename",
+						OnSubmit = function(newName)
+							local ok = Nerx.Configs:Rename(name, newName)
+							notify("Configs", ok and ("Renamed to \"" .. newName .. "\"") or "Rename failed", "file-box", ok and T.Green or T.Red)
+						end,
+					})
+				end },
+				{ Text = "Duplicate", Callback = function()
+					UIHelpers.InputPrompt(card, {
+						Title = "Duplicate config",
+						Initial = name .. " copy",
+						Submit = "Duplicate",
+						OnSubmit = function(newName)
+							local ok = Nerx.Configs:Duplicate(name, newName)
+							notify("Configs", ok and ("Duplicated as \"" .. newName .. "\"") or "Duplicate failed", "files", ok and T.Green or T.Red)
+						end,
+					})
+				end },
+				{ Text = "Export to clipboard", Callback = function()
+					exportConfig(name)
+				end },
+				{ Text = "Delete", Color = T.Red, Callback = function()
+					local ok = Nerx.Configs:Delete(name)
+					notify("Configs", ok and ("Deleted \"" .. name .. "\"") or "Delete failed", "trash-can", ok and T.Muted or T.Red)
+				end },
+			})
+		end)
+	end
+
+	local function renderConfigList()
+		for _, entry in ipairs(configCards) do
+			if entry.Card and entry.Card.Parent then
+				entry.Card:Destroy()
+			end
+		end
+		table.clear(configCards)
+
+		local filterText = tostring(configFilter.Box.Text or "")
+		local sortMode = configSort.Value or "Name"
+		local list = Nerx.Configs:List(filterText, sortMode)
+		for index, record in ipairs(list) do
+			drawConfigCard(index, record)
+		end
+		configEmpty.Visible = #list == 0
+	end
+
+	refreshBanner = function()
+		local activeName = Nerx.Configs.ActiveName
+		if not activeName then
+			bannerTitle.Text = "No active config"
+			bannerChanged.Text = "Save to create one"
+			bannerDot.BackgroundColor3 = T.Amber
+			bannerChanged.TextColor3 = T.Amber
+			return
+		end
+		local changed = Nerx.Configs:CountChanged(activeName)
+		bannerTitle.Text = 'Config: "' .. tostring(activeName) .. '"'
+		if changed > 0 then
+			bannerChanged.Text = tostring(changed) .. (changed == 1 and " change pending" or " changes pending")
+			bannerChanged.TextColor3 = T.Amber
+			bannerDot.BackgroundColor3 = T.Amber
+		else
+			bannerChanged.Text = "All changes saved"
+			bannerChanged.TextColor3 = T.Green
+			bannerDot.BackgroundColor3 = T.Green
+		end
+	end
+
+	U.connect(configFilter.Box:GetPropertyChangedSignal("Text"), function()
+		renderConfigList()
+	end)
+	table.insert(Nerx.Configs.OnChanged, function()
+		renderConfigList()
+		refreshBanner()
+	end)
+	U.onAccent(function()
+		renderConfigList()
+	end)
+
+	-- Configs page intro: same staggered back-out pop as the theme cards, but the
+	-- grid owns the cell positions, so only scale + a short lift are animated.
+	local configIntroToken = {}
+	local function playConfigIntro()
+		configIntroToken = {}
+		local token = configIntroToken
+		if #configCards == 0 then
+			return
+		end
+		configGrid.CanvasPosition = Vector2.new(0, 0)
+		for _, entry in ipairs(configCards) do
+			local card = entry.Card
+			if card and card.Parent then
+				local introScale = card:FindFirstChild("NerxIntroScale")
+				if not introScale then
+					introScale = Instance.new("UIScale")
+					introScale.Name = "NerxIntroScale"
+					introScale.Parent = card
+				end
+				introScale.Scale = 0
+			end
+		end
+		task.defer(function()
+			RunService.Heartbeat:Wait()
+			if configIntroToken ~= token then
+				return
+			end
+			local cellW, cellH = 382, 150
+			local padX, padY = 8, 6
+			for index, entry in ipairs(configCards) do
+				local card = entry.Card
+				if card and card.Parent then
+					local column = (index - 1) % 2
+					local row = math.floor((index - 1) / 2)
+					local baseX = column * (cellW + padX)
+					local baseY = row * (cellH + padY)
+					local centerX = baseX + cellW * 0.5
+					local centerY = baseY + cellH * 0.5
+					local introScale = card:FindFirstChild("NerxIntroScale")
+					if not introScale then
+						introScale = Instance.new("UIScale")
+						introScale.Name = "NerxIntroScale"
+						introScale.Parent = card
+					end
+					card.AnchorPoint = Vector2.new(0.5, 0.5)
+					card.Position = UDim2.fromOffset(centerX, centerY + 22)
+					local delay = 0.03 + (index - 1) * 0.04
+					task.delay(delay, function()
+						if configIntroToken ~= token or not card.Parent then
+							return
+						end
+						introScale.Scale = 0.86
+						local spring = TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+						U.tween(card, spring, { Position = UDim2.fromOffset(centerX, centerY) })
+						U.tween(introScale, spring, { Scale = 1 })
+						task.delay(0.45, function()
+							if configIntroToken ~= token or not card.Parent then
+								return
+							end
+							card.AnchorPoint = Vector2.new(0, 0)
+							card.Position = UDim2.fromOffset(baseX, baseY)
+							introScale.Scale = 1
+						end)
+					end)
+				end
+			end
+		end)
+	end
+
+	local configsAnimateIn = page.AnimateIn
+	if type(configsAnimateIn) == "function" then
+		page.AnimateIn = function(self, ...)
+			configsAnimateIn(self, ...)
+			playConfigIntro()
+		end
+	end
+
+	renderConfigList()
+	refreshBanner()
+	local lastBannerRefresh = 0
+	U.connect(RunService.Heartbeat, function()
+		local now = os.clock()
+		if now - lastBannerRefresh < 1 then
+			return
+		end
+		lastBannerRefresh = now
+		pcall(refreshBanner)
+	end)
+end
+
 
 return Nerx
 
