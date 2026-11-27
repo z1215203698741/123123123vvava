@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.9.0
+	Nerx UI Library · v1.9.1
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.9.0"
+Nerx.Version = "1.9.1"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -18312,9 +18312,13 @@ function MusicPage.Build(page, config)
 		return img
 	end
 
-	-- Lyric font pair. "smooth" = Gotham (menu-consistent), "builder" = the
-	-- newer Roblox sans, "pixel" = Code (Latin only; CJK falls back).
-	local function lyricFontPair()
+	-- Lyric helpers are grouped in one table: MusicPage.Build is close to the
+	-- 200-register limit, and a dozen helper locals pushed it over.
+	local lyricFx = { GlyphCache = {}, RainbowPhase = 0 }
+
+	-- "smooth" = Gotham (menu-consistent), "builder" = newer Roblox sans,
+	-- "pixel" = Code (Latin only; CJK falls back).
+	lyricFx.FontPair = function()
 		local mode = M.Settings.lyricsFont or "smooth"
 		if mode == "pixel" then
 			return F.Mono, F.Mono
@@ -18332,25 +18336,24 @@ function MusicPage.Build(page, config)
 
 	-- DangoMusic-style lyric motion helpers. HUD rows use low-fps rotation,
 	-- world lines use per-character fade/lift/pop plus a posterized wiggle.
-	local function lyricHash(n)
+	lyricFx.Hash = function(n)
 		local x = math.sin(n * 127.1 + 311.7) * 43758.5453
 		return (x - math.floor(x)) * 2 - 1
 	end
 
-	local rainbowPhase = 0
-	local function lyricPalette()
+	lyricFx.Palette = function()
 		local track = M.CurrentId and M.Tracks[M.CurrentId] or nil
 		return sourceColors(track)
 	end
 
 	-- u = 0..1 across the line. "cover" uses the song color, "gradient"
 	-- blends both song colors, "rainbow" flows by position + time.
-	local function lyricColorAt(u)
+	lyricFx.ColorAt = function(u)
 		local mode = M.Settings.lyricsColor or "custom"
 		if mode == "rainbow" then
-			return Color3.fromHSV((u * 0.85 + rainbowPhase) % 1, 0.55, 1)
+			return Color3.fromHSV((u * 0.85 + lyricFx.RainbowPhase) % 1, 0.55, 1)
 		end
-		local c1, c2 = lyricPalette()
+		local c1, c2 = lyricFx.Palette()
 		if mode == "cover" then
 			return c1:Lerp(T.White, 0.22)
 		elseif mode == "gradient" then
@@ -18359,28 +18362,27 @@ function MusicPage.Build(page, config)
 		return T.Accent
 	end
 
-	local function lyricColorHex(u, dim)
-		local color = lyricColorAt(u)
+	lyricFx.ColorHex = function(u, dim)
+		local color = lyricFx.ColorAt(u)
 		if dim and dim > 0 then
 			color = color:Lerp(T.Muted, dim)
 		end
 		return U.hex(color)
 	end
 
-	local lyricGlyphCache = {}
-	local function lyricCharWidth(ch, size, font)
+	lyricFx.CharWidth = function(ch, size, font)
 		local key = tostring(font) .. ":" .. size .. ":" .. ch
-		local width = lyricGlyphCache[key]
+		local width = lyricFx.GlyphCache[key]
 		if not width then
 			width = math.max(0, U.measure(ch, size, font).X)
-			lyricGlyphCache[key] = width
+			lyricFx.GlyphCache[key] = width
 		end
 		return width
 	end
 
 	-- Lay out every character by measured width so world lyrics can animate
 	-- one glyph at a time, like DangoMusic's drawAnimated.
-	local function lyricWorldLayout(text, size, font, maxWidth)
+	lyricFx.WorldLayout = function(text, size, font, maxWidth)
 		local lineHeight = math.ceil(size * 1.2)
 		local rows = { {} }
 		local widths = { 0 }
@@ -18394,7 +18396,7 @@ function MusicPage.Build(page, config)
 				widths[lineIndex] = 0
 				x = 0
 			else
-				local width = lyricCharWidth(ch, size, font)
+				local width = lyricFx.CharWidth(ch, size, font)
 				if x + width > maxWidth and x > 0 then
 					lineIndex = lineIndex + 1
 					rows[lineIndex] = {}
@@ -18430,7 +18432,7 @@ function MusicPage.Build(page, config)
 
 	-- Per-character timestamps (relative to line start). When the lyric has
 	-- YRC word timings we keep them; otherwise the line is spread over 75%.
-	local function lyricCharTimes(entry, nextTime)
+	lyricFx.CharTimes = function(entry, nextTime)
 		local times, starts, ends = {}, {}, {}
 		local span = math.max(0.4, (nextTime or (entry.Time + 3)) - entry.Time)
 		local words = entry.Words
@@ -18486,7 +18488,7 @@ function MusicPage.Build(page, config)
 		return times, starts, ends
 	end
 
-	local function lyricRevealDuration(entry, nextTime, charCount)
+	lyricFx.RevealDuration = function(entry, nextTime, charCount)
 		local lineDuration = math.max(0.4, (nextTime or (entry.Time + 3)) - entry.Time)
 		return math.min(math.max(0.25, (charCount or 1) * 0.055), lineDuration * 0.6)
 	end
@@ -18948,7 +18950,10 @@ function MusicPage.Build(page, config)
 	})
 	U.corner(stage, 0)
 	U.stroke(stage, T.Stroke, 1, 1)
-	local stageCover = U.new("ImageLabel", {
+	-- Background presets are grouped in one table: MusicPage.Build is already
+	-- close to Luau's 200-register limit, so every new local counts.
+	local stageBg = { Glows = {}, CoverToken = 0 }
+	stageBg.Cover = U.new("ImageLabel", {
 		Name = "NerxMusicStageCover",
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
@@ -18960,7 +18965,7 @@ function MusicPage.Build(page, config)
 		Visible = false,
 		ZIndex = 0,
 	}, stage)
-	local stageShade = U.frame(stage, {
+	stageBg.Shade = U.frame(stage, {
 		BackgroundColor3 = T.Black,
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
@@ -18968,21 +18973,20 @@ function MusicPage.Build(page, config)
 		Visible = false,
 		ZIndex = 0,
 	})
-	local stageGradient = Instance.new("UIGradient")
-	stageGradient.Color = ColorSequence.new({
+	stageBg.Gradient = Instance.new("UIGradient")
+	stageBg.Gradient.Color = ColorSequence.new({
 		ColorSequenceKeypoint.new(0, T.Window:Lerp(T.Accent, 0.10)),
 		ColorSequenceKeypoint.new(0.52, T.Main:Lerp(T.Accent, 0.03)),
 		ColorSequenceKeypoint.new(1, T.Sidebar),
 	})
-	stageGradient.Transparency = NumberSequence.new({
+	stageBg.Gradient.Transparency = NumberSequence.new({
 		NumberSequenceKeypoint.new(0, 0),
 		NumberSequenceKeypoint.new(0.55, 0.08),
 		NumberSequenceKeypoint.new(1, 0.18),
 	})
-	stageGradient.Rotation = 145
-	stageGradient.Parent = stage
-	local stageGlowList = {}
-	local function stageGlow(size, px, py, alpha)
+	stageBg.Gradient.Rotation = 145
+	stageBg.Gradient.Parent = stage
+	stageBg.Glow = function(size, px, py, alpha)
 		local glow = U.frame(stage, {
 			BackgroundColor3 = T.Accent,
 			BackgroundTransparency = alpha,
@@ -18993,13 +18997,13 @@ function MusicPage.Build(page, config)
 			ZIndex = 0,
 		})
 		U.corner(glow, 999)
-		stageGlowList[#stageGlowList + 1] = glow
+		stageBg.Glows[#stageBg.Glows + 1] = glow
 		return glow
 	end
-	stageGlow(SHELL_W * 0.58, 0.04, -0.1, 0.93)
-	stageGlow(SHELL_W * 0.46, 0.99, 0.1, 0.95)
-	stageGlow(SHELL_W * 0.5, 0.92, -0.04, 0.955)
-	stageGlow(SHELL_W * 0.52, 0.6, 1.06, 0.955)
+	stageBg.Glow(SHELL_W * 0.58, 0.04, -0.1, 0.93)
+	stageBg.Glow(SHELL_W * 0.46, 0.99, 0.1, 0.95)
+	stageBg.Glow(SHELL_W * 0.5, 0.92, -0.04, 0.955)
+	stageBg.Glow(SHELL_W * 0.52, 0.6, 1.06, 0.955)
 	U.frame(stage, {
 		BackgroundColor3 = T.White,
 		BackgroundTransparency = 0.74,
@@ -19012,9 +19016,7 @@ function MusicPage.Build(page, config)
 	-- Background presets: cover blur (image + dark shade), aurora (accent
 	-- glows), theme (accent tint) or solid. Shared by the page and refreshed
 	-- whenever the track / theme / appearance settings change.
-	local stageCoverToken = 0
-	local bgPreviewFrame, bgPreviewImage, bgPreviewGradient
-	local function applyStageBackground()
+	stageBg.Apply = function()
 		local preset = M.Settings.bgPreset or "aurora"
 		local enabled = M.Settings.bgEnabled ~= false
 		local themeLink = M.Settings.bgThemeLink ~= false
@@ -19022,76 +19024,76 @@ function MusicPage.Build(page, config)
 		local track = M.CurrentId and M.Tracks[M.CurrentId] or nil
 		local coverOn = enabled and preset == "cover" and track and track.coverUrl and track.coverUrl ~= ""
 		if coverOn then
-			stageCoverToken = stageCoverToken + 1
-			local token = stageCoverToken
-			stageCover.Visible = true
-			stageCover.ImageTransparency = math.clamp(0.3 + dim * 0.5, 0, 1)
+			stageBg.CoverToken = stageBg.CoverToken + 1
+			local token = stageBg.CoverToken
+			stageBg.Cover.Visible = true
+			stageBg.Cover.ImageTransparency = math.clamp(0.3 + dim * 0.5, 0, 1)
 			M:Cover(track.coverUrl, function(asset)
-				if token == stageCoverToken and asset and stageCover.Parent then
-					stageCover.Image = asset
+				if token == stageBg.CoverToken and asset and stageBg.Cover.Parent then
+					stageBg.Cover.Image = asset
 				end
 			end, 900)
 		else
-			stageCoverToken = stageCoverToken + 1
-			stageCover.Visible = false
-			stageCover.Image = ""
-			stageCover.ImageTransparency = 1
+			stageBg.CoverToken = stageBg.CoverToken + 1
+			stageBg.Cover.Visible = false
+			stageBg.Cover.Image = ""
+			stageBg.Cover.ImageTransparency = 1
 		end
-		stageShade.Visible = enabled
+		stageBg.Shade.Visible = enabled
 		local shade = 0.04 + dim * (preset == "cover" and 0.5 or 0.22)
-		stageShade.BackgroundTransparency = 1 - shade
+		stageBg.Shade.BackgroundTransparency = 1 - shade
 		local auroraOn = enabled and (preset == "aurora" or preset == "theme")
 		local glowColor = themeLink and T.Accent or T.AccentDeep
-		for _, glow in ipairs(stageGlowList) do
+		for _, glow in ipairs(stageBg.Glows) do
 			glow.Visible = auroraOn
 			glow.BackgroundColor3 = glowColor
 		end
 		if not enabled then
 			stage.BackgroundColor3 = T.Window
 			stage.BackgroundTransparency = 0
-			stageGradient.Color = ColorSequence.new(T.Window, T.Sidebar)
-			stageGradient.Transparency = NumberSequence.new(1)
+			stageBg.Gradient.Color = ColorSequence.new(T.Window, T.Sidebar)
+			stageBg.Gradient.Transparency = NumberSequence.new(1)
 		elseif preset == "cover" then
 			stage.BackgroundColor3 = T.Window
 			stage.BackgroundTransparency = 0.05
-			stageGradient.Transparency = NumberSequence.new(1)
+			stageBg.Gradient.Transparency = NumberSequence.new(1)
 		elseif preset == "solid" then
 			stage.BackgroundColor3 = T.Window
 			stage.BackgroundTransparency = 0
-			stageGradient.Color = ColorSequence.new(T.Window, T.Sidebar)
-			stageGradient.Transparency = NumberSequence.new({
+			stageBg.Gradient.Color = ColorSequence.new(T.Window, T.Sidebar)
+			stageBg.Gradient.Transparency = NumberSequence.new({
 				NumberSequenceKeypoint.new(0, 0),
 				NumberSequenceKeypoint.new(1, 0.2),
 			})
 		else
 			stage.BackgroundColor3 = T.Window
 			stage.BackgroundTransparency = 0.06
-			stageGradient.Color = ColorSequence.new({
+			stageBg.Gradient.Color = ColorSequence.new({
 				ColorSequenceKeypoint.new(0, T.Window:Lerp(T.Accent, themeLink and 0.2 or 0.1)),
 				ColorSequenceKeypoint.new(0.52, T.Main:Lerp(T.Accent, themeLink and 0.08 or 0.03)),
 				ColorSequenceKeypoint.new(1, T.Sidebar),
 			})
-			stageGradient.Transparency = NumberSequence.new({
+			stageBg.Gradient.Transparency = NumberSequence.new({
 				NumberSequenceKeypoint.new(0, 0),
 				NumberSequenceKeypoint.new(0.55, preset == "theme" and 0.02 or 0.08),
 				NumberSequenceKeypoint.new(1, preset == "theme" and 0.1 or 0.18),
 			})
 		end
-		if bgPreviewFrame and bgPreviewFrame.Parent then
-			bgPreviewFrame.BackgroundColor3 = stage.BackgroundColor3
-			bgPreviewFrame.BackgroundTransparency = math.min(0.5, stage.BackgroundTransparency)
-			if bgPreviewGradient then
-				bgPreviewGradient.Color = stageGradient.Color
-				bgPreviewGradient.Transparency = stageGradient.Transparency
-				bgPreviewGradient.Rotation = 145
+		if stageBg.PreviewFrame and stageBg.PreviewFrame.Parent then
+			stageBg.PreviewFrame.BackgroundColor3 = stage.BackgroundColor3
+			stageBg.PreviewFrame.BackgroundTransparency = math.min(0.5, stage.BackgroundTransparency)
+			if stageBg.PreviewGradient then
+				stageBg.PreviewGradient.Color = stageBg.Gradient.Color
+				stageBg.PreviewGradient.Transparency = stageBg.Gradient.Transparency
+				stageBg.PreviewGradient.Rotation = 145
 			end
-			if bgPreviewImage then
-				bgPreviewImage.Image = stageCover.Visible and stageCover.Image or ""
-				bgPreviewImage.ImageTransparency = stageCover.Visible and 0.35 or 1
+			if stageBg.PreviewImage then
+				stageBg.PreviewImage.Image = stageBg.Cover.Visible and stageBg.Cover.Image or ""
+				stageBg.PreviewImage.ImageTransparency = stageBg.Cover.Visible and 0.35 or 1
 			end
 		end
 	end
-	applyStageBackground()
+	stageBg.Apply()
 
 	local ambient = U.frame(shell, {
 		BackgroundColor3 = T.Accent,
@@ -21579,7 +21581,7 @@ function MusicPage.Build(page, config)
 		if state.lyricsOpen then
 			renderLyrics(true)
 		end
-		applyStageBackground()
+		stageBg.Apply()
 		scheduleWorldSync(0.12)
 	end
 
@@ -21847,7 +21849,8 @@ function MusicPage.Build(page, config)
 		-- One page-level scroll (like the web preview) instead of two separate
 		-- scrolling columns, which made the settings page look like a nested
 		-- window with its own scrollbars.
-		local settingsScroll = U.new("ScrollingFrame", {
+		local settingsView = {}
+		settingsView.Scroll = U.new("ScrollingFrame", {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			ClipsDescendants = true,
@@ -21861,13 +21864,13 @@ function MusicPage.Build(page, config)
 			ScrollingDirection = Enum.ScrollingDirection.Y,
 			ElasticBehavior = Enum.ElasticBehavior.Never,
 		}, parent)
-		local settingsContent = U.frame(settingsScroll, {
+		settingsView.Content = U.frame(settingsView.Scroll, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			Size = UDim2.new(1, 0, 0, 0),
 		})
 		local function settingsColumn(x)
-			local column = U.frame(settingsContent, {
+			local column = U.frame(settingsView.Content, {
 				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
 				Position = UDim2.fromOffset(x, 0),
@@ -21883,7 +21886,7 @@ function MusicPage.Build(page, config)
 		local function fitSettingsContent()
 			local height = math.max(leftContent.AbsoluteSize.Y or 0, rightContent.AbsoluteSize.Y or 0)
 			if height > 0 then
-				settingsContent.Size = UDim2.new(1, 0, 0, height + 10)
+				settingsView.Content.Size = UDim2.new(1, 0, 0, height + 10)
 			end
 		end
 		task.defer(fitSettingsContent)
@@ -22080,49 +22083,48 @@ function MusicPage.Build(page, config)
 			})
 
 			local card2, addRow2 = settingsCard(rightContent, "背景", "音乐页与歌词页的背景来源。", 1)
-			toggleRow(card2, addRow2, "显示背景", "关闭后使用纯色舞台", "bgEnabled", applyStageBackground)
+			toggleRow(card2, addRow2, "显示背景", "关闭后使用纯色舞台", "bgEnabled", stageBg.Apply)
 			segRow(card2, addRow2, "背景预设", "封面 / 极光 / 主题 / 纯色", "bgPreset", {
 				{ Value = "cover", Label = "封面" },
 				{ Value = "aurora", Label = "极光" },
 				{ Value = "theme", Label = "主题" },
 				{ Value = "solid", Label = "纯色" },
-			}, applyStageBackground)
-			toggleRow(card2, addRow2, "联动主题色", "背景随菜单强调色变化", "bgThemeLink", applyStageBackground)
-			rangeRow(card2, addRow2, "背景压暗", "让前景卡片更清楚", "bgDim", 0, 100, 1, "%", applyStageBackground)
+			}, stageBg.Apply)
+			toggleRow(card2, addRow2, "联动主题色", "背景随菜单强调色变化", "bgThemeLink", stageBg.Apply)
+			rangeRow(card2, addRow2, "背景压暗", "让前景卡片更清楚", "bgDim", 0, 100, 1, "%", stageBg.Apply)
 
 			local card3, addRow3 = settingsCard(leftContent, "动效", "音乐页使用 Tween 弹性过渡；关闭菜单动效后仍保留基础渐变。", 2)
 			toggleRow(card3, addRow3, "启用动效", "页面切换、歌词滚动和封面悬停", "motion")
 
 			local card5, addRow5 = settingsCard(leftContent, "背景预览", "预设会同时应用到音乐页和歌词页。", 3)
-			bgPreviewFrame = U.frame(card5, {
+			stageBg.PreviewFrame = U.frame(card5, {
 				BackgroundColor3 = T.Window,
 				BorderSizePixel = 0,
 				Size = UDim2.new(1, -20, 0, 118),
 				LayoutOrder = 2,
 			})
-			U.corner(bgPreviewFrame, 8)
-			U.stroke(bgPreviewFrame, T.White, 0.85, 1)
-			bgPreviewGradient = Instance.new("UIGradient")
-			bgPreviewGradient.Rotation = 145
-			bgPreviewGradient.Parent = bgPreviewFrame
-			bgPreviewImage = U.new("ImageLabel", {
+			U.corner(stageBg.PreviewFrame, 8)
+			U.stroke(stageBg.PreviewFrame, T.White, 0.85, 1)
+			stageBg.PreviewGradient = Instance.new("UIGradient")
+			stageBg.PreviewGradient.Rotation = 145
+			stageBg.PreviewGradient.Parent = stageBg.PreviewFrame
+			stageBg.PreviewImage = U.new("ImageLabel", {
 				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
 				Size = UDim2.fromScale(1, 1),
 				ImageTransparency = 1,
 				ScaleType = Enum.ScaleType.Crop,
 				ZIndex = 2,
-			}, bgPreviewFrame)
-			local mockCard = U.frame(bgPreviewFrame, {
+			}, stageBg.PreviewFrame)
+			U.corner(U.frame(stageBg.PreviewFrame, {
 				BackgroundColor3 = T.White,
 				BackgroundTransparency = 0.86,
 				BorderSizePixel = 0,
 				Position = UDim2.fromOffset(10, 10),
 				Size = UDim2.fromOffset(88, 12),
 				ZIndex = 3,
-			})
-			U.corner(mockCard, 4)
-			U.frame(bgPreviewFrame, {
+			}), 4)
+			U.frame(stageBg.PreviewFrame, {
 				BackgroundColor3 = T.White,
 				BackgroundTransparency = 0.94,
 				BorderSizePixel = 0,
@@ -22130,7 +22132,7 @@ function MusicPage.Build(page, config)
 				Size = UDim2.fromOffset(54, 8),
 				ZIndex = 3,
 			})
-			applyStageBackground()
+			stageBg.Apply()
 
 			local card4, addRow4 = settingsCard(rightContent, "关于", "Nerx Music · " .. tostring(Nerx.Version), 2)
 			U.label(card4, {
@@ -22164,7 +22166,7 @@ function MusicPage.Build(page, config)
 				openLyrics("page")
 			end)
 			coverInputAgain.ZIndex = 10
-			applyStageBackground()
+			stageBg.Apply()
 		end
 		player.Title.Text = track and track.name or "未播放"
 		if track then
@@ -22328,7 +22330,7 @@ function MusicPage.Build(page, config)
 				if M.Settings.wordHighlight and position < word.Start then
 					dim = 0.55
 				end
-				color = lyricColorHex(u, dim)
+				color = lyricFx.ColorHex(u, dim)
 			else
 				color = "#7C7C86"
 				if position >= word.End then
@@ -22346,7 +22348,7 @@ function MusicPage.Build(page, config)
 		if not system or not system.Rows or not system.Track then
 			return
 		end
-		rainbowPhase = (os.clock() * (tonumber(M.Settings.rainbowSpeed) or 0.25)) % 1
+		lyricFx.RainbowPhase = (os.clock() * (tonumber(M.Settings.rainbowSpeed) or 0.25)) % 1
 		local activeIndex = 0
 		for index, row in ipairs(system.Rows) do
 			if row.Entry and row.Entry.Time <= position + 0.03 then
@@ -22409,7 +22411,7 @@ function MusicPage.Build(page, config)
 					if amount > 0 then
 						local fps = math.clamp(tonumber(M.Settings.wiggleFps) or 8, 4, 24)
 						local frame = math.floor(os.clock() * fps)
-						rotation = rotation + lyricHash(index * 41 + frame * 13) * (isActive and 2 or 0.8) * amount
+						rotation = rotation + lyricFx.Hash(index * 41 + frame * 13) * (isActive and 2 or 0.8) * amount
 					end
 				end
 				row.Main.Rotation = rotation
@@ -22865,9 +22867,8 @@ function MusicPage.Build(page, config)
 		end
 		local track = M.CurrentId and M.Tracks[M.CurrentId] or nil
 		local immersive = state.lyricsMode == "immersive"
-		local bgEnabled = M.Settings.bgEnabled ~= false
-		local bgPreset = M.Settings.bgPreset or "aurora"
-		local showCoverBg = bgEnabled and (bgPreset == "cover" or bgPreset == "aurora")
+		local showCoverBg = M.Settings.bgEnabled ~= false
+			and ((M.Settings.bgPreset or "aurora") == "cover" or (M.Settings.bgPreset or "aurora") == "aurora")
 		lyrics.Left.Visible = not immersive
 		if immersive then
 			lyrics.Right.Position = UDim2.fromOffset(0, 0)
@@ -22962,7 +22963,7 @@ function MusicPage.Build(page, config)
 			if immersive then
 				mainSize = math.floor(mainSize * 1.05)
 			end
-			local mainFont, transFont = lyricFontPair()
+			local mainFont, transFont = lyricFx.FontPair()
 			local transSize = math.max(11, math.floor(mainSize * 0.46))
 			local gap = M.Settings.lineGap or 22
 			local y = 0
@@ -23149,15 +23150,15 @@ function MusicPage.Build(page, config)
 		part.Parent = workspace
 
 		local translation = M.Settings.showTranslation and entry.Trans ~= "" and entry.Trans or nil
-		local mainFont, transFont = lyricFontPair()
+		local mainFont, transFont = lyricFx.FontPair()
 		local textWidth = 640
 		local textMargin = 20
 		local mainSize = 32
 		local nextEntry = world.Entries and world.Entries[index + 1]
 		local nextTime = nextEntry and nextEntry.Time or (entry.Time + 4)
-		local glyphs, textHeight = lyricWorldLayout(entry.Text, mainSize, mainFont, textWidth - textMargin * 2)
-		local charTimes, charStarts, charEnds = lyricCharTimes(entry, nextTime)
-		local reveal = lyricRevealDuration(entry, nextTime, #glyphs)
+		local glyphs, textHeight = lyricFx.WorldLayout(entry.Text, mainSize, mainFont, textWidth - textMargin * 2)
+		local charTimes, charStarts, charEnds = lyricFx.CharTimes(entry, nextTime)
+		local reveal = lyricFx.RevealDuration(entry, nextTime, #glyphs)
 		local transH = 0
 		if translation then
 			transH = math.max(20, U.measureWrap(translation, 16, transFont, textWidth).Y + 4)
@@ -23336,7 +23337,7 @@ function MusicPage.Build(page, config)
 		local now = os.clock()
 		local dt = math.min(0.1, math.max(0.001, now - (world.LastNow or now)))
 		world.LastNow = now
-		rainbowPhase = (now * (tonumber(M.Settings.rainbowSpeed) or 0.25)) % 1
+		lyricFx.RainbowPhase = (now * (tonumber(M.Settings.rainbowSpeed) or 0.25)) % 1
 		local animate = now - (world.LastGlyph or 0) >= (1 / 30)
 		if animate then
 			world.LastGlyph = now
@@ -23351,7 +23352,7 @@ function MusicPage.Build(page, config)
 		local mode = M.Settings.lyricsColor or "custom"
 		local coverColor1, coverColor2
 		if mode == "cover" or mode == "gradient" then
-			local c1, c2 = lyricPalette()
+			local c1, c2 = lyricFx.Palette()
 			coverColor1 = c1:Lerp(T.White, 0.22)
 			coverColor2 = c2:Lerp(T.White, 0.18)
 		end
@@ -23457,10 +23458,10 @@ function MusicPage.Build(page, config)
 						if alpha and alpha > 0.01 then
 							local rotation, dx, dy, scaleWiggle = 0, 0, 0, 1
 							if wiggleOn and wiggleAmount > 0 and not line.Fading then
-								rotation = lyricHash(glyphIndex * 97 + wiggleFrame * 31) * 9 * wiggleAmount
-								dx = lyricHash(glyphIndex * 53 + wiggleFrame * 17) * 0.8 * wiggleAmount
-								dy = lyricHash(glyphIndex * 71 + wiggleFrame * 23) * 1.6 * wiggleAmount
-								scaleWiggle = 1 + lyricHash(glyphIndex * 89 + wiggleFrame * 29) * 0.12 * wiggleAmount
+								rotation = lyricFx.Hash(glyphIndex * 97 + wiggleFrame * 31) * 9 * wiggleAmount
+								dx = lyricFx.Hash(glyphIndex * 53 + wiggleFrame * 17) * 0.8 * wiggleAmount
+								dy = lyricFx.Hash(glyphIndex * 71 + wiggleFrame * 23) * 1.6 * wiggleAmount
+								scaleWiggle = 1 + lyricFx.Hash(glyphIndex * 89 + wiggleFrame * 29) * 0.12 * wiggleAmount
 							end
 							view.Label.TextTransparency = 0.06 + 0.94 * (1 - alpha)
 							view.Label.Position = UDim2.fromScale(
@@ -23474,7 +23475,7 @@ function MusicPage.Build(page, config)
 							view.Label.Rotation = rotation
 							local color
 							if mode == "rainbow" then
-								color = Color3.fromHSV((view.Seed * 0.85 + rainbowPhase) % 1, 0.55, 1)
+								color = Color3.fromHSV((view.Seed * 0.85 + lyricFx.RainbowPhase) % 1, 0.55, 1)
 							elseif mode == "cover" then
 								color = coverColor1 or T.Accent
 							elseif mode == "gradient" then
@@ -23503,7 +23504,7 @@ function MusicPage.Build(page, config)
 						if M.Settings.translationAnimate == true then
 							line.Trans.Position = UDim2.fromScale(0, (line.TransY or 0) + (1 - t) * 0.03)
 							if wiggleOn and wiggleAmount > 0 then
-								line.Trans.Rotation = lyricHash((line.Index or 1) * 131 + wiggleFrame * 37) * 0.8 * wiggleAmount
+								line.Trans.Rotation = lyricFx.Hash((line.Index or 1) * 131 + wiggleFrame * 37) * 0.8 * wiggleAmount
 							end
 						else
 							line.Trans.Rotation = 0
@@ -24536,15 +24537,16 @@ function MusicPage.Build(page, config)
 	if oldPreviewHud then
 		oldPreviewHud:Destroy()
 	end
-	local hudGui = U.new("ScreenGui", {
+	local hud = {}
+	hud.Gui = U.new("ScreenGui", {
 		Name = "NerxMusicSongCard",
 		ResetOnSpawn = false,
 		IgnoreGuiInset = true,
 		DisplayOrder = 998,
 		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 	})
-	hudGui.Parent = parentGui
-	local hudCard = glassPanel(hudGui, {
+	hud.Gui.Parent = parentGui
+	hud.Card = glassPanel(hud.Gui, {
 		AnchorPoint = Vector2.new(1, 1),
 		Position = UDim2.new(1, -14, 1, -14),
 		Size = UDim2.fromOffset(236, 58),
@@ -24553,16 +24555,16 @@ function MusicPage.Build(page, config)
 		Radius = 12,
 		Visible = false,
 	}, true)
-	local hudScale = Instance.new("UIScale")
-	hudScale.Scale = M.Settings.songCardScale or 1
-	hudScale.Parent = hudCard
-	local hudCoverHolder = U.frame(hudCard, {
+	hud.Scale = Instance.new("UIScale")
+	hud.Scale.Scale = M.Settings.songCardScale or 1
+	hud.Scale.Parent = hud.Card
+	hud.CoverHolder = U.frame(hud.Card, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(7, 8),
 		Size = UDim2.fromOffset(42, 42),
 	})
-	local hudTitle = U.label(hudCard, {
+	hud.Title = U.label(hud.Card, {
 		Text = "—",
 		Font = F.Bold,
 		TextSize = 9.5,
@@ -24571,7 +24573,7 @@ function MusicPage.Build(page, config)
 		Position = UDim2.fromOffset(57, 10),
 		Size = UDim2.new(1, -68, 0, 14),
 	})
-	local hudArtist = U.label(hudCard, {
+	hud.Artist = U.label(hud.Card, {
 		Text = "—",
 		TextSize = 7.5,
 		TextColor3 = T.White,
@@ -24579,21 +24581,21 @@ function MusicPage.Build(page, config)
 		Position = UDim2.fromOffset(57, 25),
 		Size = UDim2.new(1, -68, 0, 11),
 	})
-	local hudBarBase = U.frame(hudCard, {
+	hud.BarBase = U.frame(hud.Card, {
 		BackgroundColor3 = T.White,
 		BackgroundTransparency = 0.78,
 		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(57, 42),
 		Size = UDim2.new(1, -68, 0, 3),
 	})
-	U.corner(hudBarBase, 2)
-	local hudBarFill = U.frame(hudBarBase, {
+	U.corner(hud.BarBase, 2)
+	hud.BarFill = U.frame(hud.BarBase, {
 		BackgroundColor3 = T.Accent,
 		BorderSizePixel = 0,
 		Size = UDim2.fromScale(0, 1),
 	})
-	U.corner(hudBarFill, 2)
-	U.inputButton(hudCard, function()
+	U.corner(hud.BarFill, 2)
+	U.inputButton(hud.Card, function()
 		if window and window.Show then
 			window:Show()
 		end
@@ -24604,21 +24606,21 @@ function MusicPage.Build(page, config)
 		local track = M.CurrentId and M.Tracks[M.CurrentId] or nil
 		local visible = M.Settings.songCard and track and (M.Playing or M.Settings.songCardPaused)
 		if not visible then
-			hudCard.Visible = false
+			hud.Card.Visible = false
 			return
 		end
-		hudCard.Visible = true
-		hudScale.Scale = M.Settings.songCardScale or 1
+		hud.Card.Visible = true
+		hud.Scale.Scale = M.Settings.songCardScale or 1
 		if state.hudTrackId ~= track.id then
 			state.hudTrackId = track.id
-			hudCoverHolder:ClearAllChildren()
-			coverBox(hudCoverHolder, UDim2.fromScale(1, 1), track, 8, { IconSize = 12, CoverSize = 240 })
+			hud.CoverHolder:ClearAllChildren()
+			coverBox(hud.CoverHolder, UDim2.fromScale(1, 1), track, 8, { IconSize = 12, CoverSize = 240 })
 		end
-		hudTitle.Text = track.name
-		hudArtist.Text = track.artist .. " — " .. track.album
+		hud.Title.Text = track.name
+		hud.Artist.Text = track.artist .. " — " .. track.album
 		local duration = M:GetDuration()
 		local ratio = duration > 0 and M:GetPosition() / duration or 0
-		hudBarFill.Size = UDim2.fromScale(math.clamp(ratio, 0, 1), 1)
+		hud.BarFill.Size = UDim2.fromScale(math.clamp(ratio, 0, 1), 1)
 	end
 
 	-- -----------------------------------------------------------------------------------
@@ -24634,7 +24636,7 @@ function MusicPage.Build(page, config)
 			renderRail()
 				renderMain()
 				renderPlayer()
-				applyStageBackground()
+				stageBg.Apply()
 			if state.lyricsOpen then
 				renderLyrics(true)
 			end
