@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.9.1
+	Nerx UI Library · v1.9.2
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.9.1"
+Nerx.Version = "1.9.2"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -15466,6 +15466,16 @@ local rawRequest = (type(request) == "function" and request)
 if type(rawRequest) ~= "function" then
 	rawRequest = nil
 end
+-- Alternate executor request API. Some executors strip Set-Cookie from
+-- `request` but keep it on `syn.request` / `http_request`.
+local altRequest = (type(http_request) == "function" and http_request)
+	or (type(httprequest) == "function" and httprequest)
+	or (type(syn) == "table" and type(syn.request) == "function" and syn.request)
+	or (type(fluxus) == "table" and type(fluxus.request) == "function" and fluxus.request)
+	or (type(http) == "table" and type(http.request) == "function" and http.request)
+if altRequest == rawRequest then
+	altRequest = nil
+end
 local fnWrite = (type(writefile) == "function" and writefile) or musicEnv("writefile")
 local fnRead = (type(readfile) == "function" and readfile) or musicEnv("readfile")
 local fnIsFile = (type(isfile) == "function" and isfile) or musicEnv("isfile")
@@ -15517,6 +15527,12 @@ function Music:_CookieFromHeaders(headers)
 		return nil
 	end
 	for key, value in pairs(headers) do
+		if type(key) == "string" and string.lower(key) == "music_u" and type(value) == "string" and value ~= "" then
+			return value
+		end
+		if type(value) == "table" and type(value["MUSIC_U"]) == "string" and value["MUSIC_U"] ~= "" then
+			return value["MUSIC_U"]
+		end
 		if type(key) == "string" and string.lower(key) == "set-cookie" then
 			local text = type(value) == "table" and table.concat(value, "\n") or tostring(value)
 			local token = string.match(text, "MUSIC_U=([^;%s]+)")
@@ -15557,6 +15573,7 @@ local function musicHttp(config, timeout)	config = config or {}
 			body = body,
 			status = status,
 			headers = headers,
+			cookies = response.Cookies or response.cookies,
 		}
 	end
 	if string.upper(tostring(config.Method or "GET")) == "GET" then
@@ -16374,9 +16391,11 @@ function Music:LoadCharts(force, callback)
 	self.ChartsLoading = true
 	self:_Emit("charts")
 	task.spawn(function()
-		self.Charts = {}
+		-- Fill the whole chart grid first; detail requests update each card.
+		local entries = {}
 		for _, chart in ipairs(self.ChartList) do
-			local entry = {
+			local c1, c2 = musicArtColors(chart.name .. chart.netId)
+			entries[#entries + 1] = {
 				netId = chart.netId,
 				name = chart.name,
 				tag = chart.tag,
@@ -16384,9 +16403,14 @@ function Music:LoadCharts(force, callback)
 				count = 0,
 				playCount = 0,
 				coverUrl = "",
-				color1 = musicArtColors(chart.name .. chart.netId),
-				color2 = select(2, musicArtColors(chart.name .. chart.netId)),
+				color1 = c1,
+				color2 = c2,
 			}
+		end
+		self.Charts = entries
+		self:_Emit("charts")
+		for index, chart in ipairs(self.ChartList) do
+			local entry = entries[index]
 			local data = self:_ApiGet("/playlist/detail?id=" .. chart.netId, 900, force)
 			local raw = data and (data.playlist or (data.data and data.data.playlist))
 			if raw then
@@ -16396,7 +16420,6 @@ function Music:LoadCharts(force, callback)
 				entry.playCount = tonumber(raw.playCount) or 0
 				entry.coverUrl = tostring(raw.coverImgUrl or raw.picUrl or "")
 			end
-			self.Charts[#self.Charts + 1] = entry
 			task.wait(0.32)
 		end
 		self.ChartsLoading = false
@@ -16937,7 +16960,11 @@ function Music:QrLoginStart(callback)
 			end
 		end
 		if callback then
-			callback(true, key, asset, asset and nil or "二维码图片加载失败，可改用 Cookie 登录")
+			local message = nil
+			if not asset then
+				message = "二维码图片加载失败，可改用 Cookie 登录"
+			end
+			callback(true, key, asset, message)
 		end
 	end)
 end
@@ -16959,9 +16986,62 @@ function Music:QrLoginPoll(key, callback)
 		local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
 		local code = tonumber(data and data.code) or 801
 		if code == 803 then
-			local token = self:_CookieFromHeaders(response and response.headers)
+			local token = self:_CookieFromHeaders(response and response.cookies)
+			if not token then
+				token = self:_CookieFromHeaders(response and response.headers)
+			end
 			if not token and data then
-				token = string.match(tostring(data.cookie or ""), "MUSIC_U=([^;%s]+)")
+				local nested = type(data.data) == "table" and data.data or {}
+				token = string.match(
+					tostring(data.cookie or data.cookies or data.session or nested.cookie or nested.cookies or ""),
+					"MUSIC_U=([^;%s\"}]+)"
+				)
+				if not token and type(data.data) == "string" then
+					token = string.match(data.data, "MUSIC_U=([^;%s\"}]+)")
+				end
+			end
+			if not token and response and response.body then
+				token = string.match(tostring(response.body), "MUSIC_U=([^;%s\"}]+)")
+			end
+			if not token then
+				-- Some executors drop Set-Cookie on the first 803 response;
+				-- asking once more often returns the cookie header again.
+				task.wait(0.5)
+				local retry = musicHttp({
+					Url = "https://music.163.com/api/login/qrcode/client/login?key=" .. musicUrlEncode(key) .. "&type=1",
+					Method = "GET",
+					Headers = musicNcmHeaders(""),
+				}, 15)
+				token = self:_CookieFromHeaders(retry and retry.cookies)
+				if not token then
+					token = self:_CookieFromHeaders(retry and retry.headers)
+				end
+				if not token and retry and retry.body then
+					token = string.match(tostring(retry.body), "MUSIC_U=([^;%s\"}]+)")
+				end
+			end
+			if not token and type(altRequest) == "function" then
+				local ok, alt = pcall(altRequest, {
+					Url = "https://music.163.com/api/login/qrcode/client/login?key=" .. musicUrlEncode(key) .. "&type=1",
+					Method = "GET",
+					Headers = musicNcmHeaders(""),
+				})
+				if ok and type(alt) == "table" then
+					token = self:_CookieFromHeaders(alt.Cookies)
+					if not token then
+						token = self:_CookieFromHeaders(alt.cookies)
+					end
+					if not token then
+						token = self:_CookieFromHeaders(alt.Headers)
+					end
+					if not token then
+						token = self:_CookieFromHeaders(alt.headers)
+					end
+					local body = alt.Body or alt.body
+					if not token and body then
+						token = string.match(tostring(body), "MUSIC_U=([^;%s\"}]+)")
+					end
+				end
 			end
 			if token and token ~= "" then
 				self:SetCookie("MUSIC_U=" .. token)
@@ -17576,7 +17656,12 @@ function Music:_Load(track)
 				self:Save()
 				self:_Emit("library", track)
 			end
-			self.Playing = sound.IsPlaying
+			if self.DesiredPlaying and not sound.IsPlaying then
+				pcall(function()
+					sound:Play()
+				end)
+			end
+			self.Playing = self.DesiredPlaying ~= false
 		else
 			self.Playing = false
 			pcall(function()
@@ -17681,7 +17766,12 @@ function Music:_LoadNetease(track, token, qualityOverride)
 				self:Save()
 				self:_Emit("library", track)
 			end
-			self.Playing = sound.IsPlaying
+			if self.DesiredPlaying and not sound.IsPlaying then
+				pcall(function()
+					sound:Play()
+				end)
+			end
+			self.Playing = self.DesiredPlaying ~= false
 		else
 			self.Playing = false
 			pcall(function()
@@ -18002,6 +18092,11 @@ function MusicPage.Build(page, config)
 	M:Init()
 
 	local canvas = page:SetCustomMode()
+	-- SetCustomMode normally insets the canvas by 20/18 for card pages. The
+	-- music page should fill the content area like the web preview, so bleed
+	-- it back to the page root (no nested-window margin).
+	canvas.Position = UDim2.fromOffset(0, 0)
+	canvas.Size = UDim2.fromScale(1, 1)
 	local T = Theme
 	local F = Fonts
 	local W = Nerx.Widgets
@@ -18045,7 +18140,12 @@ function MusicPage.Build(page, config)
 	-- this page is in unscaled units. Using the raw value made the whole layout
 	-- 1.5x too wide/tall: grids were clipped at the window edge and the player
 	-- bar was pushed below the visible area. Divide by the local scale chain.
-	local boxSize = canvas.AbsoluteSize / U.parentScale(canvas)
+	local pageRoot = page.Root
+	local measured = pageRoot and pageRoot.AbsoluteSize or canvas.AbsoluteSize
+	if not measured or measured.X < 200 then
+		measured = canvas.AbsoluteSize
+	end
+	local boxSize = measured / U.parentScale(canvas)
 	local SHELL_W = boxSize.X > 200 and boxSize.X or math.max(560, windowWidth - 240)
 	local SHELL_H = boxSize.Y > 160 and boxSize.Y or math.max(380, windowHeight - 88)
 	local RAIL_W = math.clamp(SHELL_W * 0.215, 158, 200)
@@ -19548,8 +19648,9 @@ function MusicPage.Build(page, config)
 	island.CoverHolder = U.frame(island.Root, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(5, 4),
-		Size = UDim2.fromOffset(26, 26),
+		Position = UDim2.fromOffset(8, 5),
+		Size = UDim2.fromOffset(24, 24),
+		ClipsDescendants = true,
 		ZIndex = 61,
 	})
 	island.Cover = coverBox(island.CoverHolder, UDim2.fromScale(1, 1), nil, 8, { ZIndex = 61, IconSize = 11 })
@@ -19558,7 +19659,7 @@ function MusicPage.Build(page, config)
 		Font = F.Bold,
 		TextSize = 9.5,
 		TextColor3 = T.Text,
-		Position = UDim2.fromOffset(38, 5),
+		Position = UDim2.fromOffset(40, 5),
 		Size = UDim2.fromOffset(150, 13),
 		ZIndex = 62,
 	})
@@ -19567,7 +19668,7 @@ function MusicPage.Build(page, config)
 		TextSize = 7.5,
 		TextColor3 = T.Muted,
 		TextTransparency = 0.25,
-		Position = UDim2.fromOffset(38, 18),
+		Position = UDim2.fromOffset(40, 18),
 		Size = UDim2.fromOffset(150, 11),
 		ZIndex = 62,
 	})
@@ -20230,6 +20331,9 @@ function MusicPage.Build(page, config)
 			end)
 		end
 		paintTrackRow(widget, track.id == M.CurrentId)
+		if state.trackRows then
+			state.trackRows[track.id] = widget
+		end
 		return widget
 	end
 
@@ -20277,6 +20381,7 @@ function MusicPage.Build(page, config)
 		options = options or {}
 		local hoverRows = {}
 		options.__hoverRows = hoverRows
+		state.trackRows = {}
 		local scroll = newScroll(parent, options.Top or 0, options.Bottom or 0)
 		local content = U.frame(scroll, {
 			BackgroundTransparency = 1,
@@ -20322,6 +20427,27 @@ function MusicPage.Build(page, config)
 				reset()
 			end
 			table.clear(hoverRows)
+		end)
+		-- MouseLeave on a ScrollingFrame can be missed when the row's "..." or
+		-- a child eats the event. Watch the real cursor and clear any row the
+		-- pointer is no longer inside.
+		task.spawn(function()
+			while scroll.Parent do
+				task.wait(0.15)
+				if next(hoverRows) then
+					local mouse = UserInputService:GetMouseLocation()
+					for row, reset in pairs(hoverRows) do
+						local position = row.AbsolutePosition
+						local size = row.AbsoluteSize
+						if not row.Visible
+							or mouse.X < position.X or mouse.X > position.X + size.X
+							or mouse.Y < position.Y or mouse.Y > position.Y + size.Y then
+							reset()
+							hoverRows[row] = nil
+						end
+					end
+				end
+			end
 		end)
 		return scroll
 	end
@@ -20388,7 +20514,7 @@ function MusicPage.Build(page, config)
 		end
 
 		local gap = 12
-		local columns = math.clamp(math.floor((WORK_W - 32 + gap) / (100 + gap)), 3, 5)
+		local columns = 4
 		local cardW = math.floor((WORK_W - 32 - gap * (columns - 1)) / columns)
 		local cardH = cardW + 40
 		local rows = math.ceil(#playlists / columns)
@@ -20504,7 +20630,7 @@ function MusicPage.Build(page, config)
 		end
 
 		local gap = 12
-		local columns = math.clamp(math.floor((WORK_W - 32 + gap) / (100 + gap)), 3, 5)
+		local columns = 3
 		local cardW = math.floor((WORK_W - 32 - gap * (columns - 1)) / columns)
 		local cardH = cardW + 40
 		local rows = math.ceil(#M.Charts / columns)
@@ -22381,7 +22507,7 @@ function MusicPage.Build(page, config)
 					row.Main.TextStrokeTransparency = M.Settings.glow and (0.55 - 0.28 * pulse) or 1
 					if row.Glow then
 						row.Glow.Visible = M.Settings.glow == true
-						row.Glow.BackgroundTransparency = 0.94 - 0.08 * pulse
+						row.Glow.ImageTransparency = 0.84 - 0.1 * pulse
 					end
 					if row.Trans then
 						row.Trans.TextTransparency = M.Settings.showTranslation and 0.15 or 1
@@ -22995,19 +23121,16 @@ function MusicPage.Build(page, config)
 					Size = UDim2.fromOffset(width, rowHeight),
 					ZIndex = 1,
 				})
-				-- Soft rounded accent aura behind the active line. Image-based
-				-- rectangular glow sheets picked up a hard black edge inside
-				-- TextLabels, so this stays a plain rounded frame.
-				local rowGlow = U.frame(row, {
-					BackgroundColor3 = T.Accent,
-					BackgroundTransparency = 1,
-					BorderSizePixel = 0,
-					Position = UDim2.fromOffset(-18, -10),
-					Size = UDim2.fromOffset(width + 36, rowHeight + 20),
+				-- Soft radial DeepGlow behind the active line. A rounded frame
+				-- looked like a flat color block, so this uses the radial asset
+				-- (same family as the world lyric glow).
+				local rowGlow = glowImage(row, GLOW_ASSETS.Deep, T.Accent, 0.9, {
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					Position = UDim2.new(0.5, 0, 0.5, 0),
+					Size = UDim2.fromOffset(width + 80, rowHeight * 2.4),
 					Visible = false,
 					ZIndex = 1,
 				})
-				U.corner(rowGlow, 999)
 				local main = U.label(row, {
 					Text = M:RichEscape(entry.Text),
 					Font = mainFont,
@@ -24705,16 +24828,41 @@ function MusicPage.Build(page, config)
 			return
 		end
 		if kind == "library" then
-			if state.view.kind == "playlist" and not currentPlaylist() then
-				state.view = { kind = "home" }
+			local payloadIsTrack = type(payload) == "table" and payload.id ~= nil and payload.trackIds == nil
+			if payloadIsTrack then
+				-- Metadata / duration refresh for one track must not rebuild the
+				-- whole list (that reset the scroll to the top while playing).
+				local widget = state.trackRows and state.trackRows[payload.id]
+				if widget and widget.Root and widget.Root.Parent then
+					paintTrackRow(widget, payload.id == M.CurrentId)
+					if widget.Title and payload.name then
+						widget.Title.Text = payload.name
+					end
+					if widget.Artist and payload.artist then
+						widget.Artist.Text = payload.artist
+					end
+				end
+				renderPlayer()
+				renderHud()
+			else
+				if state.view.kind == "playlist" and not currentPlaylist() then
+					state.view = { kind = "home" }
+				end
+				renderRail()
+				if state.view.kind ~= "settings" then
+					renderMain()
+				end
+				renderPlayer()
+				renderHud()
 			end
-			renderRail()
-			if state.view.kind ~= "settings" then
-				renderMain()
-			end
-			renderPlayer()
-			renderHud()
 		elseif kind == "track" then
+			if state.trackRows then
+				for id, widget in pairs(state.trackRows) do
+					if widget.Root and widget.Root.Parent then
+						paintTrackRow(widget, id == M.CurrentId)
+					end
+				end
+			end
 			renderPlayer()
 			renderIsland(payload)
 			if state.lyricsOpen then
