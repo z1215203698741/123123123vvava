@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.3.5
+	Nerx UI Library · v1.3.15
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.4.0"
+Nerx.Version = "1.3.15"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -624,6 +624,62 @@ function U.shadow(parent, strength)
 	local stroke = U.stroke(parent, Theme.Black, 0.8, 1)
 	stroke.Name = "NerxShadowFallback"
 	return stroke
+end
+
+-- Subtle control finish: a slightly transparent fill so the card shows
+-- through, a 1px stroke whose upper-right half fades away (only the lower-left
+-- rim stays lit) and an optional "[" top corner mark on the left border (reference UI).
+function U.bevel(parent, options)
+	options = options or {}
+	local fill = options.Fill or 0
+	if fill > 0 then
+		parent.BackgroundTransparency = math.clamp(parent.BackgroundTransparency + fill, 0, 1)
+	end
+
+	if options.Rim ~= false then
+		local stroke = parent:FindFirstChildOfClass("UIStroke")
+		if stroke and not stroke:FindFirstChildOfClass("UIGradient") then
+			local fade = Instance.new("UIGradient")
+			fade.Rotation = 315
+			fade.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0),
+				NumberSequenceKeypoint.new(0.5, 0.45),
+				NumberSequenceKeypoint.new(1, 1),
+			})
+			fade.Parent = stroke
+		end
+	end
+
+	if options.Dot then
+		-- Tiny "[" bottom corner (top arm cut away) tucked into the bottom-left
+		-- of the control: a 3px horizontal tick at the bottom + a 3px vertical stem.
+		local mark = U.frame(parent, {
+			Name = "NerxBevelMark",
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.new(0, 3 - (options.PadLeft or 0), 1, (options.PadBottom or 0) - 6),
+			Size = UDim2.fromOffset(3, 3),
+			ZIndex = (parent.ZIndex or 1) + 2,
+		})
+		U.frame(mark, {
+			Name = "NerxBevelMarkH",
+			BackgroundColor3 = options.DotColor or Theme.Text,
+			BackgroundTransparency = 0.55,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(0, 2),
+			Size = UDim2.fromOffset(3, 1),
+			ZIndex = (parent.ZIndex or 1) + 3,
+		})
+		U.frame(mark, {
+			Name = "NerxBevelMarkV",
+			BackgroundColor3 = options.DotColor or Theme.Text,
+			BackgroundTransparency = 0.55,
+			BorderSizePixel = 0,
+			Size = UDim2.fromOffset(1, 3),
+			ZIndex = (parent.ZIndex or 1) + 3,
+		})
+		return mark
+	end
 end
 
 function U.ripple(center, color, options)
@@ -1809,6 +1865,8 @@ local function dropdownField(parent, width, disabled)
 		Size = UDim2.fromOffset(width or 132, 24),
 	})
 	U.corner(field, 5)
+	U.stroke(field, Theme.Stroke, 0.55, 1)
+	U.bevel(field, { Fill = 0.1, Dot = true })
 
 	local label = U.label(field, {
 		Text = "",
@@ -1884,6 +1942,8 @@ local function smallButton(parent, text, callback, disabled)
 		Size = UDim2.fromOffset(74, 24),
 	})
 	U.corner(root, 5)
+	U.stroke(root, Theme.Stroke, 0.55, 1)
+	U.bevel(root, { Fill = 0.1, Dot = true, PadLeft = 6 })
 	U.padding(root, 0, 6, 0, 6)
 	local label = U.label(root, {
 		Text = text or "Button",
@@ -1932,6 +1992,7 @@ local function primaryButton(parent, text, width, height, callback)
 	})
 	U.corner(root, 6)
 	U.stroke(root, Theme.Stroke, 0.45, 1)
+	U.bevel(root, { Fill = 0.1, Dot = true, PadLeft = 7 })
 	U.padding(root, 0, 7, 0, 7)
 	local fitSize = 11
 	local innerWidth = math.max(1, (width or 84) - 14)
@@ -2419,6 +2480,7 @@ local function inputWidget(parent, config)
 	})
 	U.corner(root, 6)
 	local stroke = U.stroke(root, Theme.Stroke, 0.7, 1)
+	U.bevel(root, { Fill = 0.1, Dot = true })
 	local iconOffset = 0
 	if config.Icon then
 		U.icon(root, config.Icon, 12, Theme.Muted, {
@@ -3068,6 +3130,8 @@ local function createSection(page, config)
 			Size = UDim2.fromOffset(108, 24),
 		})
 		U.corner(field, 5)
+		U.stroke(field, Theme.Stroke, 0.55, 1)
+		U.bevel(field, { Fill = 0.1, Dot = true })
 		local text = U.label(field, {
 			Text = key and U.keyName(key) or "click to set",
 			TextSize = key and 10 or 9.5,
@@ -3191,6 +3255,8 @@ local function createSection(page, config)
 			Size = UDim2.fromOffset(142, 24),
 		})
 		U.corner(field, 5)
+		U.stroke(field, Theme.Stroke, 0.55, 1)
+		U.bevel(field, { Fill = 0.1, Dot = true })
 		local box = U.new("TextBox", {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
@@ -5027,6 +5093,7 @@ end
 	-- Round the right side into the group outline; the narrow connector
 	-- squares the left side so the mode and Save areas share one straight seam.
 	U.corner(saveButton, 7)
+	U.bevel(saveButton, { Dot = true })
 	local saveConnector = U.frame(saveButton, {
 		BackgroundColor3 = Theme.Primary,
 		BorderSizePixel = 0,
@@ -5061,7 +5128,8 @@ end
 		ZIndex = 4,
 	})
 	U.corner(search, 8)
-	local searchStroke = U.stroke(search, Theme.Stroke, 1, 1)
+	local searchStroke = U.stroke(search, Theme.Stroke, 0.55, 1)
+	U.bevel(search, { Fill = 0.08 })
 	local searchIcon = U.icon(search, "magnifying-glass", 13, Theme.Muted, {
 		Position = UDim2.fromOffset(10, 0),
 		Size = UDim2.fromOffset(14, 30),
@@ -5128,6 +5196,7 @@ end
 	})
 	U.corner(shieldButton, 7)
 	local shieldStroke = U.stroke(shieldButton, Theme.Stroke, 0.7, 1)
+	U.bevel(shieldButton, { Fill = 0.08 })
 	local shieldIcon = U.icon(shieldButton, "shield-check", 14, Theme.Muted, {
 		TextTransparency = 0.3,
 		Size = UDim2.fromScale(1, 1),
@@ -5171,12 +5240,12 @@ end
 	end)
 	U.connect(searchBox.Focused, function()
 		U.tween(search, TWEEN.Fast, { BackgroundColor3 = Theme.FieldHover })
-		searchStroke.Transparency = 0.5
+		searchStroke.Transparency = 0.25
 		searchIcon.TextTransparency = 0.05
 	end)
 	U.connect(searchBox.FocusLost, function(enterPressed)
 		U.tween(search, TWEEN.Fast, { BackgroundColor3 = Theme.FieldDeep })
-		searchStroke.Transparency = 1
+		searchStroke.Transparency = 0.55
 		searchIcon.TextTransparency = 0.3
 	end)
 	U.connect(searchBox:GetPropertyChangedSignal("Text"), function()
@@ -6775,40 +6844,6 @@ do
 					if replacement then
 						pcall(function()
 							object.Color = replacement
-						end)
-					end
-				end
-			elseif object:IsA("UIShadow") then
-				local ok, current = pcall(function()
-					return object.Color
-				end)
-				if ok and current then
-					local replacement = mapping[colorKey(current)]
-					if replacement then
-						pcall(function()
-							object.Color = replacement
-						end)
-					end
-				end
-			elseif object:IsA("UIGradient") then
-				local ok, sequence = pcall(function()
-					return object.Color
-				end)
-				if ok and sequence then
-					local changed = false
-					local keypoints = {}
-					for _, keypoint in ipairs(sequence.Keypoints) do
-						local color = keypoint.Value
-						local replacement = mapping[colorKey(color)]
-						if replacement then
-							color = replacement
-							changed = true
-						end
-						keypoints[#keypoints + 1] = ColorSequenceKeypoint.new(keypoint.Time, color)
-					end
-					if changed then
-						pcall(function()
-							object.Color = ColorSequence.new(keypoints)
 						end)
 					end
 				end
@@ -10858,6 +10893,1237 @@ function Nerx:Unload()
 		screenGui:Destroy()
 	end)
 	table.clear(self.Windows)
+end
+
+-- ---------------------------------------------------------------------------------------
+-- Background themes: URL image, crop (pan + zoom), colours, save into My Themes
+-- ---------------------------------------------------------------------------------------
+local Background = {}
+Nerx.Background = Background
+
+local BG_FILE = "theme-backgrounds.json"
+local bgStore = Nerx.Storage:ReadJSON(BG_FILE)
+if type(bgStore) ~= "table" then
+	bgStore = {}
+end
+if type(bgStore.customs) ~= "table" then
+	bgStore.customs = {}
+end
+local function saveBgStore()
+	pcall(function()
+		Nerx.Storage:WriteJSON(BG_FILE, bgStore)
+	end)
+end
+
+local function bgNotify(text, color)
+	pcall(function()
+		Nerx:Notify({
+			Title = "Themes",
+			Text = tostring(text),
+			Icon = "paint-bucket",
+			Color = color or Theme.Green,
+			Duration = 3,
+		})
+	end)
+end
+
+local bgAssetCache = {}
+local function downloadAsset(url)
+	local requestFn = (syn and syn.request) or (http and http.request) or http_request
+		or (fluxus and fluxus.request) or request
+	local body
+	if type(requestFn) == "function" then
+		local ok, response = pcall(requestFn, { Url = url, Method = "GET" })
+		if ok and type(response) == "table" and (response.StatusCode == 200 or response.Success == true) then
+			body = response.Body
+		end
+	end
+	if type(body) ~= "string" or #body < 4 then
+		local ok, result = pcall(function()
+			return game:HttpGet(url)
+		end)
+		if ok and type(result) == "string" then
+			body = result
+		end
+	end
+	if type(body) ~= "string" or #body < 4 then
+		return nil
+	end
+	local ext
+	if body:sub(1, 8) == "\137PNG\r\n\26\n" then
+		ext = "png"
+	elseif body:sub(1, 3) == "\255\216\255" then
+		ext = "jpg"
+	else
+		return nil
+	end
+	local hash = 5381
+	for index = 1, #url do
+		hash = (hash * 33 + url:byte(index)) % 2147483647
+	end
+	local fileName = "nerx_bg_" .. tostring(math.floor(hash)) .. "." .. ext
+	local env = type(getgenv) == "function" and getgenv() or _G
+	local custom = env and (env.getcustomasset or env.getsynasset)
+	if type(custom) ~= "function" then
+		return nil
+	end
+	if type(isfile) == "function" and type(writefile) == "function" then
+		local exists = false
+		pcall(function()
+			exists = isfile(fileName)
+		end)
+		if not exists then
+			local ok = pcall(writefile, fileName, body)
+			if not ok then
+				return nil
+			end
+		end
+		local ok, path = pcall(custom, fileName)
+		if ok and type(path) == "string" and path ~= "" then
+			return path
+		end
+		if type(getworkspace) == "function" then
+			local wsOk, folder = pcall(getworkspace)
+			if wsOk and type(folder) == "string" then
+				local ok2, path2 = pcall(custom, folder .. "/" .. fileName)
+				if ok2 and type(path2) == "string" and path2 ~= "" then
+					return path2
+				end
+			end
+		end
+	end
+	local ok3, direct = pcall(custom, url)
+	if ok3 and type(direct) == "string" and direct ~= "" then
+		return direct
+	end
+	return nil
+end
+
+local function resolveAsset(value)
+	value = tostring(value or "")
+	if value == "" then
+		return nil
+	end
+	if value:match("^rbxassetid://") or value:match("^rbxasset://")
+		or value:match("^http://www.roblox.com/asset") or value:match("^https://www.roblox.com/asset") then
+		return value
+	end
+	local cached = bgAssetCache[value]
+	if cached ~= nil then
+		return cached or nil
+	end
+	if value:match("^https?://") then
+		local asset = downloadAsset(value)
+		bgAssetCache[value] = asset or false
+		return asset
+	end
+	return value
+end
+
+local layerHost, layerImage, layerTint, layerDim, layerWindow
+function Background:Attach(window)
+	if not window or not window.Root then
+		return
+	end
+	if layerHost and layerHost.Parent and layerWindow == window then
+		return
+	end
+	if layerHost then
+		pcall(function()
+			layerHost:Destroy()
+		end)
+	end
+	layerWindow = window
+	layerHost = U.frame(window.Root, {
+		Name = "NerxMenuBackground",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+		ZIndex = 0,
+		ClipsDescendants = true,
+		Visible = false,
+	})
+	layerImage = U.new("ImageLabel", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(1, 1),
+		Image = "",
+		ImageTransparency = 1,
+		ScaleType = Enum.ScaleType.Crop,
+		ZIndex = 0,
+	}, layerHost)
+	layerTint = U.frame(layerHost, {
+		BackgroundColor3 = Theme.Main,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+		ZIndex = 0,
+	})
+	layerDim = U.frame(layerHost, {
+		BackgroundColor3 = Theme.Black,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+		ZIndex = 0,
+	})
+	Background:ApplyActive()
+end
+
+local function applyRecord(record)
+	if not layerHost or not layerHost.Parent then
+		return
+	end
+	record = record or {}
+	local asset = resolveAsset(record.url)
+	local hasImage = type(asset) == "string" and asset ~= ""
+	layerHost.Visible = hasImage
+	layerImage.Image = hasImage and asset or ""
+	layerImage.ImageTransparency = hasImage and math.clamp((record.soft or 0) / 100 * 0.55, 0, 0.55) or 1
+	local zoom = math.clamp(tonumber(record.zoom) or 1, 1, 3)
+	local ox = math.clamp(tonumber(record.ox) or 0, -(zoom - 1) * 0.5, (zoom - 1) * 0.5)
+	local oy = math.clamp(tonumber(record.oy) or 0, -(zoom - 1) * 0.5, (zoom - 1) * 0.5)
+	if record.fit == "contain" then
+		layerImage.ScaleType = Enum.ScaleType.Fit
+		layerImage.Size = UDim2.fromScale(1, 1)
+		layerImage.Position = UDim2.fromScale(0.5, 0.5)
+	elseif record.fit == "tile" then
+		layerImage.ScaleType = Enum.ScaleType.Tile
+		layerImage.Size = UDim2.fromScale(1, 1)
+		layerImage.Position = UDim2.fromScale(0.5, 0.5)
+	else
+		layerImage.ScaleType = Enum.ScaleType.Crop
+		layerImage.Size = UDim2.fromScale(zoom, zoom)
+		layerImage.Position = UDim2.new(0.5 + ox, 0, 0.5 + oy, 0)
+	end
+	layerTint.BackgroundColor3 = record.base or Theme.Main
+	layerTint.BackgroundTransparency = 1 - math.clamp((record.tint or 55) / 100, 0, 0.92)
+	layerDim.BackgroundTransparency = 1 - math.clamp((record.dim or 42) / 100, 0, 0.9)
+end
+
+function Background:Apply(record)
+	applyRecord(record)
+end
+
+function Background:ApplyActive()
+	local name = bgStore.active
+	if type(name) == "string" and bgStore.customs[name] then
+		applyRecord(bgStore.customs[name])
+	else
+		applyRecord(nil)
+	end
+end
+
+function Background:GetCustom(name)
+	return bgStore.customs[name]
+end
+
+function Background:GetAsset(url)
+	return resolveAsset(url)
+end
+
+function Background:ApplyForTheme(name)
+	local record = type(name) == "string" and bgStore.customs[name] or nil
+	if record then
+		bgStore.active = name
+		applyRecord(record)
+	else
+		bgStore.active = nil
+		applyRecord(nil)
+	end
+	saveBgStore()
+end
+
+function Background:RenameCustom(oldName, newName)
+	if bgStore.customs[oldName] then
+		bgStore.customs[newName] = bgStore.customs[oldName]
+		bgStore.customs[oldName] = nil
+		if bgStore.active == oldName then
+			bgStore.active = newName
+		end
+		saveBgStore()
+	end
+end
+
+function Background:DeleteCustom(name)
+	if bgStore.customs[name] then
+		bgStore.customs[name] = nil
+		if bgStore.active == name then
+			bgStore.active = nil
+			applyRecord(nil)
+		end
+		saveBgStore()
+	end
+end
+
+local function applyPalette(record)
+	local base = record.base or Theme.Main
+	local accent = record.accent or Theme.Accent
+	local panel = base:Lerp(Theme.White, 0.08)
+	Nerx.Themes:ApplyColors(base, panel, accent, "Custom", { noPersist = true })
+	local palette = Nerx.Themes:CapturePalette()
+	local text = record.text or Theme.Text
+	palette.Text = text
+	palette.Muted = text:Lerp(base, 0.38)
+	palette.Faint = text:Lerp(base, 0.6)
+	Nerx.Themes:ApplyPalette(palette, "Custom", { noPersist = true })
+end
+
+local bgState = {
+	url = "",
+	fit = "cover",
+	zoom = 1.15,
+	ox = 0,
+	oy = 0,
+	base = Theme.Main,
+	accent = Theme.Accent,
+	text = Theme.Text,
+	dim = 42,
+	tint = 55,
+	soft = 0,
+}
+local fitValueToLabel = { cover = "填充", contain = "适应", tile = "平铺" }
+local fitLabelToValue = { ["填充"] = "cover", ["适应"] = "contain", ["平铺"] = "tile" }
+
+local wizard = { built = false, open = false, step = 1, pickerOpen = false, window = nil }
+local bgOverlay, bgPanel, bgPanelScale, bgSteps, bgPills, bgClose
+local bgBack, bgNext
+local bgPreview, bgPreviewImage, bgPreviewHint
+local bgUrlInput, bgApplyAction, bgFitSeg
+local bgColorSetters = {}
+local bgSliders = {}
+local bgSummary = {}
+local bgNameInput, bgSaveConfig
+local cropOverlay, cropCard, cropStage, cropImage, cropMini, cropMiniImage, cropZoom, cropZoomLabel
+local cropApply, cropCancel, cropReset
+local cropBackup
+
+local function cropBounds(zoom)
+	return math.max(0, (zoom - 1) * 0.5)
+end
+
+local function renderCropViews()
+	if cropImage and cropStage then
+		local b = cropBounds(bgState.zoom)
+		bgState.ox = math.clamp(bgState.ox, -b, b)
+		bgState.oy = math.clamp(bgState.oy, -b, b)
+		cropImage.Size = UDim2.fromScale(bgState.zoom, bgState.zoom)
+		cropImage.Position = UDim2.new(0.5 + bgState.ox, 0, 0.5 + bgState.oy, 0)
+	end
+	if bgPreviewImage then
+		bgPreviewImage.Size = UDim2.fromScale(bgState.zoom, bgState.zoom)
+		bgPreviewImage.Position = UDim2.new(0.5 + bgState.ox, 0, 0.5 + bgState.oy, 0)
+	end
+	if cropMiniImage and cropMini then
+		cropMiniImage.Size = UDim2.fromScale(bgState.zoom, bgState.zoom)
+		cropMiniImage.Position = UDim2.new(0.5 + bgState.ox, 0, 0.5 + bgState.oy, 0)
+	end
+	if cropZoom and cropZoomLabel then
+		cropZoomLabel.Text = string.format("%.2fx", bgState.zoom)
+	end
+end
+
+local function setPreviewAsset()
+	local asset = resolveAsset(bgState.url)
+	local hasImage = type(asset) == "string" and asset ~= ""
+	if bgPreviewImage then
+		bgPreviewImage.Image = hasImage and asset or ""
+		bgPreviewImage.ImageTransparency = hasImage and 0 or 1
+	end
+	if bgPreviewHint then
+		bgPreviewHint.Visible = not hasImage
+	end
+	if cropImage then
+		cropImage.Image = hasImage and asset or ""
+		cropImage.ImageTransparency = hasImage and 0 or 1
+	end
+	if cropMiniImage then
+		cropMiniImage.Image = hasImage and asset or ""
+		cropMiniImage.ImageTransparency = hasImage and 0 or 1
+	end
+	renderCropViews()
+end
+
+local function setStep(index, instant)
+	index = math.clamp(index, 1, 3)
+	if wizard.step == index and not instant then
+		return
+	end
+	for i = 1, 3 do
+		local step = bgSteps and bgSteps[i]
+		if step then
+			if i == index then
+				step.Visible = true
+				if instant then
+					step.GroupTransparency = 0
+					step.Position = UDim2.fromOffset(0, 0)
+				else
+					step.GroupTransparency = 1
+					step.Position = UDim2.fromOffset(16, 0)
+					U.tween(step, TWEEN.Fast, { GroupTransparency = 0, Position = UDim2.fromOffset(0, 0) })
+				end
+			elseif step.Visible then
+				if instant then
+					step.Visible = false
+					step.GroupTransparency = 1
+					step.Position = UDim2.fromOffset(0, 0)
+				else
+					U.tween(step, TWEEN.Fast, { GroupTransparency = 1, Position = UDim2.fromOffset(-16, 0) })
+					task.delay(0.15, function()
+						if wizard.step ~= i then
+							step.Visible = false
+							step.GroupTransparency = 1
+							step.Position = UDim2.fromOffset(0, 0)
+						end
+					end)
+				end
+			end
+		end
+		local pill = bgPills and bgPills[i]
+		if pill then
+			local active = i == index
+			pill.Frame.BackgroundColor3 = active and Theme.Accent or Theme.Field
+			pill.Frame.BackgroundTransparency = active and 0.88 or 0
+			pill.Stroke.Color = active and Theme.Accent or Theme.Stroke
+			pill.Stroke.Transparency = active and 0.55 or 0.65
+			pill.Label.TextColor3 = active and Theme.Text or Theme.Muted
+		end
+	end
+	wizard.step = index
+	if bgBack then
+		bgBack:SetDisabled(index == 1)
+	end
+	if bgNext then
+		bgNext.Label.Text = index == 3 and "保存并应用" or "下一步"
+	end
+	if index == 3 then
+		local fitText = fitValueToLabel[bgState.fit] or "填充"
+		if bgSummary.url then
+			bgSummary.url.Text = bgState.url ~= "" and bgState.url or "未设置"
+			bgSummary.fit.Text = fitText
+			bgSummary.base.Text = U.hex(bgState.base)
+			bgSummary.accent.Text = U.hex(bgState.accent)
+			bgSummary.fx.Text = tostring(bgState.dim) .. "% / " .. tostring(bgState.soft) .. "%"
+		end
+	end
+end
+
+local function closeCrop()
+	if cropOverlay then
+		cropOverlay.Visible = false
+	end
+end
+
+local function openCrop()
+	if not cropOverlay then
+		return
+	end
+	cropBackup = { zoom = bgState.zoom, ox = bgState.ox, oy = bgState.oy }
+	cropOverlay.Visible = true
+	setPreviewAsset()
+end
+
+local function cancelCrop()
+	if cropBackup then
+		bgState.zoom = cropBackup.zoom
+		bgState.ox = cropBackup.ox
+		bgState.oy = cropBackup.oy
+		cropBackup = nil
+	end
+	closeCrop()
+	setPreviewAsset()
+end
+
+local function openWizard(window)
+	Background:Attach(window)
+	if not bgOverlay or not bgPanel then
+		return
+	end
+	local source = bgStore.active and bgStore.customs[bgStore.active] or {}
+	bgState.url = tostring(source.url or "")
+	bgState.fit = source.fit or "cover"
+	bgState.zoom = math.clamp(tonumber(source.zoom) or 1.15, 1, 3)
+	bgState.ox = tonumber(source.ox) or 0
+	bgState.oy = tonumber(source.oy) or 0
+	bgState.base = source.base or Theme.Main
+	bgState.accent = source.accent or Theme.Accent
+	bgState.text = source.text or Theme.Text
+	bgState.dim = tonumber(source.dim) or 42
+	bgState.tint = tonumber(source.tint) or 55
+	bgState.soft = tonumber(source.soft) or 0
+	if bgUrlInput then
+		bgUrlInput:SetValue(bgState.url, true)
+	end
+	if bgFitSeg then
+		bgFitSeg:SetValue(fitValueToLabel[bgState.fit] or "填充", true)
+	end
+	for _, setter in pairs(bgColorSetters) do
+		setter()
+	end
+	for key, setter in pairs(bgSliders) do
+		setter(bgState[key])
+	end
+	if bgNameInput then
+		bgNameInput:SetValue("我的背景", true)
+	end
+	if bgSaveConfig then
+		bgSaveConfig:SetValue(true, true)
+	end
+	setPreviewAsset()
+	setStep(1, true)
+	bgOverlay.Visible = true
+	bgOverlay.BackgroundTransparency = 1
+	bgPanel.GroupTransparency = 1
+	bgPanelScale.Scale = 0.94
+	U.tween(bgOverlay, TWEEN.Fast, { BackgroundTransparency = 0.55 })
+	U.tween(bgPanel, TWEEN.Page, { GroupTransparency = 0 })
+	U.tween(bgPanelScale, TWEEN.Page, { Scale = 1 })
+	wizard.open = true
+end
+
+local function closeWizard()
+	if not bgOverlay then
+		return
+	end
+	closeCrop()
+	U.tween(bgOverlay, TWEEN.Fast, { BackgroundTransparency = 1 })
+	U.tween(bgPanel, TWEEN.Fast, { GroupTransparency = 1 })
+	U.tween(bgPanelScale, TWEEN.Fast, { Scale = 0.94 })
+	task.delay(0.16, function()
+		bgOverlay.Visible = false
+	end)
+	wizard.open = false
+end
+
+function Background:Close()
+	closeWizard()
+end
+
+local function buildWizard(window)
+	if wizard.built or not window or not window.Root then
+		return
+	end
+	wizard.built = true
+	wizard.window = window
+	bgOverlay = U.frame(window.Root, {
+		Name = "NerxBackgroundWizard",
+		BackgroundColor3 = Theme.Black,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+		ZIndex = 900,
+		Visible = false,
+	})
+	local blocker = U.inputButton(bgOverlay, function()
+		if wizard.pickerOpen then
+			return
+		end
+		closeWizard()
+	end)
+	blocker.ZIndex = 900
+	bgPanel = U.canvas(bgOverlay, {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(548, 392),
+		BackgroundColor3 = Theme.SurfaceRaised,
+		BackgroundTransparency = 0,
+		BorderSizePixel = 0,
+		ZIndex = 901,
+		GroupTransparency = 1,
+		Active = true,
+	})
+	U.corner(bgPanel, 12)
+	U.stroke(bgPanel, Theme.Stroke, 0.45, 1)
+	bgPanelScale = U.new("UIScale", { Scale = 0.94 }, bgPanel)
+	U.label(bgPanel, {
+		Text = "自定义背景图",
+		Font = Fonts.Bold,
+		TextSize = 13,
+		TextColor3 = Theme.Text,
+		Position = UDim2.fromOffset(16, 13),
+		Size = UDim2.fromOffset(220, 18),
+	})
+	U.label(bgPanel, {
+		Text = "URL 图片 · 三步完成",
+		TextSize = 8.5,
+		TextColor3 = Theme.Faint,
+		Position = UDim2.fromOffset(120, 16),
+		Size = UDim2.fromOffset(200, 14),
+	})
+	bgClose = Nerx.Widgets.Button(bgPanel, "×", function()
+		closeWizard()
+	end)
+	bgClose.Root.AnchorPoint = Vector2.new(1, 0)
+	bgClose.Root.Position = UDim2.new(1, -12, 0, 10)
+	bgClose.Root.Size = UDim2.fromOffset(26, 26)
+
+	bgPills = {}
+	for index = 1, 3 do
+		local names = { "01 · 图片", "02 · 调色", "03 · 保存" }
+		local pill = U.frame(bgPanel, {
+			BackgroundColor3 = Theme.Field,
+			BackgroundTransparency = 0,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(16 + (index - 1) * 172, 42),
+			Size = UDim2.fromOffset(164, 24),
+		})
+		U.corner(pill, 5)
+		local stroke = U.stroke(pill, Theme.Stroke, 0.65, 1)
+		local label = U.label(pill, {
+			Text = names[index],
+			TextSize = 9.5,
+			TextColor3 = Theme.Muted,
+			Size = UDim2.fromScale(1, 1),
+			TextXAlignment = Enum.TextXAlignment.Center,
+		})
+		bgPills[index] = { Frame = pill, Stroke = stroke, Label = label }
+	end
+
+	local body = U.frame(bgPanel, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(16, 76),
+		Size = UDim2.new(1, -32, 0, 266),
+		ClipsDescendants = true,
+	})
+	bgSteps = {}
+	for index = 1, 3 do
+		bgSteps[index] = U.canvas(body, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.fromScale(1, 1),
+			GroupTransparency = index == 1 and 0 or 1,
+			Visible = index == 1,
+		})
+	end
+
+	-- step 1
+	local thumb = U.frame(bgSteps[1], {
+		BackgroundColor3 = Theme.Window,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.fromOffset(236, 132),
+		ClipsDescendants = true,
+	})
+	U.corner(thumb, 8)
+	U.stroke(thumb, Theme.Stroke, 0.55, 1)
+	bgPreviewImage = U.new("ImageLabel", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(1, 1),
+		Image = "",
+		ImageTransparency = 1,
+		ScaleType = Enum.ScaleType.Crop,
+	}, thumb)
+	bgPreviewHint = U.label(thumb, {
+		Text = "IMAGE PREVIEW",
+		TextSize = 9,
+		TextColor3 = Theme.Faint,
+		Size = UDim2.fromScale(1, 1),
+		TextXAlignment = Enum.TextXAlignment.Center,
+	})
+	local cropButton = Nerx.Widgets.Button(bgSteps[1], "裁剪图片", function()
+		openCrop()
+	end)
+	cropButton.Root.Position = UDim2.fromOffset(248, 0)
+	cropButton.Root.Size = UDim2.fromOffset(92, 28)
+	U.label(bgSteps[1], {
+		Text = "拖动 / 缩放选择要显示的区域",
+		TextSize = 8.5,
+		TextColor3 = Theme.Faint,
+		Position = UDim2.fromOffset(248, 36),
+		Size = UDim2.fromOffset(240, 28),
+		TextWrapped = true,
+	})
+	U.label(bgSteps[1], {
+		Text = "图片链接",
+		TextSize = 9.5,
+		TextColor3 = Theme.Muted,
+		Position = UDim2.fromOffset(0, 144),
+		Size = UDim2.fromOffset(160, 14),
+	})
+	bgUrlInput = Nerx.Widgets.Input(bgSteps[1], {
+		Width = 360,
+		Height = 30,
+		Placeholder = "粘贴图床直链（PNG/JPG），留空恢复纯色",
+	})
+	bgUrlInput.Root.Position = UDim2.fromOffset(0, 162)
+	bgUrlInput.Root.ClipsDescendants = true
+	bgUrlInput.Box.ClipsDescendants = true
+	local applyButton = Nerx.Widgets.Button(bgSteps[1], "应用", function()
+		if bgApplyAction then
+			bgApplyAction()
+		end
+	end)
+	applyButton.Root.Position = UDim2.fromOffset(368, 162)
+	applyButton.Root.Size = UDim2.fromOffset(80, 30)
+	bgApplyAction = function()
+		bgState.url = tostring(bgUrlInput.Box.Text or "")
+		setPreviewAsset()
+	end
+	U.label(bgSteps[1], {
+		Text = "填充方式",
+		TextSize = 9.5,
+		TextColor3 = Theme.Muted,
+		Position = UDim2.fromOffset(0, 204),
+		Size = UDim2.fromOffset(70, 14),
+	})
+	bgFitSeg = Nerx.Widgets.Segmented(bgSteps[1], {
+		Width = 220,
+		Height = 26,
+		Items = { "填充", "适应", "平铺" },
+		Selected = "填充",
+		Callback = function(value)
+			bgState.fit = fitLabelToValue[value] or "cover"
+		end,
+	})
+	bgFitSeg.Root.Position = UDim2.fromOffset(72, 198)
+	U.connect(bgUrlInput.Box.FocusLost, function()
+		bgState.url = tostring(bgUrlInput.Box.Text or "")
+		setPreviewAsset()
+	end)
+
+	-- step 2
+	local function colorRow(y, label, key)
+		U.label(bgSteps[2], {
+			Text = label,
+			TextSize = 9.5,
+			TextColor3 = Theme.Muted,
+			Position = UDim2.fromOffset(0, y + 3),
+			Size = UDim2.fromOffset(180, 16),
+		})
+		local hex = U.label(bgSteps[2], {
+			Text = U.hex(bgState[key]),
+			TextSize = 9,
+			TextColor3 = Theme.Faint,
+			Position = UDim2.fromOffset(400, y + 3),
+			Size = UDim2.fromOffset(64, 16),
+		})
+		local swatch = U.frame(bgSteps[2], {
+			BackgroundColor3 = bgState[key],
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(470, y),
+			Size = UDim2.fromOffset(28, 20),
+		})
+		U.corner(swatch, 5)
+		U.stroke(swatch, Theme.White, 0.82, 1)
+		U.inputButton(swatch, function()
+			U.colorPicker(swatch, bgState[key], function(color)
+				bgState[key] = color
+				swatch.BackgroundColor3 = color
+				hex.Text = U.hex(color)
+			end)
+			local host = Nerx.PopupHost
+			local popup = host and host:FindFirstChild("NerxPopup")
+			if popup then
+				wizard.pickerOpen = true
+				popup.Destroying:Connect(function()
+					wizard.pickerOpen = false
+				end)
+			end
+		end)
+		bgColorSetters[key] = function()
+			swatch.BackgroundColor3 = bgState[key]
+			hex.Text = U.hex(bgState[key])
+		end
+	end
+	colorRow(0, "菜单底色", "base")
+	colorRow(32, "强调色", "accent")
+	colorRow(64, "文字颜色", "text")
+	U.frame(bgSteps[2], {
+		BackgroundColor3 = Theme.Stroke,
+		BackgroundTransparency = 0.5,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, 96),
+		Size = UDim2.new(1, 0, 0, 1),
+	})
+
+	local function addSlider(y, label, key, min, max)
+		local row = U.frame(bgSteps[2], {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(0, y),
+			Size = UDim2.new(1, 0, 0, 30),
+		})
+		U.label(row, {
+			Text = label,
+			TextSize = 9.5,
+			TextColor3 = Theme.Muted,
+			Position = UDim2.fromOffset(0, 0),
+			Size = UDim2.fromOffset(140, 14),
+		})
+		local valueLabel = U.label(row, {
+			Text = tostring(bgState[key]) .. "%",
+			TextSize = 9.5,
+			TextColor3 = Theme.Text,
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.new(1, 0, 0, 0),
+			Size = UDim2.fromOffset(48, 14),
+			TextXAlignment = Enum.TextXAlignment.Right,
+		})
+		local track = U.frame(row, {
+			BackgroundColor3 = Theme.Field,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(0, 21),
+			Size = UDim2.new(1, 0, 0, 3),
+		})
+		U.corner(track, 2)
+		local alpha = math.clamp((bgState[key] - min) / math.max(max - min, 0.0001), 0, 1)
+		local fill = U.frame(track, {
+			BackgroundColor3 = Theme.Accent,
+			BorderSizePixel = 0,
+			Size = UDim2.new(alpha, 0, 1, 0),
+		})
+		U.corner(fill, 2)
+		local knob = U.frame(row, {
+			BackgroundColor3 = Theme.Accent,
+			BorderSizePixel = 0,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(alpha, 0, 0, 22.5),
+			Size = UDim2.fromOffset(9, 9),
+		})
+		U.corner(knob, 5)
+		local dragging = false
+		local function setFromX(px)
+			local origin = track.AbsolutePosition.X
+			local width = math.max(track.AbsoluteSize.X, 1)
+			local a = math.clamp((px - origin) / width, 0, 1)
+			local v = math.clamp(math.floor(min + (max - min) * a + 0.5), min, max)
+			fill.Size = UDim2.new(a, 0, 1, 0)
+			knob.Position = UDim2.new(a, 0, 0, 22.5)
+			valueLabel.Text = tostring(v) .. "%"
+			bgState[key] = v
+		end
+		local hit = U.inputButton(row, nil)
+		hit.Size = UDim2.new(1, 0, 0, 30)
+		U.connect(hit.InputBegan, function(inputObject)
+			if inputObject.UserInputType == Enum.UserInputType.MouseButton1
+				or inputObject.UserInputType == Enum.UserInputType.Touch then
+				dragging = true
+				setFromX(inputObject.Position.X)
+			end
+		end)
+		U.connect(UserInputService.InputEnded, function(inputObject)
+			if inputObject.UserInputType == Enum.UserInputType.MouseButton1
+				or inputObject.UserInputType == Enum.UserInputType.Touch then
+				dragging = false
+			end
+		end)
+		U.connect(UserInputService.InputChanged, function(inputObject)
+			if not dragging then
+				return
+			end
+			if inputObject.UserInputType == Enum.UserInputType.MouseMovement
+				or inputObject.UserInputType == Enum.UserInputType.Touch then
+				setFromX(inputObject.Position.X)
+			end
+		end)
+		bgSliders[key] = function(v)
+			local a = math.clamp((v - min) / math.max(max - min, 0.0001), 0, 1)
+			fill.Size = UDim2.new(a, 0, 1, 0)
+			knob.Position = UDim2.new(a, 0, 0, 22.5)
+			valueLabel.Text = tostring(v) .. "%"
+		end
+	end
+	addSlider(108, "背景暗度", "dim", 0, 90)
+	addSlider(142, "底色浓度", "tint", 0, 90)
+	addSlider(176, "背景柔化", "soft", 0, 90)
+	U.label(bgSteps[2], {
+		Text = "暗度越高文字越清晰；Roblox 无法对 UI 背景做真模糊，柔化会降低图片不透明度。",
+		TextSize = 8,
+		TextColor3 = Theme.Faint,
+		Position = UDim2.fromOffset(0, 216),
+		Size = UDim2.new(1, 0, 0, 14),
+	})
+
+	-- step 3
+	bgSummary = {}
+	local rows = {
+		{ key = "url", label = "背景图片" },
+		{ key = "fit", label = "填充方式" },
+		{ key = "base", label = "菜单底色" },
+		{ key = "accent", label = "强调色" },
+		{ key = "fx", label = "暗度 / 柔化" },
+	}
+	for index, row in ipairs(rows) do
+		local y = (index - 1) * 22
+		U.label(bgSteps[3], {
+			Text = row.label,
+			TextSize = 9.5,
+			TextColor3 = Theme.Muted,
+			Position = UDim2.fromOffset(0, y + 3),
+			Size = UDim2.fromOffset(120, 16),
+		})
+		bgSummary[row.key] = U.label(bgSteps[3], {
+			Text = "",
+			TextSize = 9.5,
+			TextColor3 = Theme.Text,
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.new(1, 0, 0, y + 3),
+			Size = UDim2.fromOffset(330, 16),
+			TextXAlignment = Enum.TextXAlignment.Right,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		})
+	end
+	U.label(bgSteps[3], {
+		Text = "保存到「我的主题」",
+		TextSize = 9.5,
+		TextColor3 = Theme.Muted,
+		Position = UDim2.fromOffset(0, 118),
+		Size = UDim2.fromOffset(160, 14),
+	})
+	bgNameInput = Nerx.Widgets.Input(bgSteps[3], {
+		Width = 260,
+		Height = 30,
+		Text = "我的背景",
+		Placeholder = "给这套背景起个名字",
+	})
+	bgNameInput.Root.Position = UDim2.fromOffset(0, 136)
+	bgNameInput.Root.ClipsDescendants = true
+	bgNameInput.Box.ClipsDescendants = true
+	bgSaveConfig = Nerx.Widgets.Toggle(bgSteps[3], true, nil, false)
+	bgSaveConfig.Root.Position = UDim2.fromOffset(0, 176)
+	U.label(bgSteps[3], {
+		Text = "同时保存当前配置（配置名与主题名一致）",
+		TextSize = 9.5,
+		TextColor3 = Theme.Muted,
+		Position = UDim2.fromOffset(40, 176),
+		Size = UDim2.fromOffset(340, 20),
+	})
+
+	local function commit()
+		local name = tostring(bgNameInput.Box.Text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+		if name == "" then
+			bgNotify("请先填写主题名称", Theme.Amber)
+			return
+		end
+		local record = {
+			url = bgState.url,
+			fit = bgState.fit,
+			zoom = bgState.zoom,
+			ox = bgState.ox,
+			oy = bgState.oy,
+			base = bgState.base,
+			accent = bgState.accent,
+			text = bgState.text,
+			dim = bgState.dim,
+			tint = bgState.tint,
+			soft = bgState.soft,
+			config = bgSaveConfig:GetValue() and name or nil,
+			savedAt = os.time(),
+		}
+		bgStore.customs[name] = record
+		bgStore.active = name
+		saveBgStore()
+		applyPalette(record)
+		applyRecord(record)
+		Nerx.Themes:SaveCustom(name)
+		if bgSaveConfig:GetValue() then
+			pcall(function()
+				Nerx.Configs:Save(name)
+			end)
+		end
+		closeWizard()
+		bgNotify("已保存「" .. name .. "」到我的主题", Theme.Green)
+	end
+
+	bgBack = Nerx.Widgets.Button(bgPanel, "上一步", function()
+		setStep(wizard.step - 1)
+	end)
+	bgBack.Root.Position = UDim2.fromOffset(16, 350)
+	bgBack.Root.Size = UDim2.fromOffset(250, 32)
+	bgNext = Nerx.Widgets.PrimaryButton(bgPanel, "下一步", 250, 32, function()
+		if wizard.step < 3 then
+			if wizard.step == 1 then
+				bgState.url = tostring(bgUrlInput.Box.Text or "")
+				setPreviewAsset()
+			end
+			setStep(wizard.step + 1)
+		else
+			commit()
+		end
+	end)
+	bgNext.Root.Position = UDim2.fromOffset(282, 350)
+	bgBack:SetDisabled(true)
+
+	-- crop modal
+	cropOverlay = U.frame(bgOverlay, {
+		Name = "NerxBackgroundCrop",
+		BackgroundColor3 = Theme.Black,
+		BackgroundTransparency = 0.35,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+		ZIndex = 910,
+		Visible = false,
+	})
+	U.inputButton(cropOverlay, function() end).ZIndex = 910
+	cropCard = U.canvas(cropOverlay, {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(680, 372),
+		BackgroundColor3 = Theme.SurfaceRaised,
+		BackgroundTransparency = 0,
+		BorderSizePixel = 0,
+		ZIndex = 911,
+	})
+	U.corner(cropCard, 12)
+	U.stroke(cropCard, Theme.Stroke, 0.45, 1)
+	U.label(cropCard, {
+		Text = "裁剪图片",
+		Font = Fonts.Bold,
+		TextSize = 12,
+		TextColor3 = Theme.Text,
+		Position = UDim2.fromOffset(16, 12),
+		Size = UDim2.fromOffset(200, 18),
+	})
+	U.label(cropCard, {
+		Text = "16:9 · 菜单背景",
+		TextSize = 8.5,
+		TextColor3 = Theme.Faint,
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -46, 0, 15),
+		Size = UDim2.fromOffset(140, 14),
+		TextXAlignment = Enum.TextXAlignment.Right,
+	})
+	local cropCloseButton = Nerx.Widgets.Button(cropCard, "×", function()
+		cancelCrop()
+	end)
+	cropCloseButton.Root.AnchorPoint = Vector2.new(1, 0)
+	cropCloseButton.Root.Position = UDim2.new(1, -12, 0, 8)
+	cropCloseButton.Root.Size = UDim2.fromOffset(26, 26)
+
+	cropStage = U.frame(cropCard, {
+		BackgroundColor3 = Theme.Window,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(16, 44),
+		Size = UDim2.fromOffset(432, 243),
+		ClipsDescendants = true,
+		Active = true,
+	})
+	U.corner(cropStage, 8)
+	U.stroke(cropStage, Theme.Stroke, 0.5, 1)
+	cropImage = U.new("ImageLabel", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(1, 1),
+		Image = "",
+		ImageTransparency = 1,
+		ScaleType = Enum.ScaleType.Crop,
+	}, cropStage)
+	local cropHint = U.label(cropStage, {
+		Text = "拖动图片 · 滑条缩放",
+		TextSize = 8.5,
+		TextColor3 = Theme.White,
+		BackgroundColor3 = Theme.Black,
+		BackgroundTransparency = 0.4,
+		Position = UDim2.fromOffset(8, 220),
+		Size = UDim2.fromOffset(126, 16),
+		TextXAlignment = Enum.TextXAlignment.Center,
+	})
+	U.corner(cropHint, 4)
+	local cropDragging = false
+	local dragStart, dragBaseX, dragBaseY
+	cropStage.InputBegan:Connect(function(inputObject)
+		if inputObject.UserInputType == Enum.UserInputType.MouseButton1
+			or inputObject.UserInputType == Enum.UserInputType.Touch then
+			cropDragging = true
+			dragStart = inputObject.Position
+			dragBaseX = bgState.ox
+			dragBaseY = bgState.oy
+		end
+	end)
+	U.connect(UserInputService.InputChanged, function(inputObject)
+		if not cropDragging or not dragStart then
+			return
+		end
+		if inputObject.UserInputType ~= Enum.UserInputType.MouseMovement
+			and inputObject.UserInputType ~= Enum.UserInputType.Touch then
+			return
+		end
+		local size = cropStage.AbsoluteSize
+		bgState.ox = dragBaseX + (inputObject.Position.X - dragStart.X) / math.max(size.X, 1)
+		bgState.oy = dragBaseY + (inputObject.Position.Y - dragStart.Y) / math.max(size.Y, 1)
+		renderCropViews()
+	end)
+	U.connect(UserInputService.InputEnded, function(inputObject)
+		if inputObject.UserInputType == Enum.UserInputType.MouseButton1
+			or inputObject.UserInputType == Enum.UserInputType.Touch then
+			cropDragging = false
+			dragStart = nil
+		end
+	end)
+	cropZoom = U.frame(cropCard, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(16, 296),
+		Size = UDim2.fromOffset(432, 28),
+	})
+	U.label(cropZoom, {
+		Text = "缩放",
+		TextSize = 9.5,
+		TextColor3 = Theme.Muted,
+		Position = UDim2.fromOffset(0, 7),
+		Size = UDim2.fromOffset(40, 14),
+	})
+	local zoomTrack = U.frame(cropZoom, {
+		BackgroundColor3 = Theme.Field,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(46, 12),
+		Size = UDim2.new(1, -100, 0, 3),
+	})
+	U.corner(zoomTrack, 2)
+	local zoomFill = U.frame(zoomTrack, {
+		BackgroundColor3 = Theme.Accent,
+		BorderSizePixel = 0,
+		Size = UDim2.new((bgState.zoom - 1) / 2, 0, 1, 0),
+	})
+	U.corner(zoomFill, 2)
+	local zoomKnob = U.frame(cropZoom, {
+		BackgroundColor3 = Theme.Accent,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0, 46 + ((bgState.zoom - 1) / 2) * 332, 0, 13.5),
+		Size = UDim2.fromOffset(9, 9),
+	})
+	U.corner(zoomKnob, 5)
+	cropZoomLabel = U.label(cropZoom, {
+		Text = "1.15x",
+		TextSize = 9.5,
+		TextColor3 = Theme.Text,
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, 0, 0, 7),
+		Size = UDim2.fromOffset(48, 14),
+		TextXAlignment = Enum.TextXAlignment.Right,
+	})
+	local zooming = false
+	local function setZoomFromX(px)
+		local origin = zoomTrack.AbsolutePosition.X
+		local width = math.max(zoomTrack.AbsoluteSize.X, 1)
+		local a = math.clamp((px - origin) / width, 0, 1)
+		bgState.zoom = 1 + a * 2
+		zoomFill.Size = UDim2.new(a, 0, 1, 0)
+		zoomKnob.Position = UDim2.new(0, 46 + a * 332, 0, 13.5)
+		renderCropViews()
+	end
+	local zoomHit = U.inputButton(zoomTrack.Parent, nil)
+	zoomHit.Position = UDim2.fromOffset(40, 0)
+	zoomHit.Size = UDim2.fromOffset(342, 28)
+	U.connect(zoomHit.InputBegan, function(inputObject)
+		if inputObject.UserInputType == Enum.UserInputType.MouseButton1
+			or inputObject.UserInputType == Enum.UserInputType.Touch then
+			zooming = true
+			setZoomFromX(inputObject.Position.X)
+		end
+	end)
+	U.connect(UserInputService.InputEnded, function(inputObject)
+		if inputObject.UserInputType == Enum.UserInputType.MouseButton1
+			or inputObject.UserInputType == Enum.UserInputType.Touch then
+			zooming = false
+		end
+	end)
+	U.connect(UserInputService.InputChanged, function(inputObject)
+		if not zooming then
+			return
+		end
+		if inputObject.UserInputType == Enum.UserInputType.MouseMovement
+			or inputObject.UserInputType == Enum.UserInputType.Touch then
+			setZoomFromX(inputObject.Position.X)
+		end
+	end)
+	local cropSide = U.frame(cropCard, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(464, 44),
+		Size = UDim2.fromOffset(200, 280),
+	})
+	U.label(cropSide, {
+		Text = "菜单预览",
+		TextSize = 9,
+		TextColor3 = Theme.Muted,
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.fromOffset(120, 14),
+	})
+	cropMini = U.frame(cropSide, {
+		BackgroundColor3 = Theme.Window,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, 18),
+		Size = UDim2.fromOffset(200, 118),
+		ClipsDescendants = true,
+	})
+	U.corner(cropMini, 7)
+	U.stroke(cropMini, Theme.Stroke, 0.5, 1)
+	cropMiniImage = U.new("ImageLabel", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(1, 1),
+		Image = "",
+		ImageTransparency = 1,
+		ScaleType = Enum.ScaleType.Crop,
+	}, cropMini)
+	local miniSide = U.frame(cropMini, {
+		BackgroundColor3 = Theme.Sidebar,
+		BackgroundTransparency = 0.2,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(5, 5),
+		Size = UDim2.fromOffset(62, 108),
+	})
+	U.corner(miniSide, 4)
+	local miniCard = U.frame(cropMini, {
+		BackgroundColor3 = Theme.Surface,
+		BackgroundTransparency = 0.28,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(72, 5),
+		Size = UDim2.fromOffset(122, 62),
+	})
+	U.corner(miniCard, 4)
+	local miniCard2 = U.frame(cropMini, {
+		BackgroundColor3 = Theme.Surface,
+		BackgroundTransparency = 0.32,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(72, 73),
+		Size = UDim2.fromOffset(122, 40),
+	})
+	U.corner(miniCard2, 4)
+	cropApply = Nerx.Widgets.PrimaryButton(cropCard, "应用裁剪", 180, 30, function()
+		cropBackup = nil
+		closeCrop()
+		setPreviewAsset()
+	end)
+	cropApply.Root.Position = UDim2.fromOffset(464, 256)
+	cropCancel = Nerx.Widgets.Button(cropCard, "取消", function()
+		cancelCrop()
+	end)
+	cropCancel.Root.Position = UDim2.fromOffset(464, 294)
+	cropCancel.Root.Size = UDim2.fromOffset(180, 28)
+	cropReset = Nerx.Widgets.Button(cropCard, "重置", function()
+		bgState.zoom = 1.15
+		bgState.ox = 0
+		bgState.oy = 0
+		zoomFill.Size = UDim2.new((bgState.zoom - 1) / 2, 0, 1, 0)
+		zoomKnob.Position = UDim2.new(0, 46 + ((bgState.zoom - 1) / 2) * 332, 0, 13.5)
+		renderCropViews()
+	end)
+	cropReset.Root.Position = UDim2.fromOffset(16, 330)
+	cropReset.Root.Size = UDim2.fromOffset(92, 26)
+
+end
+
+-- build per window on first open
+function Background:Open(window)
+	window = window or (Nerx.Windows and Nerx.Windows[1])
+	if not window then
+		return
+	end
+	Background:Attach(window)
+	buildWizard(window)
+	openWizard(window)
 end
 
 return Nerx
