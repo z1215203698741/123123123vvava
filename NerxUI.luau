@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.8.0
+	Nerx UI Library · v1.9.0
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.8.0"
+Nerx.Version = "1.9.0"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -15902,14 +15902,19 @@ local function musicNormalizeData(decoded)
 		immersiveDim = math.clamp(tonumber(settings.immersiveDim) or 46, 0, 100),
 		worldLyrics = settings.worldLyrics ~= false,
 		worldProjection = projection,
-		worldDistance = math.clamp(tonumber(settings.worldDistance) or 8, 3, 16),
+		worldDistance = math.clamp(tonumber(settings.worldDistance) or 8, 3, 20),
 		worldHeight = math.clamp(tonumber(settings.worldHeight) or 0, -2, 4),
-		worldSize = math.clamp(tonumber(settings.worldSize) or 1, 0.6, 1.8),
+		worldSize = math.clamp(tonumber(settings.worldSize) or 1.1, 0.6, 4),
 		worldGlow = math.clamp(tonumber(settings.worldGlow) or 70, 0, 100),
 		worldDim = settings.worldDim ~= false,
 		worldWiggle = settings.worldWiggle ~= false,
 		worldKeepAway = settings.worldKeepAway ~= false,
 		worldAboveGround = settings.worldAboveGround == true,
+		bgEnabled = settings.bgEnabled ~= false,
+		bgPreset = (settings.bgPreset == "cover" or settings.bgPreset == "theme" or settings.bgPreset == "solid")
+			and settings.bgPreset or "aurora",
+		bgThemeLink = settings.bgThemeLink ~= false,
+		bgDim = math.clamp(tonumber(settings.bgDim) or 55, 0, 100),
 		songCard = settings.songCard ~= false,
 		songCardScale = math.clamp(tonumber(settings.songCardScale) or 1, 0.7, 1.4),
 		songCardPaused = settings.songCardPaused ~= false,
@@ -16537,11 +16542,27 @@ function Music:LoadRecommended(force, callback)
 	local token = self.RecommendedToken
 	self:_Emit("recommended")
 	task.spawn(function()
-		local data = self:_ApiGet("/personalized?limit=12", 180, force)
-		local items = data and (data.result or data.recommend or data.playlists)
-		if type(items) ~= "table" or #items == 0 then
-			data = self:_ApiGet("/top/playlist?limit=12&offset=0&order=hot&cat=" .. musicUrlEncode("全部"), 180, force)
+		local data
+		local items
+		if force then
+			-- NetEase /personalized is per-day and returns the same list, so a
+			-- refresh picks a random hot-playlist category + offset instead.
+			local categories = { "全部", "华语", "流行", "摇滚", "电子", "民谣", "说唱", "ACG", "轻音乐", "爵士" }
+			local category = categories[math.random(#categories)]
+			local offset = math.random(0, 20) * 12
+			data = self:_ApiGet("/top/playlist?limit=12&offset=" .. tostring(offset) .. "&order=hot&cat=" .. musicUrlEncode(category), 180, true)
 			items = data and (data.playlists or data.result)
+			if type(items) ~= "table" or #items == 0 then
+				data = self:_ApiGet("/personalized?limit=12", 180, true)
+				items = data and (data.result or data.recommend or data.playlists)
+			end
+		else
+			data = self:_ApiGet("/personalized?limit=12", 180, false)
+			items = data and (data.result or data.recommend or data.playlists)
+			if type(items) ~= "table" or #items == 0 then
+				data = self:_ApiGet("/top/playlist?limit=12&offset=0&order=hot&cat=" .. musicUrlEncode("全部"), 180, false)
+				items = data and (data.playlists or data.result)
+			end
 		end
 		if token ~= self.RecommendedToken then
 			return
@@ -16584,6 +16605,12 @@ function Music:LoadRecommended(force, callback)
 		end
 		self.RecommendedLoading = false
 		if #out > 0 then
+			if force then
+				for index = #out, 2, -1 do
+					local swap = math.random(index)
+					out[index], out[swap] = out[swap], out[index]
+				end
+			end
 			self.Recommended = out
 			self.RecommendedError = nil
 			self:Save()
@@ -16878,7 +16905,7 @@ function Music:QrLoginStart(callback)
 		}, 20)
 		local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
 		local key = data and tostring(data.unikey or "") or ""
-		if not string.match(key, "^[%w]+$") then
+		if not string.match(key, "^[%w%-]+$") then
 			if callback then
 				callback(false, nil, nil, (data and (data.message or data.msg)) or (response and response.error) or "二维码创建失败")
 			end
@@ -16896,6 +16923,7 @@ function Music:QrLoginStart(callback)
 			local loginUrl = "https://music.163.com/login?codekey=" .. key
 			local encoded = musicUrlEncode(loginUrl)
 			local candidates = {
+				"https://api.pwmqr.com/qrcode/create/?url=" .. encoded,
 				"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=" .. encoded,
 				"https://quickchart.io/qr?size=300&text=" .. encoded,
 			}
@@ -18021,8 +18049,8 @@ function MusicPage.Build(page, config)
 	local SHELL_W = boxSize.X > 200 and boxSize.X or math.max(560, windowWidth - 240)
 	local SHELL_H = boxSize.Y > 160 and boxSize.Y or math.max(380, windowHeight - 88)
 	local RAIL_W = math.clamp(SHELL_W * 0.215, 158, 200)
-	local GAP = 8
-	local PAD = 6
+	local GAP = 6
+	local PAD = 2
 	local WORK_W = SHELL_W - RAIL_W - GAP - PAD * 2
 	local PLAYER_H = math.clamp(SHELL_H * 0.112, 58, 72)
 	local MAIN_H = SHELL_H - PLAYER_H
@@ -18918,8 +18946,28 @@ function MusicPage.Build(page, config)
 		ClipsDescendants = true,
 		ZIndex = 0,
 	})
-	U.corner(stage, 18)
-	U.stroke(stage, T.Stroke, 0.7, 1)
+	U.corner(stage, 0)
+	U.stroke(stage, T.Stroke, 1, 1)
+	local stageCover = U.new("ImageLabel", {
+		Name = "NerxMusicStageCover",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(1.28, 1.28),
+		ScaleType = Enum.ScaleType.Crop,
+		ImageTransparency = 1,
+		Visible = false,
+		ZIndex = 0,
+	}, stage)
+	local stageShade = U.frame(stage, {
+		BackgroundColor3 = T.Black,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+		Visible = false,
+		ZIndex = 0,
+	})
 	local stageGradient = Instance.new("UIGradient")
 	stageGradient.Color = ColorSequence.new({
 		ColorSequenceKeypoint.new(0, T.Window:Lerp(T.Accent, 0.10)),
@@ -18933,6 +18981,7 @@ function MusicPage.Build(page, config)
 	})
 	stageGradient.Rotation = 145
 	stageGradient.Parent = stage
+	local stageGlowList = {}
 	local function stageGlow(size, px, py, alpha)
 		local glow = U.frame(stage, {
 			BackgroundColor3 = T.Accent,
@@ -18944,6 +18993,8 @@ function MusicPage.Build(page, config)
 			ZIndex = 0,
 		})
 		U.corner(glow, 999)
+		stageGlowList[#stageGlowList + 1] = glow
+		return glow
 	end
 	stageGlow(SHELL_W * 0.58, 0.04, -0.1, 0.93)
 	stageGlow(SHELL_W * 0.46, 0.99, 0.1, 0.95)
@@ -18958,6 +19009,90 @@ function MusicPage.Build(page, config)
 		ZIndex = 1,
 	})
 
+	-- Background presets: cover blur (image + dark shade), aurora (accent
+	-- glows), theme (accent tint) or solid. Shared by the page and refreshed
+	-- whenever the track / theme / appearance settings change.
+	local stageCoverToken = 0
+	local bgPreviewFrame, bgPreviewImage, bgPreviewGradient
+	local function applyStageBackground()
+		local preset = M.Settings.bgPreset or "aurora"
+		local enabled = M.Settings.bgEnabled ~= false
+		local themeLink = M.Settings.bgThemeLink ~= false
+		local dim = math.clamp(tonumber(M.Settings.bgDim) or 55, 0, 100) / 100
+		local track = M.CurrentId and M.Tracks[M.CurrentId] or nil
+		local coverOn = enabled and preset == "cover" and track and track.coverUrl and track.coverUrl ~= ""
+		if coverOn then
+			stageCoverToken = stageCoverToken + 1
+			local token = stageCoverToken
+			stageCover.Visible = true
+			stageCover.ImageTransparency = math.clamp(0.3 + dim * 0.5, 0, 1)
+			M:Cover(track.coverUrl, function(asset)
+				if token == stageCoverToken and asset and stageCover.Parent then
+					stageCover.Image = asset
+				end
+			end, 900)
+		else
+			stageCoverToken = stageCoverToken + 1
+			stageCover.Visible = false
+			stageCover.Image = ""
+			stageCover.ImageTransparency = 1
+		end
+		stageShade.Visible = enabled
+		local shade = 0.04 + dim * (preset == "cover" and 0.5 or 0.22)
+		stageShade.BackgroundTransparency = 1 - shade
+		local auroraOn = enabled and (preset == "aurora" or preset == "theme")
+		local glowColor = themeLink and T.Accent or T.AccentDeep
+		for _, glow in ipairs(stageGlowList) do
+			glow.Visible = auroraOn
+			glow.BackgroundColor3 = glowColor
+		end
+		if not enabled then
+			stage.BackgroundColor3 = T.Window
+			stage.BackgroundTransparency = 0
+			stageGradient.Color = ColorSequence.new(T.Window, T.Sidebar)
+			stageGradient.Transparency = NumberSequence.new(1)
+		elseif preset == "cover" then
+			stage.BackgroundColor3 = T.Window
+			stage.BackgroundTransparency = 0.05
+			stageGradient.Transparency = NumberSequence.new(1)
+		elseif preset == "solid" then
+			stage.BackgroundColor3 = T.Window
+			stage.BackgroundTransparency = 0
+			stageGradient.Color = ColorSequence.new(T.Window, T.Sidebar)
+			stageGradient.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0),
+				NumberSequenceKeypoint.new(1, 0.2),
+			})
+		else
+			stage.BackgroundColor3 = T.Window
+			stage.BackgroundTransparency = 0.06
+			stageGradient.Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, T.Window:Lerp(T.Accent, themeLink and 0.2 or 0.1)),
+				ColorSequenceKeypoint.new(0.52, T.Main:Lerp(T.Accent, themeLink and 0.08 or 0.03)),
+				ColorSequenceKeypoint.new(1, T.Sidebar),
+			})
+			stageGradient.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0),
+				NumberSequenceKeypoint.new(0.55, preset == "theme" and 0.02 or 0.08),
+				NumberSequenceKeypoint.new(1, preset == "theme" and 0.1 or 0.18),
+			})
+		end
+		if bgPreviewFrame and bgPreviewFrame.Parent then
+			bgPreviewFrame.BackgroundColor3 = stage.BackgroundColor3
+			bgPreviewFrame.BackgroundTransparency = math.min(0.5, stage.BackgroundTransparency)
+			if bgPreviewGradient then
+				bgPreviewGradient.Color = stageGradient.Color
+				bgPreviewGradient.Transparency = stageGradient.Transparency
+				bgPreviewGradient.Rotation = 145
+			end
+			if bgPreviewImage then
+				bgPreviewImage.Image = stageCover.Visible and stageCover.Image or ""
+				bgPreviewImage.ImageTransparency = stageCover.Visible and 0.35 or 1
+			end
+		end
+	end
+	applyStageBackground()
+
 	local ambient = U.frame(shell, {
 		BackgroundColor3 = T.Accent,
 		BackgroundTransparency = 0.975,
@@ -18969,13 +19104,21 @@ function MusicPage.Build(page, config)
 	U.corner(ambient, 999)
 
 	rail = glassPanel(shell, {
-		Position = UDim2.fromOffset(PAD, PAD),
-		Size = UDim2.fromOffset(RAIL_W, SHELL_H - PAD * 2),
-		BackgroundColor3 = T.Surface,
-		BackgroundTransparency = 0.35,
-		Radius = 14,
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.fromOffset(RAIL_W, SHELL_H),
+		BackgroundColor3 = T.Sidebar,
+		BackgroundTransparency = 0.12,
+		Radius = 0,
 	}, false)
-	rail.Position = UDim2.fromOffset(PAD, PAD)
+	rail.Position = UDim2.fromOffset(0, 0)
+	U.frame(shell, {
+		BackgroundColor3 = T.StrokeSoft,
+		BackgroundTransparency = 0.35,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(RAIL_W, 0),
+		Size = UDim2.new(0, 1, 1, 0),
+		ZIndex = 2,
+	})
 
 	local brand = U.frame(rail, {
 		BackgroundTransparency = 1,
@@ -19004,15 +19147,7 @@ function MusicPage.Build(page, config)
 		TextColor3 = T.Text,
 		TextTransparency = 0.05,
 		Position = UDim2.fromOffset(32, 0),
-		Size = UDim2.new(1, -32, 0, 14),
-	})
-	U.label(brand, {
-		Text = "网易云音乐 · v" .. tostring(Nerx.Version),
-		TextSize = 7.5,
-		TextColor3 = T.Muted,
-		TextTransparency = 0.35,
-		Position = UDim2.fromOffset(32, 14),
-		Size = UDim2.new(1, -32, 0, 12),
+		Size = UDim2.new(1, -32, 0, 24),
 	})
 
 	local searchRoot = U.frame(rail, {
@@ -20028,15 +20163,35 @@ function MusicPage.Build(page, config)
 			end
 			M:Play(track.id, ids)
 		end)
+		local function resetHover()
+			more.Visible = false
+			paintTrackRow(widget, track.id == M.CurrentId)
+		end
+		local hoverRows = options.__hoverRows
+		if hoverRows then
+			hoverRows[row] = resetHover
+		end
 		U.connect(input.MouseEnter, function()
+			-- Exclusive hover: clear every other row first, so a missed
+			-- MouseLeave can never leave a stale highlight behind.
+			if hoverRows then
+				for other, reset in pairs(hoverRows) do
+					if other ~= row then
+						reset()
+					end
+				end
+				hoverRows[row] = resetHover
+			end
 			if track.id ~= M.CurrentId then
 				U.tween(row, U.Tween.Fast, { BackgroundTransparency = 0.94 })
 			end
 			more.Visible = true
 		end)
 		U.connect(input.MouseLeave, function()
-			paintTrackRow(widget, track.id == M.CurrentId)
-			more.Visible = false
+			resetHover()
+			if hoverRows then
+				hoverRows[row] = nil
+			end
 		end)
 		U.connect(input.InputBegan, function(inputObject)
 			if inputObject.UserInputType == Enum.UserInputType.MouseButton2 then
@@ -20118,6 +20273,8 @@ function MusicPage.Build(page, config)
 
 	local function buildTrackList(parent, ids, options)
 		options = options or {}
+		local hoverRows = {}
+		options.__hoverRows = hoverRows
 		local scroll = newScroll(parent, options.Top or 0, options.Bottom or 0)
 		local content = U.frame(scroll, {
 			BackgroundTransparency = 1,
@@ -20158,6 +20315,12 @@ function MusicPage.Build(page, config)
 				createTrackRow(card, index, track, ids, options)
 			end
 		end
+		U.connect(scroll.MouseLeave, function()
+			for _, reset in pairs(hoverRows) do
+				reset()
+			end
+			table.clear(hoverRows)
+		end)
 		return scroll
 	end
 
@@ -21416,6 +21579,7 @@ function MusicPage.Build(page, config)
 		if state.lyricsOpen then
 			renderLyrics(true)
 		end
+		applyStageBackground()
 		scheduleWorldSync(0.12)
 	end
 
@@ -21680,33 +21844,51 @@ function MusicPage.Build(page, config)
 		local bodyTop = 108
 		local colGap = 10
 		local colW = math.floor((WORK_W - 32 - colGap) / 2)
+		-- One page-level scroll (like the web preview) instead of two separate
+		-- scrolling columns, which made the settings page look like a nested
+		-- window with its own scrollbars.
+		local settingsScroll = U.new("ScrollingFrame", {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			ClipsDescendants = true,
+			Position = UDim2.fromOffset(0, bodyTop),
+			Size = UDim2.new(1, 0, 1, -(bodyTop + 8)),
+			ScrollBarThickness = 3,
+			ScrollBarImageColor3 = T.Stroke,
+			ScrollBarImageTransparency = 0.35,
+			AutomaticCanvasSize = Enum.AutomaticSize.Y,
+			CanvasSize = UDim2.fromOffset(0, 0),
+			ScrollingDirection = Enum.ScrollingDirection.Y,
+			ElasticBehavior = Enum.ElasticBehavior.Never,
+		}, parent)
+		local settingsContent = U.frame(settingsScroll, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, 0),
+		})
 		local function settingsColumn(x)
-			local scroll = U.new("ScrollingFrame", {
+			local column = U.frame(settingsContent, {
 				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
-				ClipsDescendants = true,
-				Position = UDim2.fromOffset(x, bodyTop),
-				Size = UDim2.new(0, colW, 1, -(bodyTop + 10)),
-				ScrollBarThickness = 3,
-				ScrollBarImageColor3 = T.Stroke,
-				ScrollBarImageTransparency = 0.35,
-				AutomaticCanvasSize = Enum.AutomaticSize.Y,
-				CanvasSize = UDim2.fromOffset(0, 0),
-				ScrollingDirection = Enum.ScrollingDirection.Y,
-				ElasticBehavior = Enum.ElasticBehavior.Never,
-			}, parent)
-			local content = U.frame(scroll, {
-				BackgroundTransparency = 1,
-				BorderSizePixel = 0,
-				Size = UDim2.new(1, 0, 0, 0),
+				Position = UDim2.fromOffset(x, 0),
+				Size = UDim2.new(0, colW, 0, 0),
 				AutomaticSize = Enum.AutomaticSize.Y,
 			})
-			local list = U.list(content, 8)
+			local list = U.list(column, 8)
 			list.Padding = UDim.new(0, 6)
-			return content
+			return column
 		end
 		local leftContent = settingsColumn(16)
 		local rightContent = settingsColumn(16 + colW + colGap)
+		local function fitSettingsContent()
+			local height = math.max(leftContent.AbsoluteSize.Y or 0, rightContent.AbsoluteSize.Y or 0)
+			if height > 0 then
+				settingsContent.Size = UDim2.new(1, 0, 0, height + 10)
+			end
+		end
+		task.defer(fitSettingsContent)
+		U.connect(leftContent:GetPropertyChangedSignal("AbsoluteSize"), fitSettingsContent)
+		U.connect(rightContent:GetPropertyChangedSignal("AbsoluteSize"), fitSettingsContent)
 
 		if state.settingsTab == "lyrics" then
 			local card, addRow = settingsCard(leftContent, "通用歌词", "同时应用到菜单歌词和世界 3D 歌词。", 1)
@@ -21769,7 +21951,7 @@ function MusicPage.Build(page, config)
 			rangeRow(card4, addRow4, "高度", "相对视线的高度", "worldHeight", -2, 4, 0.5, "m", function()
 				scheduleWorldSync(0.05)
 			end)
-			rangeRow(card4, addRow4, "大小", "歌词整体缩放", "worldSize", 0.6, 1.8, 0.05, "x", function()
+			rangeRow(card4, addRow4, "大小", "歌词整体缩放", "worldSize", 0.6, 4, 0.05, "x", function()
 				scheduleWorldSync(0.05)
 			end)
 
@@ -21862,16 +22044,24 @@ function MusicPage.Build(page, config)
 		else
 			local card, addRow = settingsCard(leftContent, "主题", "音乐页跟随 Nerx 菜单的主题色与液态玻璃。", 1)
 			local accentRow = addRow(34)
-			settingsLabel(accentRow, "强调色", "来自菜单主题 Theme.Accent", 120)
+			settingsLabel(accentRow, "强调色", "点击色块打开色盘", 120)
 			local swatch = U.frame(accentRow, {
 				BackgroundColor3 = T.Accent,
 				BorderSizePixel = 0,
 				AnchorPoint = Vector2.new(1, 0.5),
-				Position = UDim2.new(1, -100, 0.5, 0),
-				Size = UDim2.fromOffset(22, 22),
+				Position = UDim2.new(1, -98, 0.5, 0),
+				Size = UDim2.fromOffset(26, 26),
 			})
-			U.corner(swatch, 11)
-			U.stroke(swatch, T.White, 0.65, 1)
+			U.corner(swatch, 13)
+			U.stroke(swatch, T.White, 0.55, 1)
+			local function pickAccent()
+				U.colorPicker(swatch, T.Accent, function(color)
+					Nerx:SetAccent(color)
+				end)
+			end
+			U.inputButton(swatch, pickAccent)
+			local accentHit = U.inputButton(accentRow, pickAccent)
+			accentHit.Size = UDim2.new(1, -96, 1, 0)
 			local themeButton = textButton(accentRow, 86, 24, "主题页", "paint-bucket", false, function()
 				if window and window.SelectTabByName then
 					window:SelectTabByName("Themes")
@@ -21889,35 +22079,58 @@ function MusicPage.Build(page, config)
 				LayoutOrder = 2,
 			})
 
-			local card2, addRow2 = settingsCard(rightContent, "液态玻璃", "毛玻璃模式由菜单的 Frosted 系统控制。", 1)
-			local frosted = Nerx.Frosted
-			local frostedOn = frosted and frosted.Enabled == true
-			buttonRow(card2, addRow2, "毛玻璃模式", frostedOn and "已开启 · 与菜单同步" or "已关闭", {
-				{ Text = frostedOn and "关闭" or "开启", Icon = "eye", Callback = function()
-					if frosted then
-						frosted:SetEnabled(not frostedOn)
-						renderMain()
-						notify("Nerx", frostedOn and "毛玻璃已关闭" or "毛玻璃已开启", "eye", T.Accent)
-					end
-				end },
-				{ Text = "主题页", Icon = "paint-bucket", Callback = function()
-					if window and window.SelectTabByName then
-						window:SelectTabByName("Themes")
-					end
-				end },
-			})
-			U.label(card2, {
-				Text = "毛玻璃参数（模糊、透明度、色散）在主题页的“毛玻璃参数”里调整。",
-				TextSize = 7.5,
-				TextColor3 = T.Muted,
-				TextTransparency = 0.45,
-				TextWrapped = true,
-				Size = UDim2.new(1, -24, 0, 22),
-				LayoutOrder = 2,
-			})
+			local card2, addRow2 = settingsCard(rightContent, "背景", "音乐页与歌词页的背景来源。", 1)
+			toggleRow(card2, addRow2, "显示背景", "关闭后使用纯色舞台", "bgEnabled", applyStageBackground)
+			segRow(card2, addRow2, "背景预设", "封面 / 极光 / 主题 / 纯色", "bgPreset", {
+				{ Value = "cover", Label = "封面" },
+				{ Value = "aurora", Label = "极光" },
+				{ Value = "theme", Label = "主题" },
+				{ Value = "solid", Label = "纯色" },
+			}, applyStageBackground)
+			toggleRow(card2, addRow2, "联动主题色", "背景随菜单强调色变化", "bgThemeLink", applyStageBackground)
+			rangeRow(card2, addRow2, "背景压暗", "让前景卡片更清楚", "bgDim", 0, 100, 1, "%", applyStageBackground)
 
 			local card3, addRow3 = settingsCard(leftContent, "动效", "音乐页使用 Tween 弹性过渡；关闭菜单动效后仍保留基础渐变。", 2)
 			toggleRow(card3, addRow3, "启用动效", "页面切换、歌词滚动和封面悬停", "motion")
+
+			local card5, addRow5 = settingsCard(leftContent, "背景预览", "预设会同时应用到音乐页和歌词页。", 3)
+			bgPreviewFrame = U.frame(card5, {
+				BackgroundColor3 = T.Window,
+				BorderSizePixel = 0,
+				Size = UDim2.new(1, -20, 0, 118),
+				LayoutOrder = 2,
+			})
+			U.corner(bgPreviewFrame, 8)
+			U.stroke(bgPreviewFrame, T.White, 0.85, 1)
+			bgPreviewGradient = Instance.new("UIGradient")
+			bgPreviewGradient.Rotation = 145
+			bgPreviewGradient.Parent = bgPreviewFrame
+			bgPreviewImage = U.new("ImageLabel", {
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Size = UDim2.fromScale(1, 1),
+				ImageTransparency = 1,
+				ScaleType = Enum.ScaleType.Crop,
+				ZIndex = 2,
+			}, bgPreviewFrame)
+			local mockCard = U.frame(bgPreviewFrame, {
+				BackgroundColor3 = T.White,
+				BackgroundTransparency = 0.86,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset(10, 10),
+				Size = UDim2.fromOffset(88, 12),
+				ZIndex = 3,
+			})
+			U.corner(mockCard, 4)
+			U.frame(bgPreviewFrame, {
+				BackgroundColor3 = T.White,
+				BackgroundTransparency = 0.94,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset(10, 26),
+				Size = UDim2.fromOffset(54, 8),
+				ZIndex = 3,
+			})
+			applyStageBackground()
 
 			local card4, addRow4 = settingsCard(rightContent, "关于", "Nerx Music · " .. tostring(Nerx.Version), 2)
 			U.label(card4, {
@@ -21951,6 +22164,7 @@ function MusicPage.Build(page, config)
 				openLyrics("page")
 			end)
 			coverInputAgain.ZIndex = 10
+			applyStageBackground()
 		end
 		player.Title.Text = track and track.name or "未播放"
 		if track then
@@ -22165,19 +22379,7 @@ function MusicPage.Build(page, config)
 					row.Main.TextStrokeTransparency = M.Settings.glow and (0.55 - 0.28 * pulse) or 1
 					if row.Glow then
 						row.Glow.Visible = M.Settings.glow == true
-						row.Glow.ImageTransparency = 0.8 - 0.24 * pulse
-					end
-					if M.Settings.glow then
-						pcall(function()
-							local shadow = row.Main:FindFirstChildOfClass("UIShadow")
-							if not shadow then
-								shadow = Instance.new("UIShadow")
-								shadow.Parent = row.Main
-							end
-							shadow.BlurSize = 20
-							shadow.Color = T.Accent
-							shadow.Transparency = 0.48
-						end)
+						row.Glow.BackgroundTransparency = 0.94 - 0.08 * pulse
 					end
 					if row.Trans then
 						row.Trans.TextTransparency = M.Settings.showTranslation and 0.15 or 1
@@ -22663,18 +22865,21 @@ function MusicPage.Build(page, config)
 		end
 		local track = M.CurrentId and M.Tracks[M.CurrentId] or nil
 		local immersive = state.lyricsMode == "immersive"
+		local bgEnabled = M.Settings.bgEnabled ~= false
+		local bgPreset = M.Settings.bgPreset or "aurora"
+		local showCoverBg = bgEnabled and (bgPreset == "cover" or bgPreset == "aurora")
 		lyrics.Left.Visible = not immersive
 		if immersive then
 			lyrics.Right.Position = UDim2.fromOffset(0, 0)
 			lyrics.Right.Size = UDim2.fromScale(1, 1)
 			local dim = math.clamp(M.Settings.immersiveDim or 46, 0, 100)
 			lyrics.BgTint.BackgroundTransparency = math.clamp(0.72 - dim / 100 * 0.6, 0.1, 0.72)
-			lyrics.BgImage.ImageTransparency = 0.72
+			lyrics.BgImage.ImageTransparency = showCoverBg and 0.72 or 1
 		else
 			lyrics.Right.Position = UDim2.fromOffset(overlayWidth * 0.48, 0)
 			lyrics.Right.Size = UDim2.new(0.48, 0, 1, 0)
 			lyrics.BgTint.BackgroundTransparency = 0.32
-			lyrics.BgImage.ImageTransparency = 0.5
+			lyrics.BgImage.ImageTransparency = showCoverBg and 0.5 or 1
 		end
 		lyrics.TabPage.Label.TextColor3 = state.lyricsMode == "page" and T.White or T.Muted
 		lyrics.TabPage.Label.TextTransparency = state.lyricsMode == "page" and 0 or 0.2
@@ -22692,15 +22897,18 @@ function MusicPage.Build(page, config)
 		lyrics.CoverHolder:ClearAllChildren()
 		if track then
 			coverBox(lyrics.CoverHolder, UDim2.fromScale(1, 1), track, 8, { CoverSize = 480 })
-			if track.coverUrl and track.coverUrl ~= "" then
+			if showCoverBg and track.coverUrl and track.coverUrl ~= "" then
 				M:Cover(track.coverUrl, function(asset)
-					if asset and lyrics.BgImage.Parent then
+					if asset and lyrics.BgImage.Parent
+						and M.Settings.bgEnabled ~= false
+						and (M.Settings.bgPreset == "cover" or M.Settings.bgPreset == "aurora" or M.Settings.bgPreset == nil) then
 						lyrics.BgImage.Image = asset
 						lyrics.BgImage.ImageTransparency = immersive and 0.72 or 0.5
 					end
 				end, 600)
 			else
 				lyrics.BgImage.Image = ""
+				lyrics.BgImage.ImageTransparency = 1
 			end
 		else
 			lyrics.BgImage.Image = ""
@@ -22786,12 +22994,19 @@ function MusicPage.Build(page, config)
 					Size = UDim2.fromOffset(width, rowHeight),
 					ZIndex = 1,
 				})
-				local rowGlow = glowImage(row, GLOW_ASSETS.DeepLine, T.Accent, 0.8, {
-					Position = UDim2.fromOffset(-40, -18),
-					Size = UDim2.fromOffset(width + 80, rowHeight + 36),
+				-- Soft rounded accent aura behind the active line. Image-based
+				-- rectangular glow sheets picked up a hard black edge inside
+				-- TextLabels, so this stays a plain rounded frame.
+				local rowGlow = U.frame(row, {
+					BackgroundColor3 = T.Accent,
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					Position = UDim2.fromOffset(-18, -10),
+					Size = UDim2.fromOffset(width + 36, rowHeight + 20),
 					Visible = false,
 					ZIndex = 1,
 				})
+				U.corner(rowGlow, 999)
 				local main = U.label(row, {
 					Text = M:RichEscape(entry.Text),
 					Font = mainFont,
@@ -22896,25 +23111,30 @@ function MusicPage.Build(page, config)
 		local height = math.clamp(tonumber(M.Settings.worldHeight) or 0, -2, 4)
 		local scale = math.clamp(tonumber(M.Settings.worldSize) or 1, 0.6, 1.8)
 		local projection = M.Settings.worldProjection or "follow"
-		local yaw, pitch
+		local yaw, pitch, spawnDistance
 		if projection == "wall" then
-			yaw = 0
-			pitch = -math.rad(7)
+			yaw = (math.random() * 2 - 1) * math.rad(5)
+			pitch = -math.rad(4 + math.random() * 4)
+			spawnDistance = distance
 		elseif projection == "orbit" then
-			yaw = ((index - 1) % 6) * (math.pi * 2 / 6)
-			pitch = -math.rad(8)
+			yaw = math.random() * math.pi * 2
+			pitch = -math.rad(3 + math.random() * 10)
+			spawnDistance = distance * (0.75 + math.random() * 0.5)
 		else
-			yaw = (math.random() * 2 - 1) * math.rad(24)
-			pitch = -math.rad(3 + math.random() * 9)
+			-- Follow: a real random point around the player, not a fixed spot
+			-- glued to the camera. Some lines start far to the side / above.
+			yaw = (math.random() * 2 - 1) * math.rad(65)
+			pitch = -math.rad(2 + math.random() * 16)
+			spawnDistance = distance * (0.55 + math.random() * 0.95)
 		end
 		local base = camera.CFrame
 		local position
 		if projection == "orbit" then
 			position = base.Position
-				+ Vector3.new(math.sin(yaw) * distance, height + math.sin(pitch) * distance, math.cos(yaw) * distance)
+				+ Vector3.new(math.sin(yaw) * spawnDistance, height + math.sin(pitch) * spawnDistance, math.cos(yaw) * spawnDistance)
 		else
 			local direction = (base * CFrame.Angles(0, yaw, 0) * CFrame.Angles(pitch, 0, 0)).LookVector
-			position = base.Position + direction * distance + Vector3.new(0, height, 0)
+			position = base.Position + direction * spawnDistance + Vector3.new(0, height, 0)
 		end
 		local part = Instance.new("Part")
 		part.Name = "NerxMusicWorldLyric"
@@ -22947,15 +23167,16 @@ function MusicPage.Build(page, config)
 		local billboard = Instance.new("BillboardGui")
 		billboard.Name = "NerxMusicWorldLyric"
 		billboard.Adornee = part
-		billboard.AlwaysOnTop = false
+		billboard.AlwaysOnTop = true
 		billboard.LightInfluence = 0
 		billboard.MaxDistance = 800
 		billboard.Size = UDim2.fromOffset(textWidth * scale, totalH * scale)
 		billboard.Enabled = true
 		billboard.Parent = part
-		local lineGlow = glowImage(billboard, GLOW_ASSETS.DeepLine, T.Accent, 1, {
-			Position = UDim2.new(0, -24, 0, -12),
-			Size = UDim2.new(1, 48, 1, 24),
+		local lineGlow = glowImage(billboard, GLOW_ASSETS.Wide, T.Accent, 1, {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.new(1, 220, 0, totalH * 2.2),
 			ZIndex = 0,
 		})
 		local glowAmount = math.clamp((M.Settings.worldGlow or 70) / 100, 0, 1)
@@ -23038,8 +23259,15 @@ function MusicPage.Build(page, config)
 			BaseWidth = textWidth,
 			BaseHeight = totalH,
 			GlowBase = glowBase,
-			RefDistance = distance,
+			RefDistance = spawnDistance,
 			Scale = scale,
+			NoKeepAway = projection ~= "follow",
+			Orbit = projection == "orbit" and {
+				Angle = yaw,
+				Radius = spawnDistance,
+				Pitch = pitch,
+				Speed = (math.random() < 0.5 and -1 or 1) * (0.12 + math.random() * 0.16),
+			} or nil,
 			Spawned = os.clock(),
 		}
 		world.Lines[#world.Lines + 1] = line
@@ -23150,9 +23378,20 @@ function MusicPage.Build(page, config)
 					fadeT = math.clamp((now - line.Fading) / 0.45, 0, 1)
 				end
 				if animate and not line.Fading then
+					if line.Orbit and camera then
+						line.Orbit.Angle = (line.Orbit.Angle or 0) + dt * (line.Orbit.Speed or 0.15)
+						local angle = line.Orbit.Angle
+						local radius = line.Orbit.Radius or 10
+						local orbitHeight = math.clamp(tonumber(M.Settings.worldHeight) or 0, -2, 4)
+						line.BasePosition = camera.CFrame.Position + Vector3.new(
+							math.sin(angle) * radius,
+							orbitHeight + math.sin(line.Orbit.Pitch or 0) * radius,
+							math.cos(angle) * radius
+						)
+					end
 					-- keepAway: if the line leaves the viewport, pull it back to
 					-- the nearest on-screen point at the same distance.
-					if M.Settings.worldKeepAway ~= false and camera then
+					if M.Settings.worldKeepAway ~= false and not line.NoKeepAway and camera then
 						local viewport = camera.ViewportSize
 						local screen, onScreen = camera:WorldToViewportPoint(line.BasePosition)
 						if not onScreen or screen.Z <= 0 then
@@ -24393,8 +24632,9 @@ function MusicPage.Build(page, config)
 				return
 			end
 			renderRail()
-			renderMain()
-			renderPlayer()
+				renderMain()
+				renderPlayer()
+				applyStageBackground()
 			if state.lyricsOpen then
 				renderLyrics(true)
 			end
