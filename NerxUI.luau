@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.9.2
+	Nerx UI Library · v2.0.0
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.9.2"
+Nerx.Version = "2.0.0"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -15932,6 +15932,7 @@ local function musicNormalizeData(decoded)
 			and settings.bgPreset or "aurora",
 		bgThemeLink = settings.bgThemeLink ~= false,
 		bgDim = math.clamp(tonumber(settings.bgDim) or 55, 0, 100),
+		provider = settings.provider == "kugou" and "kugou" or "netease",
 		songCard = settings.songCard ~= false,
 		songCardScale = math.clamp(tonumber(settings.songCardScale) or 1, 0.7, 1.4),
 		songCardPaused = settings.songCardPaused ~= false,
@@ -16062,7 +16063,7 @@ function Music:Save()
 	-- only the ones that are still referenced, so music.json does not grow forever.
 	local keep = {}
 	for id, track in pairs(self.Tracks) do
-		if track.source ~= "netease" or track.liked then
+		if (track.source ~= "netease" and track.source ~= "kugou") or track.liked then
 			keep[id] = true
 		end
 	end
@@ -16260,6 +16261,9 @@ function Music:_RegisterNeteaseSongs(rawSongs, limit)
 end
 
 function Music:SearchNetease(keyword, callback)
+	if self.Settings.provider == "kugou" then
+		return self:SearchKugou(keyword, callback)
+	end
 	keyword = musicTrim(keyword)
 	if keyword == "" then
 		self.SearchIds = {}
@@ -16290,6 +16294,107 @@ function Music:SearchNetease(keyword, callback)
 			self.SearchError = self.LastApiError or "网易云请求失败"
 		elseif #ids == 0 then
 			self.SearchError = "网易云没有找到歌曲"
+		end
+		self:_Emit("search")
+		if callback then
+			callback(ids, self.SearchError)
+		end
+	end)
+end
+
+function Music:SearchKugou(keyword, callback)
+	keyword = musicTrim(keyword)
+	self.SearchQuery = keyword
+	self.Searching = true
+	self.SearchError = nil
+	self.SearchIds = {}
+	self:_Emit("search")
+	if keyword == "" then
+		self.Searching = false
+		self:_Emit("search")
+		if callback then
+			callback({})
+		end
+		return
+	end
+	task.spawn(function()
+		local url = "https://mobilecdn.kugou.com/api/v3/search/song?format=json&keyword="
+			.. musicUrlEncode(keyword) .. "&page=1&pagesize=30&showtype=1"
+		local response = musicHttp({
+			Url = url,
+			Method = "GET",
+			Headers = {
+				["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+				["Referer"] = "https://m.kugou.com/",
+				["Accept"] = "application/json",
+			},
+		}, 15)
+		if self.SearchQuery ~= keyword then
+			return
+		end
+		local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
+		local items = data and data.data and data.data.info
+		local ids = {}
+		if type(items) == "table" then
+			for _, item in ipairs(items) do
+				if type(item) == "table" then
+					local hash = tostring(item.hash or "")
+					if hash ~= "" then
+						local id = "kg_" .. hash
+						local name = tostring(item.songname or item.filename or "未知歌曲")
+						local artist = tostring(item.singername or "")
+						if artist == "" then
+							artist = string.match(tostring(item.filename or ""), "^([^%-]+)%-") or "未知歌手"
+							artist = musicTrim(artist)
+						end
+						local trans = type(item.trans_param) == "table" and item.trans_param or {}
+						local cover = tostring(trans.union_cover or trans.album_img or item.album_img or "")
+						if cover ~= "" then
+							cover = cover:gsub("{size}", "240"):gsub("^http://", "https://")
+						elseif tostring(item.album_id or ""):match("^%d+$") then
+							cover = "https://imge.kugou.com/stdmusic/240/" .. tostring(item.album_id) .. ".jpg"
+						end
+						local c1, c2 = musicArtColors(name .. hash)
+						local track = self.Tracks[id]
+						if not track then
+							track = {
+								id = id,
+								source = "kugou",
+								netId = hash,
+								kugouHash = hash,
+								name = name,
+								artist = artist ~= "" and artist or "未知歌手",
+								album = tostring(item.album_name or "酷狗音乐"),
+								duration = tonumber(item.duration) or 0,
+								fee = (tonumber(item.pay_type) or 0) > 0 and 1 or 0,
+								liked = false,
+								lyrics = "",
+								color1 = c1,
+								color2 = c2,
+								coverUrl = cover,
+							}
+							self.Tracks[id] = track
+						else
+							track.netId = hash
+							track.kugouHash = hash
+							track.name = name
+							track.artist = artist ~= "" and artist or track.artist
+							track.album = tostring(item.album_name or track.album)
+							track.duration = tonumber(item.duration) or track.duration
+							track.coverUrl = cover ~= "" and cover or track.coverUrl
+							track.fee = (tonumber(item.pay_type) or 0) > 0 and 1 or track.fee
+						end
+						ids[#ids + 1] = id
+					end
+				end
+			end
+		end
+		self.Searching = false
+		self.SearchIds = ids
+		if not data then
+			self.SearchError = "酷狗请求失败"
+		elseif #ids == 0 then
+			self.SearchError = "酷狗没有找到歌曲"
 		end
 		self:_Emit("search")
 		if callback then
@@ -16870,6 +16975,81 @@ function Music:FetchNeteaseLyrics(trackId)
 	end)
 end
 
+local MUSIC_B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local function musicBase64Decode(input)
+	input = tostring(input or ""):gsub("%s", "")
+	local out = {}
+	local buffer, bits = 0, 0
+	for index = 1, #input do
+		local char = input:sub(index, index)
+		if char == "=" then
+			break
+		end
+		local value = MUSIC_B64:find(char, 1, true)
+		if value then
+			buffer = buffer * 64 + (value - 1)
+			bits = bits + 6
+			if bits >= 8 then
+				bits = bits - 8
+				out[#out + 1] = string.char(math.floor(buffer / (2 ^ bits)) % 256)
+				buffer = buffer % (2 ^ bits)
+			end
+		end
+	end
+	return table.concat(out)
+end
+
+function Music:FetchKugouLyrics(trackId)
+	local track = self.Tracks[tostring(trackId or "")]
+	if not track or track.source ~= "kugou" then
+		return
+	end
+	if track.lyricsLoaded or track.lyricsLoading then
+		return
+	end
+	track.lyricsLoading = true
+	track.lyricsError = nil
+	task.spawn(function()
+		local headers = {
+			["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+			["Referer"] = "https://m.kugou.com/",
+			["Accept"] = "application/json",
+		}
+		local keyword = musicUrlEncode((track.name or "") .. " " .. (track.artist or ""))
+		local hash = tostring(track.kugouHash or track.netId or "")
+		local duration = math.floor(tonumber(track.duration) or 0)
+		local searchUrl = "https://krcs.kugou.com/search?ver=1&man=yes&client=mobi&keyword="
+			.. keyword .. "&duration=" .. tostring(duration) .. "&hash=" .. musicUrlEncode(hash)
+		local response = musicHttp({ Url = searchUrl, Method = "GET", Headers = headers }, 20)
+		local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
+		local candidate = data and data.candidates and data.candidates[1]
+		if not candidate or not candidate.id or not candidate.accesskey then
+			track.lyricsLoading = false
+			track.lyricsError = "酷狗歌词未找到"
+			self:_Emit("lyrics", track)
+			return
+		end
+		local downloadUrl = "https://krcs.kugou.com/download?ver=1&client=mobi&fmt=lrc&charset=utf8&id="
+			.. musicUrlEncode(tostring(candidate.id)) .. "&accesskey=" .. musicUrlEncode(tostring(candidate.accesskey))
+		local lyricResponse = musicHttp({ Url = downloadUrl, Method = "GET", Headers = headers }, 20)
+		local lyricData = lyricResponse and lyricResponse.body and Nerx.Storage:Decode(lyricResponse.body) or nil
+		local content = lyricData and tostring(lyricData.content or "") or ""
+		local decoded = content ~= "" and musicBase64Decode(content) or ""
+		track.lyricsLoading = false
+		if decoded == "" then
+			track.lyricsError = "酷狗歌词为空"
+			self:_Emit("lyrics", track)
+			return
+		end
+		track.lyrics = decoded
+		track.yrc = ""
+		track.lyricsLoaded = true
+		track.lyricsError = nil
+		self:Save()
+		self:_Emit("lyrics", track)
+	end)
+end
+
 function Music:SetCookie(cookie)
 	cookie = musicTrim(cookie)
 	if cookie ~= "" and not string.find(cookie, "=", 1, true) then
@@ -17172,7 +17352,7 @@ function Music:_Asset(path)
 	return nil, "getcustomasset 失败"
 end
 
-function Music:_Download(url, path)
+function Music:_Download(url, path, customHeaders)
 	if type(rawRequest) ~= "function" then
 		return nil, "执行器缺少 request，无法下载网易云音频"
 	end
@@ -17182,8 +17362,10 @@ function Music:_Download(url, path)
 	if type(fnMakeFolder) == "function" then
 		pcall(fnMakeFolder, self.CacheDir)
 	end
-	local headers = musicNcmHeaders(self.Settings.cookie)
-	headers["Accept"] = "*/*"
+	local headers = customHeaders or musicNcmHeaders(self.Settings.cookie)
+	if not customHeaders then
+		headers["Accept"] = "*/*"
+	end
 	local response = musicHttpFollow({ Url = url, Method = "GET", Headers = headers }, 45)
 	if not response or not response.body then
 		return nil, response and response.error or "网易云音频下载失败"
@@ -17243,6 +17425,9 @@ function Music:CoverUrl(url, size)
 	-- NetEase sometimes returns http:// picture URLs; executors only download
 	-- https reliably, which is why some covers silently stayed as gradients.
 	url = string.gsub(url, "^http://", "https://")
+	if string.find(url, "imge.kugou.com", 1, true) then
+		return url
+	end
 	size = tonumber(size) or 300
 	local param = "param=" .. tostring(math.floor(size)) .. "y" .. tostring(math.floor(size))
 	if string.find(url, "?", 1, true) then
@@ -17592,6 +17777,21 @@ function Music:_Load(track)
 	if not sound then
 		return
 	end
+	if track.source == "kugou" then
+		pcall(function()
+			sound:Stop()
+		end)
+		pcall(function()
+			sound.TimePosition = 0
+		end)
+		self.Playing = true
+		self.Loading = true
+		self:_Emit("state")
+		task.spawn(function()
+			self:_LoadKugou(track, token)
+		end)
+		return
+	end
 	if track.source == "netease" and track.netId then
 		pcall(function()
 			sound:Stop()
@@ -17783,6 +17983,150 @@ function Music:_LoadNetease(track, token, qualityOverride)
 				return
 			end
 			self:_Emit("loadfail", { track = track, message = "网易云音频加载失败（VIP / 版权或接口限制）" })
+		end
+		self:_Emit("state")
+	end)
+end
+
+function Music:_LoadKugou(track, token)
+	local sound = self.Sound
+	if not sound then
+		return
+	end
+	local hash = tostring(track.kugouHash or track.netId or "")
+	if hash == "" then
+		self.Loading = false
+		self.Playing = false
+		self:_Emit("state")
+		self:_Emit("loadfail", { track = track, message = "酷狗歌曲缺少 hash" })
+		return
+	end
+	local headers = {
+		["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+		["Referer"] = "https://www.kugou.com/",
+		["Accept"] = "*/*",
+	}
+	local path = self.CacheDir .. "/kg_" .. hash .. ".mp3"
+	local asset = nil
+	if self:_FileExists(path) then
+		asset = self:_Asset(path)
+	end
+	if not asset then
+		local playUrls = {}
+		local function fetchPlayInfo(candidate)
+			local response = musicHttp({
+				Url = "https://m.kugou.com/app/i/getSongInfo.php?cmd=playInfo&hash=" .. candidate,
+				Method = "GET",
+				Headers = headers,
+			}, 20)
+			local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
+			if type(data) == "table" then
+				local url = tostring(data.url or "")
+				if url ~= "" then
+					playUrls[#playUrls + 1] = url
+				end
+				return data, type(data.extra) == "table" and data.extra or {}
+			end
+			return nil, nil
+		end
+		local _, extra = fetchPlayInfo(hash)
+		if #playUrls == 0 and extra then
+			for _, candidate in ipairs({ extra.highhash, extra.sqhash, extra["320hash"] }) do
+				if type(candidate) == "string" and candidate ~= "" then
+					fetchPlayInfo(candidate)
+					if #playUrls > 0 then
+						break
+					end
+				end
+			end
+		end
+		local playUrl = playUrls[1]
+		if not playUrl then
+			self.Loading = false
+			self.Playing = false
+			self:_Emit("state")
+			self:_Emit("loadfail", { track = track, message = "酷狗版权限制，无法获取播放地址（可换一首或切回网易云）" })
+			return
+		end
+		playUrl = playUrl:gsub("^http://", "https://")
+		local ok, err = self:_Download(playUrl, path, headers)
+		if token ~= self.LoadToken then
+			return
+		end
+		if not ok then
+			self.Loading = false
+			self.Playing = false
+			self:_Emit("state")
+			self:_Emit("loadfail", { track = track, message = tostring(err or "酷狗音频下载失败") })
+			return
+		end
+		asset = self:_Asset(path)
+		if not asset then
+			self.Loading = false
+			self.Playing = false
+			self:_Emit("state")
+			self:_Emit("loadfail", { track = track, message = "酷狗音频缓存失败" })
+			return
+		end
+	end
+	if token ~= self.LoadToken then
+		return
+	end
+	track.cachedPath = path
+	sound.SoundId = asset
+	sound.Volume = self.Settings.volume
+	self:ApplySoundEffects()
+	pcall(function()
+		sound.TimePosition = 0
+	end)
+	self.Loading = false
+	if not self.DesiredPlaying then
+		self.Playing = false
+		self:_Emit("state")
+		return
+	end
+	local played = pcall(function()
+		sound:Play()
+	end)
+	if not played then
+		self.Playing = false
+		self:_Emit("state")
+		self:_Emit("loadfail", { track = track, message = "酷狗音频无法交给 Sound 播放" })
+		return
+	end
+	self.Playing = true
+	self:_Emit("state")
+	task.spawn(function()
+		local waited = 0
+		while waited < 8 and self.LoadToken == token do
+			if sound.TimeLength > 0 then
+				break
+			end
+			task.wait(0.1)
+			waited = waited + 0.1
+		end
+		if self.LoadToken ~= token then
+			return
+		end
+		if sound.TimeLength > 0 then
+			local duration = tonumber(sound.TimeLength) or 0
+			if duration > 0 and math.abs((tonumber(track.duration) or 0) - duration) > 0.05 then
+				track.duration = duration
+				self:Save()
+				self:_Emit("library", track)
+			end
+			if self.DesiredPlaying and not sound.IsPlaying then
+				pcall(function()
+					sound:Play()
+				end)
+			end
+			self.Playing = self.DesiredPlaying ~= false
+		else
+			self.Playing = false
+			pcall(function()
+				sound:Stop()
+			end)
+			self:_Emit("loadfail", { track = track, message = "酷狗音频加载失败" })
 		end
 		self:_Emit("state")
 	end)
@@ -18149,8 +18493,8 @@ function MusicPage.Build(page, config)
 	local SHELL_W = boxSize.X > 200 and boxSize.X or math.max(560, windowWidth - 240)
 	local SHELL_H = boxSize.Y > 160 and boxSize.Y or math.max(380, windowHeight - 88)
 	local RAIL_W = math.clamp(SHELL_W * 0.215, 158, 200)
-	local GAP = 6
-	local PAD = 2
+	local GAP = 10
+	local PAD = 10
 	local WORK_W = SHELL_W - RAIL_W - GAP - PAD * 2
 	local PLAYER_H = math.clamp(SHELL_H * 0.112, 58, 72)
 	local MAIN_H = SHELL_H - PLAYER_H
@@ -18205,6 +18549,7 @@ function MusicPage.Build(page, config)
 
 	local railScroll
 	local accountNameLabel
+	local railUi = {}
 	local accountSubLabel
 	local accountAvatarLabel
 	local player = {}
@@ -19206,64 +19551,26 @@ function MusicPage.Build(page, config)
 	U.corner(ambient, 999)
 
 	rail = glassPanel(shell, {
-		Position = UDim2.fromOffset(0, 0),
-		Size = UDim2.fromOffset(RAIL_W, SHELL_H),
-		BackgroundColor3 = T.Sidebar,
-		BackgroundTransparency = 0.12,
-		Radius = 0,
-	}, false)
-	rail.Position = UDim2.fromOffset(0, 0)
-	U.frame(shell, {
-		BackgroundColor3 = T.StrokeSoft,
+		Position = UDim2.fromOffset(PAD, PAD),
+		Size = UDim2.fromOffset(RAIL_W, SHELL_H - PAD * 2),
+		BackgroundColor3 = T.Surface,
 		BackgroundTransparency = 0.35,
-		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(RAIL_W, 0),
-		Size = UDim2.new(0, 1, 1, 0),
-		ZIndex = 2,
-	})
-
-	local brand = U.frame(rail, {
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(12, 48),
-		Size = UDim2.new(1, -24, 0, 28),
-	})
-	local mark = U.frame(brand, {
-		BackgroundColor3 = T.Accent,
-		BorderSizePixel = 0,
-		Size = UDim2.fromOffset(24, 24),
-	})
-	U.corner(mark, 7)
-	U.label(mark, {
-		Text = "N",
-		Font = F.Bold,
-		TextSize = 11,
-		TextColor3 = accentText(),
-		TextXAlignment = Enum.TextXAlignment.Center,
-		Size = UDim2.fromScale(1, 1),
-	})
-	U.label(brand, {
-		Text = "Nerx Music",
-		Font = F.Bold,
-		TextSize = 11,
-		TextColor3 = T.Text,
-		TextTransparency = 0.05,
-		Position = UDim2.fromOffset(32, 0),
-		Size = UDim2.new(1, -32, 0, 24),
-	})
+		Radius = 16,
+	}, false)
+	rail.Position = UDim2.fromOffset(PAD, PAD)
 
 	local searchRoot = U.frame(rail, {
 		BackgroundColor3 = T.FieldDeep,
 		BackgroundTransparency = 0.15,
 		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(10, 10),
-		Size = UDim2.new(1, -20, 0, 30),
+		Position = UDim2.fromOffset(8, 8),
+		Size = UDim2.new(1, -16, 0, 34),
 	})
-	U.corner(searchRoot, 8)
+	U.corner(searchRoot, 9)
 	local searchStroke = U.stroke(searchRoot, T.Stroke, 0.7, 1)
-	U.icon(searchRoot, "magnifying-glass", 11, T.Faint, {
+	U.icon(searchRoot, "magnifying-glass", 12, T.Faint, {
 		Position = UDim2.fromOffset(9, 0),
-		Size = UDim2.fromOffset(13, 30),
+		Size = UDim2.fromOffset(14, 34),
 		TextTransparency = 0.2,
 	})
 	local searchBox = U.new("TextBox", {
@@ -19271,14 +19578,14 @@ function MusicPage.Build(page, config)
 		BorderSizePixel = 0,
 		Font = F.Regular,
 		Text = "",
-		PlaceholderText = "搜索网易云歌曲、歌手...",
+		PlaceholderText = M.Settings.provider == "kugou" and "搜索酷狗歌曲、歌手..." or "搜索网易云歌曲、歌手...",
 		PlaceholderColor3 = T.Faint,
 		TextColor3 = T.Text,
-		TextSize = 9.5,
+		TextSize = 10.5,
 		ClearTextOnFocus = false,
 		TextXAlignment = Enum.TextXAlignment.Left,
-		Position = UDim2.fromOffset(26, 0),
-		Size = UDim2.new(1, -34, 1, 0),
+		Position = UDim2.fromOffset(28, 0),
+		Size = UDim2.new(1, -36, 1, 0),
 	}, searchRoot)
 	U.connect(searchBox.Focused, function()
 		U.tween(searchRoot, U.Tween.Fast, { BackgroundColor3 = T.FieldHover })
@@ -19289,12 +19596,83 @@ function MusicPage.Build(page, config)
 		searchStroke.Transparency = 0.7
 	end)
 
+	local function switchProvider(value)
+		if M.Settings.provider == value then
+			return
+		end
+		M.Settings.provider = value
+		M:Save()
+		M:_Emit("settings")
+		M.SearchIds = {}
+		M.SearchQuery = ""
+		state.query = ""
+		searchBox.Text = ""
+		searchBox.PlaceholderText = value == "kugou" and "搜索酷狗歌曲、歌手..." or "搜索网易云歌曲、歌手..."
+		if state.view.kind == "search" then
+			state.view = { kind = "home" }
+		end
+		renderRail()
+		renderMain()
+		notify("音乐", value == "kugou" and "已切换到酷狗音乐" or "已切换到网易云音乐", "music-note", T.Accent)
+	end
+	local function openProviderMenu(anchor)
+		UIHelpers.ContextMenu(anchor, {
+			{ Text = "网易云音乐" .. (M.Settings.provider ~= "kugou" and "  ·  当前" or ""), Callback = function() switchProvider("netease") end },
+			{ Text = "酷狗音乐" .. (M.Settings.provider == "kugou" and "  ·  当前" or ""), Callback = function() switchProvider("kugou") end },
+		})
+	end
+
+	local brandRow = U.frame(rail, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(8, 50),
+		Size = UDim2.new(1, -16, 0, 20),
+	})
+	U.icon(brandRow, "music-note", 11, T.Accent, {
+		Position = UDim2.fromOffset(4, 4),
+		Size = UDim2.fromOffset(12, 12),
+	})
+	U.label(brandRow, {
+		Text = "NERX MUSIC",
+		Font = F.Bold,
+		TextSize = 8.5,
+		TextColor3 = T.Muted,
+		TextTransparency = 0.1,
+		Position = UDim2.fromOffset(22, 3),
+		Size = UDim2.new(1, -92, 0, 14),
+	})
+	local brandHome = U.inputButton(brandRow, function()
+		setView({ kind = "home" })
+	end)
+	brandHome.Size = UDim2.new(1, -52, 1, 0)
+	local providerChip = U.frame(brandRow, {
+		BackgroundColor3 = T.White,
+		BackgroundTransparency = 0.94,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, 0, 0.5, 0),
+		Size = UDim2.fromOffset(46, 18),
+	})
+	U.corner(providerChip, 5)
+	U.stroke(providerChip, T.Stroke, 0.55, 1)
+	railUi.ProviderLabel = U.label(providerChip, {
+		Text = M.Settings.provider == "kugou" and "酷狗" or "网易云",
+		TextSize = 7.5,
+		TextColor3 = T.Text,
+		TextTransparency = 0.12,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Size = UDim2.fromScale(1, 1),
+	})
+	U.inputButton(providerChip, function()
+		openProviderMenu(providerChip)
+	end)
+
 	railScroll = U.new("ScrollingFrame", {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ClipsDescendants = true,
-		Position = UDim2.fromOffset(8, 84),
-		Size = UDim2.new(1, -16, 1, -140),
+		Position = UDim2.fromOffset(6, 80),
+		Size = UDim2.new(1, -12, 1, -180),
 		ScrollBarThickness = 2,
 		ScrollBarImageColor3 = T.Stroke,
 		ScrollBarImageTransparency = 0.5,
@@ -19305,18 +19683,46 @@ function MusicPage.Build(page, config)
 	}, rail)
 	U.list(railScroll, 1)
 
+	local settingsButton = U.frame(rail, {
+		BackgroundColor3 = T.Accent,
+		BackgroundTransparency = 0.88,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 8, 1, -62),
+		Size = UDim2.new(1, -16, 0, 28),
+	})
+	U.corner(settingsButton, 8)
+	U.stroke(settingsButton, T.Accent, 0.55, 1)
+	U.icon(settingsButton, "gear", 12, T.Accent, {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, -20, 0.5, 0),
+		Size = UDim2.fromOffset(12, 12),
+	})
+	U.label(settingsButton, {
+		Text = "设置",
+		TextSize = 10,
+		TextColor3 = T.Text,
+		TextTransparency = 0.08,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 8, 0.5, 0),
+		Size = UDim2.fromOffset(44, 14),
+	})
+	U.inputButton(settingsButton, function()
+		setView({ kind = "settings" })
+	end)
+
 	local account = glassPanel(rail, {
 		BackgroundColor3 = T.White,
 		BackgroundTransparency = 0.955,
 		AnchorPoint = Vector2.new(0, 1),
-		Position = UDim2.new(0, 10, 1, -10),
-		Size = UDim2.new(1, -20, 0, 44),
-		Radius = 8,
+		Position = UDim2.new(0, 8, 1, -8),
+		Size = UDim2.new(1, -16, 0, 46),
+		Radius = 9,
 	})
 	local avatar = U.frame(account, {
 		BackgroundColor3 = T.Accent,
 		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(8, 8),
+		Position = UDim2.fromOffset(8, 9),
 		Size = UDim2.fromOffset(28, 28),
 	})
 	U.corner(avatar, 999)
@@ -19334,17 +19740,38 @@ function MusicPage.Build(page, config)
 		TextSize = 9.5,
 		TextColor3 = T.Text,
 		TextTransparency = 0.08,
-		Position = UDim2.fromOffset(42, 7),
-		Size = UDim2.new(1, -50, 0, 14),
+		Position = UDim2.fromOffset(42, 8),
+		Size = UDim2.new(1, -100, 0, 14),
 	})
 	accountSubLabel = U.label(account, {
-		Text = "网易云音乐",
+		Text = "扫描 / Cookie 登录",
 		TextSize = 7.5,
 		TextColor3 = T.Muted,
 		TextTransparency = 0.4,
-		Position = UDim2.fromOffset(42, 21),
-		Size = UDim2.new(1, -50, 0, 12),
+		Position = UDim2.fromOffset(42, 23),
+		Size = UDim2.new(1, -100, 0, 12),
 	})
+	local accountChip = U.frame(account, {
+		BackgroundColor3 = T.White,
+		BackgroundTransparency = 0.94,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -7, 0.5, 0),
+		Size = UDim2.fromOffset(44, 20),
+	})
+	U.corner(accountChip, 6)
+	U.stroke(accountChip, T.Stroke, 0.55, 1)
+	railUi.AccountProvider = U.label(accountChip, {
+		Text = M.Settings.provider == "kugou" and "酷狗" or "网易云",
+		TextSize = 7,
+		TextColor3 = T.Muted,
+		TextTransparency = 0.15,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Size = UDim2.fromScale(1, 1),
+	})
+	U.inputButton(accountChip, function()
+		openProviderMenu(accountChip)
+	end)
 	local accountInput = U.inputButton(account, function()
 		openLogin()
 	end)
@@ -19368,11 +19795,11 @@ function MusicPage.Build(page, config)
 	-- -----------------------------------------------------------------------------------
 	local playerBar = nativeCard(workspacePanel, {
 		AnchorPoint = Vector2.new(0, 1),
-		Position = UDim2.new(0, 6, 1, -4),
-		Size = UDim2.new(1, -12, 0, PLAYER_H),
-		BackgroundTransparency = 0.24,
+		Position = UDim2.new(0, 4, 1, -8),
+		Size = UDim2.new(1, -8, 0, PLAYER_H),
+		BackgroundTransparency = 0.22,
 		ZIndex = 20,
-	}, 12)
+	}, 17)
 	player.Root = playerBar
 	bloom(workspacePanel, T.Accent, 0.93, 0, {
 		AnchorPoint = Vector2.new(0, 1),
@@ -19392,12 +19819,12 @@ function MusicPage.Build(page, config)
 	local coverHolder = U.frame(playerBar, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(12, (PLAYER_H - 40) / 2 - 4),
-		Size = UDim2.fromOffset(36, 36),
+		Position = UDim2.fromOffset(14, (PLAYER_H - 40) / 2 - 5),
+		Size = UDim2.fromOffset(40, 40),
 	})
 	player.Cover = coverHolder
 	player.CoverHolder = coverHolder
-	player.CoverImage, player.CoverArt, player.CoverIcon = coverBox(coverHolder, UDim2.fromScale(1, 1), nil, 7, { IconSize = 14 })
+	player.CoverImage, player.CoverArt, player.CoverIcon = coverBox(coverHolder, UDim2.fromScale(1, 1), nil, 9, { IconSize = 14 })
 	local coverInput = U.inputButton(coverHolder, function()
 		openLyrics("page")
 	end)
@@ -19406,27 +19833,39 @@ function MusicPage.Build(page, config)
 	player.Title = U.label(playerBar, {
 		Text = "未播放",
 		Font = F.Bold,
-		TextSize = 10,
+		TextSize = 11,
 		TextColor3 = T.Text,
 		TextTransparency = 0.06,
-		Position = UDim2.fromOffset(55, 13),
-		Size = UDim2.fromOffset(math.clamp(WORK_W * 0.22, 100, 150), 14),
+		Position = UDim2.fromOffset(64, 14),
+		Size = UDim2.fromOffset(math.clamp(WORK_W * 0.12, 66, 80), 14),
 	})
 	player.Artist = U.label(playerBar, {
 		Text = "选择一首歌曲开始",
-		TextSize = 8,
+		TextSize = 8.5,
 		TextColor3 = T.Muted,
 		TextTransparency = 0.4,
-		Position = UDim2.fromOffset(55, 27),
-		Size = UDim2.fromOffset(math.clamp(WORK_W * 0.22, 100, 150), 12),
+		Position = UDim2.fromOffset(64, 29),
+		Size = UDim2.fromOffset(math.clamp(WORK_W * 0.12, 66, 80), 12),
 	})
+	player.LikeIcon = iconButton(playerBar, 20, "heart", function()
+		if M.CurrentId then
+			local _, liked = M:ToggleLike(M.CurrentId)
+			notify("音乐", liked and "已添加到我喜欢的音乐" or "已取消喜欢", "heart", liked and T.Pink or T.Muted, 0.5)
+			renderPlayer()
+		end
+	end)
+	player.LikeIcon.Parent.Position = UDim2.fromOffset(148, (PLAYER_H - 22) / 2)
+	player.AddIcon = iconButton(playerBar, 20, "plus", function(anchor)
+		openAddToPlaylist(anchor, M.CurrentId)
+	end)
+	player.AddIcon.Parent.Position = UDim2.fromOffset(172, (PLAYER_H - 22) / 2)
 
 	local controls = U.frame(playerBar, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, -10, 0, 10),
-		Size = UDim2.fromOffset(158, 30),
+		Position = UDim2.new(0.5, -6, 0, 5),
+		Size = UDim2.fromOffset(144, 36),
 	})
 	player.Controls = controls
 	local controlX = 0
@@ -19436,22 +19875,23 @@ function MusicPage.Build(page, config)
 		notify("音乐", value and "乱序播放：开" or "乱序播放：关", "two-arrows-switch-right", value and T.Accent or T.Muted)
 		renderPlayer()
 	end)
-	player.ShuffleIcon.Parent.Position = UDim2.fromOffset(controlX, 6)
+	player.ShuffleIcon.Parent.Position = UDim2.fromOffset(controlX, 9)
 	controlX = controlX + 22
 	player.PrevIcon = iconButton(controls, 22, "skip-previous-large", function()
 		M:Prev()
 	end)
-	player.PrevIcon.Parent.Position = UDim2.fromOffset(controlX, 4)
+	player.PrevIcon.Parent.Position = UDim2.fromOffset(controlX, 7)
 	controlX = controlX + 26
 	local playButton = U.frame(controls, {
-		BackgroundColor3 = T.Accent,
-		BackgroundTransparency = 0,
+		BackgroundColor3 = T.White,
+		BackgroundTransparency = 0.9,
 		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(controlX, 1),
-		Size = UDim2.fromOffset(28, 28),
+		Size = UDim2.fromOffset(34, 34),
 	})
-	U.corner(playButton, 14)
-	player.PlayIcon = U.icon(playButton, "play-small", 13, accentText(), {
+	U.corner(playButton, 17)
+	U.stroke(playButton, T.White, 0.8, 1)
+	player.PlayIcon = U.icon(playButton, "play-small", 16, T.Text, {
 		Size = UDim2.fromScale(1, 1),
 		TextTransparency = 0.02,
 	})
@@ -19470,71 +19910,49 @@ function MusicPage.Build(page, config)
 	end)
 	U.pressFx(playInput, playButton, 0.92)
 	U.connect(playInput.MouseEnter, function()
-		U.tween(playButton, U.Tween.Fast, { BackgroundTransparency = 0.12 })
+		U.tween(playButton, U.Tween.Fast, { BackgroundTransparency = 0.84 })
 	end)
 	U.connect(playInput.MouseLeave, function()
-		U.tween(playButton, U.Tween.Fast, { BackgroundTransparency = 0 })
+		U.tween(playButton, U.Tween.Fast, { BackgroundTransparency = 0.9 })
 	end)
-	controlX = controlX + 32
+	controlX = controlX + 40
 	player.NextIcon = iconButton(controls, 22, "skip-next-large", function()
 		M:Next(true)
 	end)
-	player.NextIcon.Parent.Position = UDim2.fromOffset(controlX, 4)
+	player.NextIcon.Parent.Position = UDim2.fromOffset(controlX, 7)
 	controlX = controlX + 26
-	player.RepeatIcon = iconButton(controls, 18, "two-arrows-loop-clockwise", function()
-		local mode = M.Settings.mode
-		if mode == "order" then
-			M:SetMode("all")
-			notify("音乐", "列表循环", "two-arrows-loop-clockwise", T.Accent)
-		elseif mode == "all" then
-			M:SetMode("one")
-			notify("音乐", "单曲循环", "two-arrows-loop-clockwise-1", T.Accent)
-		else
-			M:SetMode("order")
-			notify("音乐", "顺序播放", "two-arrows-loop-clockwise", T.Muted)
-		end
-		renderPlayer()
+	player.QueueIcon = iconButton(controls, 18, "rectangle-list", function()
+		setView({ kind = "queue" })
 	end)
-	player.RepeatIcon.Parent.Position = UDim2.fromOffset(controlX, 6)
+	player.QueueIcon.Parent.Position = UDim2.fromOffset(controlX, 9)
 
 	local rightCluster = U.frame(playerBar, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -10, 0, 12),
-		Size = UDim2.fromOffset(190, 26),
+		Position = UDim2.new(1, -12, 0, 12),
+		Size = UDim2.fromOffset(188, 26),
 	})
 	local rightX = 0
-	player.LikeIcon = iconButton(rightCluster, 20, "heart", function()
-		if M.CurrentId then
-			local _, liked = M:ToggleLike(M.CurrentId)
-			notify("音乐", liked and "已添加到我喜欢的音乐" or "已取消喜欢", "heart", liked and T.Pink or T.Muted, 0.5)
-			renderPlayer()
-		end
-	end)
-	player.LikeIcon.Parent.Position = UDim2.fromOffset(rightX, 3)
-	rightX = rightX + 22
-	player.LyricsIcon = iconButton(rightCluster, 20, "document-list-heart", function()
-		openLyrics("page")
-	end)
-	player.LyricsIcon.Parent.Position = UDim2.fromOffset(rightX, 3)
-	rightX = rightX + 22
-	player.QueueIcon = iconButton(rightCluster, 20, "rectangle-list", function()
-		setView({ kind = "queue" })
-	end)
-	player.QueueIcon.Parent.Position = UDim2.fromOffset(rightX, 3)
-	rightX = rightX + 22
-	local qualityLabel = U.label(rightCluster, {
-		Text = "无损",
-		TextSize = 7.5,
+	local qualityChip = U.frame(rightCluster, {
+		BackgroundColor3 = T.White,
+		BackgroundTransparency = 0.96,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(rightX, 1),
+		Size = UDim2.fromOffset(56, 24),
+	})
+	U.corner(qualityChip, 6)
+	U.stroke(qualityChip, T.Stroke, 0.55, 1)
+	local qualityLabel = U.label(qualityChip, {
+		Text = "无损  ⌄",
+		TextSize = 8,
 		TextColor3 = T.Muted,
-		TextTransparency = 0.4,
+		TextTransparency = 0.25,
 		TextXAlignment = Enum.TextXAlignment.Center,
-		Position = UDim2.fromOffset(rightX, 0),
-		Size = UDim2.fromOffset(34, 26),
+		Size = UDim2.fromScale(1, 1),
 	})
 	player.QualityLabel = qualityLabel
-	local qualityInput = U.inputButton(rightCluster, function(anchor)
+	local qualityInput = U.inputButton(qualityChip, function(anchor)
 		local items = {}
 		for _, entry in ipairs(M.Qualities) do
 			items[#items + 1] = {
@@ -19550,9 +19968,28 @@ function MusicPage.Build(page, config)
 		end
 		UIHelpers.ContextMenu(qualityInput, items)
 	end)
-	qualityInput.Position = UDim2.fromOffset(rightX, 0)
-	qualityInput.Size = UDim2.fromOffset(34, 26)
-	rightX = rightX + 36
+	rightX = rightX + 62
+	player.RepeatIcon = iconButton(rightCluster, 18, "two-arrows-loop-clockwise", function()
+		local mode = M.Settings.mode
+		if mode == "order" then
+			M:SetMode("all")
+			notify("音乐", "列表循环", "two-arrows-loop-clockwise", T.Accent)
+		elseif mode == "all" then
+			M:SetMode("one")
+			notify("音乐", "单曲循环", "two-arrows-loop-clockwise-1", T.Accent)
+		else
+			M:SetMode("order")
+			notify("音乐", "顺序播放", "two-arrows-loop-clockwise", T.Muted)
+		end
+		renderPlayer()
+	end)
+	player.RepeatIcon.Parent.Position = UDim2.fromOffset(rightX, 5)
+	rightX = rightX + 22
+	player.LyricsIcon = iconButton(rightCluster, 20, "document-list-heart", function()
+		openLyrics("page")
+	end)
+	player.LyricsIcon.Parent.Position = UDim2.fromOffset(rightX, 3)
+	rightX = rightX + 24
 	local volumeWrap = U.frame(rightCluster, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
@@ -19749,10 +20186,10 @@ function MusicPage.Build(page, config)
 			BackgroundColor3 = active and T.Accent or T.White,
 			BackgroundTransparency = active and 0.9 or 1,
 			BorderSizePixel = 0,
-			Size = UDim2.new(1, 0, 0, 26),
+			Size = UDim2.new(1, 0, 0, 28),
 			LayoutOrder = order,
 		})
-		U.corner(item, 6)
+		U.corner(item, 7)
 		if active then
 			local bar = U.frame(item, {
 				BackgroundColor3 = T.Accent,
@@ -19782,7 +20219,7 @@ function MusicPage.Build(page, config)
 		end
 		U.label(item, {
 			Text = text,
-			TextSize = 10,
+			TextSize = 10.5,
 			TextColor3 = active and T.Text or T.Muted,
 			TextTransparency = active and 0.02 or 0.15,
 			Position = UDim2.fromOffset(shift, 0),
@@ -19844,17 +20281,20 @@ function MusicPage.Build(page, config)
 		end
 		if accountSubLabel then
 			accountSubLabel.Text = nickname ~= ""
-				and "网易云音乐 · 已登录"
-				or (M.Settings.cookie ~= "" and "网易云音乐 · Cookie" or "网易云音乐")
+				and ((M.Settings.provider == "kugou" and "酷狗" or "网易云") .. " · 已登录")
+				or "扫描 / Cookie 登录"
 		end
+		if railUi.ProviderLabel then
+			railUi.ProviderLabel.Text = M.Settings.provider == "kugou" and "酷狗" or "网易云"
+		end
+		if railUi.AccountProvider then
+			railUi.AccountProvider.Text = M.Settings.provider == "kugou" and "酷狗" or "网易云"
+		end
+		searchBox.PlaceholderText = M.Settings.provider == "kugou" and "搜索酷狗歌曲、歌手..." or "搜索网易云歌曲、歌手..."
 		if accountAvatarLabel then
 			accountAvatarLabel.Text = nickname ~= "" and string.upper(string.sub(nickname, 1, 1)) or "N"
 		end
 
-		railSection(railScroll, "发现", nextOrder())
-		railItem(nextOrder(), "house", "主页", nil, state.view.kind == "home", function()
-			setView({ kind = "home" })
-		end)
 		railItem(nextOrder(), "chart-line", "排行榜", nil, state.view.kind == "charts", function()
 			setView({ kind = "charts" })
 		end)
@@ -21057,8 +21497,8 @@ function MusicPage.Build(page, config)
 		if state.searchTab == "songs" then
 			local ids = currentIds()
 			if #ids == 0 then
-				local detail = M.Searching and "正在搜索网易云..." or (M.SearchError or "没有找到匹配的歌曲")
-				emptyState(parent, "cloud", M.Searching and "正在搜索网易云..." or "没有找到匹配的歌曲", detail,
+				local detail = M.Searching and ("正在搜索" .. (M.Settings.provider == "kugou" and "酷狗" or "网易云") .. "...") or (M.SearchError or "没有找到匹配的歌曲")
+				emptyState(parent, "cloud", M.Searching and ("正在搜索" .. (M.Settings.provider == "kugou" and "酷狗" or "网易云") .. "...") or "没有找到匹配的歌曲", detail,
 					M.Searching and nil or "重试", M.Searching and nil or function() M:SearchNetease(state.query) end).Position = UDim2.fromOffset(0, 104)
 				return
 			end
@@ -22020,7 +22460,7 @@ function MusicPage.Build(page, config)
 		U.connect(rightContent:GetPropertyChangedSignal("AbsoluteSize"), fitSettingsContent)
 
 		if state.settingsTab == "lyrics" then
-			local card, addRow = settingsCard(leftContent, "通用歌词", "同时应用到菜单歌词和世界 3D 歌词。", 1)
+			local card, addRow = settingsCard(leftContent, "文字排版", "改变排版、行距与偏移设置。", 1)
 			rangeRow(card, addRow, "字号", "主歌词大小", "fontSize", 18, 48, 1, "px")
 			segRow(card, addRow, "字体", "Gotham / Builder / 像素", "lyricsFont", {
 				{ Value = "smooth", Label = "平滑" },
@@ -22055,7 +22495,7 @@ function MusicPage.Build(page, config)
 			toggleRow(card2, addRow2, "显示翻译", "在主歌词下方显示翻译", "showTranslation")
 			toggleRow(card2, addRow2, "发光", "当前行与高亮词的辉光", "glow")
 
-			local card3, addRow3 = settingsCard(leftContent, "菜单内 · 沉浸歌词", "在菜单里观看的舞台歌词，不是游戏内投影。", 2)
+			local card3, addRow3 = settingsCard(leftContent, "沉浸舞台", "歌词跟随舞台灯光，封面与播放控件在歌词页。", 2)
 			toggleRow(card3, addRow3, "3D 纵深", "歌词前后分层、近大远小", "immersive3d")
 			rangeRow(card3, addRow3, "背景压暗", "让歌词更聚焦", "immersiveDim", 0, 100, 1, "%")
 			buttonRow(card3, addRow3, "预览", "不播放也能看效果", {
@@ -22063,7 +22503,7 @@ function MusicPage.Build(page, config)
 				{ Text = "沉浸歌词", Icon = "eye", Primary = true, Callback = function() openLyrics("immersive") end },
 			})
 
-			local card4, addRow4 = settingsCard(rightContent, "游戏内 · 世界 3D 歌词", "歌词投影到游戏世界的空间里。", 2)
+			local card4, addRow4 = settingsCard(rightContent, "投影", "决定歌词出现在玩家视野中的位置。", 2)
 			toggleRow(card4, addRow4, "在世界中显示", "关闭菜单后也在世界里显示", "worldLyrics", function()
 				syncWorld(true)
 			end)
@@ -22084,7 +22524,7 @@ function MusicPage.Build(page, config)
 				scheduleWorldSync(0.05)
 			end)
 
-			local card5, addRow5 = settingsCard(leftContent, "世界 3D 观感", "世界内歌词的渲染效果。", 3)
+			local card5, addRow5 = settingsCard(leftContent, "观感", "世界内歌词的渲染效果。", 3)
 			rangeRow(card5, addRow5, "发光强度", "当前行与高亮词的辉光", "worldGlow", 0, 100, 1, "%", function()
 				scheduleWorldSync(0.05)
 			end)
@@ -22138,7 +22578,22 @@ function MusicPage.Build(page, config)
 			hotkeyRow(card4, addRow4, "音量 -", "volDown")
 			hotkeyRow(card4, addRow4, "歌词", "lyrics")
 
-			local card5, addRow5 = settingsCard(leftContent, "网易云", "账号、推荐、缓存与导入。", 3)
+			local card5, addRow5 = settingsCard(leftContent, "音源与账号", "网易云 / 酷狗搜索来源、账号、推荐、缓存与导入。", 3)
+			segRow(card5, addRow5, "音源", "搜索与播放来源", "provider", {
+				{ Value = "netease", Label = "网易云" },
+				{ Value = "kugou", Label = "酷狗" },
+			}, function(value)
+				M.SearchIds = {}
+				M.SearchQuery = ""
+				state.query = ""
+				searchBox.Text = ""
+				searchBox.PlaceholderText = value == "kugou" and "搜索酷狗歌曲、歌手..." or "搜索网易云歌曲、歌手..."
+				if state.view.kind == "search" then
+					state.view = { kind = "home" }
+				end
+				renderRail()
+				renderMain()
+			end)
 			buttonRow(card5, addRow5, "账号", M.Settings.cookie ~= "" and ("已登录：" .. (M.Settings.nickname ~= "" and M.Settings.nickname or "Cookie")) or "未登录", {
 				{ Text = M.Settings.cookie ~= "" and "切换账号" or "登录", Icon = "person-standing", Primary = true, Callback = function() openLogin() end },
 				{ Text = "退出", Icon = "x-small", Callback = function()
@@ -22319,7 +22774,7 @@ function MusicPage.Build(page, config)
 			end
 		end
 		if player.QualityLabel then
-			player.QualityLabel.Text = qualityName
+			player.QualityLabel.Text = qualityName .. "  ⌄"
 		end
 		if player.VolumeSlider then
 			if not state.volumeDragging then
@@ -23072,11 +23527,29 @@ function MusicPage.Build(page, config)
 				lyrics.Hint.Visible = true
 				return
 			end
+		elseif track.source == "kugou" then
+			if track.lyrics == "" and not track.lyricsLoaded and not track.lyricsLoading then
+				M:FetchKugouLyrics(track.id)
+			end
+			if track.lyricsLoading then
+				lyrics.Dots.Visible = true
+				lyrics.Hint.Text = "正在获取酷狗歌词..."
+				lyrics.Hint.Visible = true
+				return
+			end
+			if track.lyrics == "" and track.lyricsError then
+				lyrics.Dots.Visible = false
+				lyrics.Hint.Text = "酷狗歌词获取失败：" .. tostring(track.lyricsError)
+				lyrics.Hint.Visible = true
+				return
+			end
 		end
 		local entries = M:ParseLyrics(track)
 		if #entries == 0 then
 			lyrics.Dots.Visible = false
-			lyrics.Hint.Text = track.source == "netease" and "网易云暂无歌词" or "暂无歌词 · 关闭后可右键歌曲导入 LRC"
+			lyrics.Hint.Text = (track.source == "netease" and "网易云暂无歌词")
+				or (track.source == "kugou" and "酷狗暂无歌词")
+				or "暂无歌词 · 关闭后可右键歌曲导入 LRC"
 			lyrics.Hint.Visible = true
 			return
 		end
@@ -23413,6 +23886,8 @@ function MusicPage.Build(page, config)
 		end
 		if track.source == "netease" and track.lyrics == "" and not track.lyricsLoaded and not track.lyricsLoading then
 			M:FetchNeteaseLyrics(track.id)
+		elseif track.source == "kugou" and track.lyrics == "" and not track.lyricsLoaded and not track.lyricsLoading then
+			M:FetchKugouLyrics(track.id)
 		end
 		local entries = M:ParseLyrics(track)
 		local trackChanged = world.TrackId ~= track.id
