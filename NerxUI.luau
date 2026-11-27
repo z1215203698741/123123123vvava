@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v2.1.0
+	Nerx UI Library · v2.1.1
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "2.1.0"
+Nerx.Version = "2.1.1"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -15538,7 +15538,49 @@ local function musicNcmHeaders(cookie)
 	return headers
 end
 
+-- Returns a `name=value; name=value` cookie string (without attributes) from
+-- either a set-cookie header, an array of header lines or a cookie dictionary.
+function Music:_CookieStringFromHeaders(headers)
+	local parts = {}
+	local known = { NMTID = true, MUSIC_U = true, MUSIC_A = true, ["__csrf"] = true }
+	local function addLine(line)
+		line = tostring(line or "")
+		local pair = line:match("^%s*([^=;%s]+=[^;]*)")
+		if pair then
+			parts[#parts + 1] = pair:gsub("%s+$", "")
+		end
+	end
+	if type(headers) == "string" then
+		addLine(headers)
+	elseif type(headers) == "table" then
+		for key, value in pairs(headers) do
+			local keyText = tostring(key)
+			if type(value) == "string" then
+				local lower = keyText:lower()
+				if lower == "set-cookie" or lower == "cookie" then
+					addLine(value)
+				elseif known[keyText] then
+					parts[#parts + 1] = keyText .. "=" .. value
+				elseif keyText:match("^%d+$") then
+					addLine(value)
+				end
+			elseif type(value) == "table" then
+				for _, line in ipairs(value) do
+					addLine(line)
+				end
+			end
+		end
+	end
+	if #parts > 0 then
+		return table.concat(parts, "; ")
+	end
+	return nil
+end
+
 function Music:_CookieFromHeaders(headers)
+	if type(headers) == "string" then
+		return string.match(headers, "MUSIC_U=([^;%s\"}]+)")
+	end
 	if type(headers) ~= "table" then
 		return nil
 	end
@@ -15549,9 +15591,16 @@ function Music:_CookieFromHeaders(headers)
 		if type(value) == "table" and type(value["MUSIC_U"]) == "string" and value["MUSIC_U"] ~= "" then
 			return value["MUSIC_U"]
 		end
-		if type(key) == "string" and string.lower(key) == "set-cookie" then
-			local text = type(value) == "table" and table.concat(value, "\n") or tostring(value)
-			local token = string.match(text, "MUSIC_U=([^;%s]+)")
+		-- Some executors return headers as an array of "Name: value" lines or
+		-- fold every Set-Cookie into one value; scan all values for MUSIC_U.
+		if type(value) == "string" then
+			local token = string.match(value, "MUSIC_U=([^;%s\"}]+)")
+			if token and token ~= "" then
+				return token
+			end
+		elseif type(value) == "table" then
+			local text = table.concat(value, "\n")
+			local token = string.match(text, "MUSIC_U=([^;%s\"}]+)")
 			if token and token ~= "" then
 				return token
 			end
@@ -16375,21 +16424,32 @@ function Music:SearchKugou(keyword, callback)
 		return
 	end
 	task.spawn(function()
-		local url = "https://mobilecdn.kugou.com/api/v3/search/song?format=json&keyword="
+		local headers = {
+			["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+			["Referer"] = "https://m.kugou.com/",
+			["Accept"] = "application/json",
+		}
+		local path = "/api/v3/search/song?format=json&keyword="
 			.. musicUrlEncode(keyword) .. "&page=1&pagesize=30&showtype=1"
-		local response = musicHttp({
-			Url = url,
-			Method = "GET",
-			Headers = {
-				["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
-				["Referer"] = "https://m.kugou.com/",
-				["Accept"] = "application/json",
-			},
-		}, 15)
+		local data
+		-- msearchretry has a valid TLS chain; mobilecdn is kept as a fallback
+		-- because some clients reject its certificate.
+		for _, host in ipairs({ "https://msearchretry.kugou.com", "https://mobilecdn.kugou.com" }) do
+			local response = musicHttp({
+				Url = host .. path,
+				Method = "GET",
+				Headers = headers,
+			}, 15)
+			data = response and response.body and Nerx.Storage:Decode(response.body) or nil
+			local items = data and data.data and data.data.info
+			if type(items) == "table" and #items > 0 then
+				break
+			end
+			data = nil
+		end
 		if self.SearchQuery ~= keyword then
 			return
 		end
-		local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
 		local items = data and data.data and data.data.info
 		local ids = {}
 		if type(items) == "table" then
@@ -16910,6 +16970,55 @@ function Music:_GetJson(url, headers, timeout)
 	return Nerx.Storage:Decode(response.body), response
 end
 
+-- HttpService:JSONEncode turns an empty Lua table into `[]`, but QQ expects
+-- `{}` for empty `param` objects (GetAll / GetLoginUserInfo). This small
+-- encoder treats non-empty sequential tables as arrays and everything else as
+-- objects, so empty objects stay objects.
+function Music:JsonEncode(value)
+	local valueType = type(value)
+	if valueType == "table" then
+		local count = 0
+		local isArray = true
+		for key in pairs(value) do
+			count = count + 1
+			if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then
+				isArray = false
+				break
+			end
+		end
+		if isArray and count > 0 then
+			local parts = {}
+			for index = 1, count do
+				parts[index] = self:JsonEncode(value[index])
+			end
+			return "[" .. table.concat(parts, ",") .. "]"
+		end
+		local parts = {}
+		for key, item in pairs(value) do
+			parts[#parts + 1] = self:JsonEncode(tostring(key)) .. ":" .. self:JsonEncode(item)
+		end
+		return "{" .. table.concat(parts, ",") .. "}"
+	elseif valueType == "string" then
+		local escaped = value:gsub('[%c\\"]', function(char)
+			if char == "\\" then
+				return "\\\\"
+			elseif char == '"' then
+				return '\\"'
+			end
+			return string.format("\\u%04x", string.byte(char))
+		end)
+		return '"' .. escaped .. '"'
+	elseif valueType == "number" then
+		if value ~= value or value == math.huge or value == -math.huge then
+			return "0"
+		end
+		return tostring(value)
+	elseif valueType == "boolean" then
+		return value and "true" or "false"
+	end
+	return "null"
+end
+
 function Music:_QqApi(module, method, param, timeout)
 	local comm = { ct = 19, cv = 2201 }
 	local key = tostring(self.Settings.qqKey or "")
@@ -16918,9 +17027,9 @@ function Music:_QqApi(module, method, param, timeout)
 		comm.uin = uin
 		comm.authst = key
 		comm["g_tk"] = self:Hash33(key)
-		comm.tmeLoginType = 2
+		comm.tmeLoginType = key:sub(1, 2) == "W_" and 1 or 2
 	end
-	local body = Nerx.Storage:Encode({
+	local body = self:JsonEncode({
 		comm = comm,
 		req_0 = {
 			module = module,
@@ -16931,16 +17040,32 @@ function Music:_QqApi(module, method, param, timeout)
 	if type(body) ~= "string" or body == "" then
 		return nil
 	end
+	local headers = {
+		["Content-Type"] = "application/json",
+		["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
+		["Referer"] = "https://y.qq.com/",
+		["Accept"] = "application/json",
+	}
+	-- QQ validates the logged-in session from the Cookie header as well as
+	-- comm.authst; without this GetLoginUserInfo rejects a perfectly good key.
+	if key ~= "" and uin ~= "" then
+		local cookieHeader = tostring(self.Settings.qqCookie or "")
+		if cookieHeader == "" or not cookieHeader:find("=", 1, true) then
+			cookieHeader = "qqmusic_key=" .. key .. "; qqmusic_uin=" .. uin .. "; uin=" .. uin
+		end
+		if not cookieHeader:find("qqmusic_key=", 1, true) then
+			cookieHeader = cookieHeader .. "; qqmusic_key=" .. key
+		end
+		if not cookieHeader:find("qqmusic_uin=", 1, true) then
+			cookieHeader = cookieHeader .. "; qqmusic_uin=" .. uin
+		end
+		headers["Cookie"] = cookieHeader
+	end
 	local response = musicHttp({
 		Url = "https://u.y.qq.com/cgi-bin/musicu.fcg",
 		Method = "POST",
 		Body = body,
-		Headers = {
-			["Content-Type"] = "application/json",
-			["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
-			["Referer"] = "https://y.qq.com/",
-			["Accept"] = "application/json",
-		},
+		Headers = headers,
 	}, timeout or 15)
 	if not response or not response.body then
 		return nil
@@ -16993,12 +17118,66 @@ function Music:_EnsureProviderPlaylist(id, kind, meta)
 	return playlist
 end
 
+-- gateway.kugou.com has a complete TLS chain; mobilecdn.kugou.com's chain is
+-- rejected by some clients (including the executor's HTTP stack), which is why
+-- the chart page used to stay empty.
+function Music:_KugouGatewayGet(path, values, timeout)
+	local device = self:KugouDevice()
+	local mid = self:HexToDecimal(self:Md5(device))
+	local clienttime = tostring(math.floor(os.time()))
+	local params = {
+		appid = "1005",
+		clientver = "20489",
+		clienttime = clienttime,
+		dfid = "-",
+		mid = mid,
+		uuid = device,
+		userid = self.Settings.kugouUserId ~= "" and self.Settings.kugouUserId or "0",
+		token = self.Settings.kugouToken or "",
+	}
+	for key, value in pairs(values or {}) do
+		params[key] = tostring(value)
+	end
+	params.signature = self:KgSign(params, "OIlwieks28dk2k092lksi2UIkp")
+	local query = {}
+	for key, value in pairs(params) do
+		query[#query + 1] = musicUrlEncode(key) .. "=" .. musicUrlEncode(value)
+	end
+	local response = musicHttp({
+		Url = "https://gateway.kugou.com" .. path .. "?" .. table.concat(query, "&"),
+		Method = "GET",
+		Headers = {
+			["User-Agent"] = "Android15-AndroidPhone-20489-46-0-wifi",
+			["mid"] = mid,
+			["dfid"] = "-",
+			["clienttime"] = clienttime,
+			["kg-rc"] = "1",
+			["kg-rec"] = "1",
+			["kg-thash"] = "5d816a0",
+			["kg-rf"] = "B9EDA08A64250DEFFBCADDEE00F8F25F",
+			["Accept"] = "application/json",
+		},
+	}, timeout or 15)
+	if not response or not response.body then
+		return nil
+	end
+	return Nerx.Storage:Decode(response.body)
+end
+
 function Music:LoadKugouCharts()
-	local data = self:_GetJson("https://mobilecdn.kugou.com/api/v3/rank/list?plat=2&withsong=1&parentid=0", {
-		["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
-		["Referer"] = "https://m.kugou.com/",
+	local data = self:_KugouGatewayGet("/ocean/v6/rank/list", {
+		plat = 2,
+		withsong = 1,
+		parentid = 0,
 	}, 20)
 	local info = data and data.data and data.data.info
+	if type(info) ~= "table" or #info == 0 then
+		local fallback = self:_GetJson("https://mobilecdn.kugou.com/api/v3/rank/list?plat=2&withsong=1&parentid=0", {
+			["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+			["Referer"] = "https://m.kugou.com/",
+		}, 20)
+		info = fallback and fallback.data and fallback.data.info
+	end
 	local out = {}
 	if type(info) == "table" then
 			for _, item in ipairs(info) do
@@ -17254,11 +17433,23 @@ function Music:OpenKugouRank(rankId, meta, callback, force)
 	playlist.error = nil
 	self:_Emit("library", playlist)
 	task.spawn(function()
-		local data = self:_GetJson("https://mobilecdn.kugou.com/api/v3/rank/song?rankid=" .. rankId .. "&page=1&pagesize=100", {
-			["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
-			["Referer"] = "https://m.kugou.com/",
+		local data = self:_KugouGatewayGet("/ocean/v6/rank/song", {
+			rankid = rankId,
+			page = 1,
+			pagesize = 100,
 		}, 20)
 		local info = data and data.data and data.data.info
+		if type(info) ~= "table" or #info == 0 then
+			local fallback = self:_GetJson(
+				"https://mobilecdn.kugou.com/api/v3/rank/song?rankid=" .. rankId .. "&page=1&pagesize=100",
+				{
+					["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+					["Referer"] = "https://m.kugou.com/",
+				},
+				20
+			)
+			info = fallback and fallback.data and fallback.data.info
+		end
 		local ids = {}
 		if type(info) == "table" then
 			for _, item in ipairs(info) do
@@ -18003,7 +18194,9 @@ end
 -- cookie into the JSON body (`cookie` field), which every executor's HTTP
 -- layer preserves.
 Music.QrMirrors = {
+	"https://api.7boe.top",
 	"https://ncm-api.vercel.app",
+	"https://netease-cloud-music-api-gamma.vercel.app",
 	"https://netease-cloud-music-api-psi-seven.vercel.app",
 }
 
@@ -18088,6 +18281,8 @@ function Music:QrLoginStart(callback)
 	task.spawn(function()
 		local key = ""
 		local failure
+		self._QrBase = nil
+		self._QrCookie = ""
 		-- Mirror first: its QR check returns MUSIC_U inside the JSON body.
 		for _, base in ipairs(Music.QrMirrors) do
 			local mirror = musicMirrorJson(base, "/login/qr/key?timestamp=" .. musicTimestamp(), 15)
@@ -18096,6 +18291,7 @@ function Music:QrLoginStart(callback)
 				or ""
 			if string.match(candidate, "^[%w%-]+$") then
 				key = candidate
+				self._QrBase = base
 				break
 			end
 			if type(mirror) == "table" then
@@ -18104,7 +18300,7 @@ function Music:QrLoginStart(callback)
 		end
 		if key == "" then
 			local response = musicHttp({
-				Url = "https://music.163.com/api/login/qrcode/unikey?type=1",
+				Url = "https://music.163.com/api/login/qrcode/unikey?type=3",
 				Method = "POST",
 				Headers = musicNcmHeaders(""),
 				Body = "",
@@ -18113,6 +18309,13 @@ function Music:QrLoginStart(callback)
 			local candidate = data and tostring(data.unikey or "") or ""
 			if string.match(candidate, "^[%w%-]+$") then
 				key = candidate
+				-- Keep the NMTID the official endpoint set on the key request;
+				-- the QR session can be bound to it.
+				local rawCookie = self:_CookieStringFromHeaders(response and response.cookies)
+					or self:_CookieStringFromHeaders(response and response.headers)
+				if rawCookie and rawCookie ~= "" then
+					self._QrCookie = rawCookie
+				end
 			else
 				failure = (data and (data.message or data.msg)) or (response and response.error) or failure
 			end
@@ -18176,89 +18379,149 @@ function Music:QrLoginPoll(key, callback)
 	end
 	task.spawn(function()
 		local code, token
-		-- 1) Mirror check: the JSON body carries the whole cookie string, so
-		--    MUSIC_U arrives even when the executor drops Set-Cookie.
-		for _, base in ipairs(Music.QrMirrors) do
-			local data = musicMirrorJson(
-				base,
-				"/login/qr/check?key=" .. musicUrlEncode(key) .. "&timestamp=" .. musicTimestamp(),
-				12
-			)
-			if type(data) == "table" and tonumber(data.code) then
-				code = tonumber(data.code)
-				token = string.match(tostring(data.cookie or data.cookies or ""), "MUSIC_U=([^;%s\"}]+)")
-				if not token and type(data.data) == "table" then
-					token = string.match(tostring(data.data.cookie or ""), "MUSIC_U=([^;%s\"}]+)")
+		local function tokenFromCookieValue(value)
+			if type(value) == "table" then
+				local parts = {}
+				for _, item in ipairs(value) do
+					parts[#parts + 1] = tostring(item)
 				end
-				break
+				value = table.concat(parts, ";")
+			end
+			return string.match(tostring(value or ""), "MUSIC_U=([^;%s\"}]+)")
+		end
+		local function tokenFromData(data)
+			if type(data) ~= "table" then
+				return nil
+			end
+			local found = tokenFromCookieValue(data.cookie)
+				or tokenFromCookieValue(data.cookies)
+				or tokenFromCookieValue(data.session)
+			if not found and type(data.data) == "table" then
+				found = tokenFromCookieValue(data.data.cookie)
+					or tokenFromCookieValue(data.data.cookies)
+			end
+			if not found and type(data.data) == "string" then
+				found = string.match(data.data, "MUSIC_U=([^;%s\"}]+)")
+			end
+			return found
+		end
+		local function mirrorCheck(base)
+			local path = "/login/qr/check?key=" .. musicUrlEncode(key)
+				.. "&timestamp=" .. musicTimestamp()
+			if self._QrCookie and self._QrCookie ~= "" then
+				path = path .. "&cookie=" .. musicUrlEncode(self._QrCookie)
+			end
+			local data = musicMirrorJson(base, path, 20)
+			if type(data) == "table" then
+				local codeValue = tonumber(data.code)
+				if (not codeValue or codeValue == 200) and type(data.data) == "table" then
+					codeValue = tonumber(data.data.code) or codeValue
+				end
+				if codeValue then
+					if type(data.cookie) == "string" and data.cookie ~= "" then
+						self._QrCookie = data.cookie
+					elseif type(data.cookie) == "table" then
+						local parts = {}
+						for _, item in ipairs(data.cookie) do
+							parts[#parts + 1] = tostring(item)
+						end
+						self._QrCookie = table.concat(parts, ";")
+					end
+					return codeValue, tokenFromData(data)
+				end
+			end
+			return nil
+		end
+		-- 1) Mirror first, keeping the session cookie returned at 801 so the
+		--    final 803 response is tied to the same QR session.
+		if self._QrBase then
+			local mirrorCode, mirrorToken = mirrorCheck(self._QrBase)
+			if mirrorCode then
+				code, token = mirrorCode, mirrorToken
 			end
 		end
-		-- 2) Official endpoint fallback for networks where the mirror is down.
-		if not code then
-			local response = musicHttp({
-				Url = "https://music.163.com/api/login/qrcode/client/login?key=" .. musicUrlEncode(key) .. "&type=1",
+		if not code or (code == 803 and not token) then
+			for _, base in ipairs(Music.QrMirrors) do
+				if base ~= self._QrBase then
+					local mirrorCode, mirrorToken = mirrorCheck(base)
+					if mirrorCode then
+						-- Never downgrade a confirmed 803 back to 801/802.
+						if mirrorCode == 803 or not code then
+							code, token = mirrorCode, mirrorToken
+						end
+						if mirrorCode ~= 803 or mirrorToken then
+							break
+						end
+					end
+				end
+			end
+		end
+		-- 2) Official endpoint fallback. Try type 3 first (current web flow),
+		--    then type 1; a mirror can return 803 without exposing the cookie.
+		if not token then
+			local directHeaders = musicNcmHeaders("")
+			if self._QrCookie and self._QrCookie ~= "" then
+				directHeaders["Cookie"] = self._QrCookie .. "; " .. tostring(directHeaders["Cookie"] or "")
+			end
+			for _, qrType in ipairs({ 3, 1 }) do
+				local response = musicHttp({
+					Url = "https://music.163.com/api/login/qrcode/client/login?key=" .. musicUrlEncode(key) .. "&type=" .. tostring(qrType),
+					Method = "GET",
+					Headers = directHeaders,
+				}, 15)
+				local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
+				local rawCookie = self:_CookieStringFromHeaders(response and response.cookies)
+					or self:_CookieStringFromHeaders(response and response.headers)
+				if rawCookie and rawCookie ~= "" then
+					self._QrCookie = rawCookie
+				end
+				local directCode = tonumber(data and data.code) or 801
+				if directCode == 803 then
+					local directToken = self:_CookieFromHeaders(response and response.cookies)
+						or self:_CookieFromHeaders(response and response.headers)
+						or tokenFromData(data)
+						or (response and response.body and string.match(tostring(response.body), "MUSIC_U=([^;%s\"}]+)"))
+					if directToken then
+						code, token = 803, directToken
+						break
+					end
+					if not code then
+						code = 803
+					end
+				elseif not code then
+					code = directCode
+				end
+			end
+		end
+		-- 3) NetEase sometimes sets the login cookie on the request right after
+		--    the 803 confirmation; ask the primary mirror once more.
+		if code == 803 and not token and self._QrBase then
+			task.wait(0.8)
+			local retryCode, retryToken = mirrorCheck(self._QrBase)
+			if retryToken then
+				code, token = 803, retryToken
+			elseif not code and retryCode then
+				code = retryCode
+			end
+		end
+		if code == 803 and not token and type(altRequest) == "function" then
+			local altHeaders = musicNcmHeaders("")
+			if self._QrCookie and self._QrCookie ~= "" then
+				altHeaders["Cookie"] = self._QrCookie .. "; " .. tostring(altHeaders["Cookie"] or "")
+			end
+			local ok, alt = pcall(altRequest, {
+				Url = "https://music.163.com/api/login/qrcode/client/login?key=" .. musicUrlEncode(key) .. "&type=3",
 				Method = "GET",
-				Headers = musicNcmHeaders(""),
-			}, 15)
-			local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
-			code = tonumber(data and data.code) or 801
-			if code == 803 then
-				token = self:_CookieFromHeaders(response and response.cookies)
-				if not token then
-					token = self:_CookieFromHeaders(response and response.headers)
-				end
-				if not token and data then
-					local nested = type(data.data) == "table" and data.data or {}
-					token = string.match(
-						tostring(data.cookie or data.cookies or data.session or nested.cookie or nested.cookies or ""),
-						"MUSIC_U=([^;%s\"}]+)"
-					)
-					if not token and type(data.data) == "string" then
-						token = string.match(data.data, "MUSIC_U=([^;%s\"}]+)")
-					end
-				end
-				if not token and response and response.body then
-					token = string.match(tostring(response.body), "MUSIC_U=([^;%s\"}]+)")
-				end
-				if not token then
-					-- Some executors drop Set-Cookie on the first 803 response;
-					-- asking once more often returns the cookie header again.
-					task.wait(0.5)
-					local retry = musicHttp({
-						Url = "https://music.163.com/api/login/qrcode/client/login?key=" .. musicUrlEncode(key) .. "&type=1",
-						Method = "GET",
-						Headers = musicNcmHeaders(""),
-					}, 15)
-					token = self:_CookieFromHeaders(retry and retry.cookies)
-					if not token then
-						token = self:_CookieFromHeaders(retry and retry.headers)
-					end
-					if not token and retry and retry.body then
-						token = string.match(tostring(retry.body), "MUSIC_U=([^;%s\"}]+)")
-					end
-				end
-				if not token and type(altRequest) == "function" then
-					local ok, alt = pcall(altRequest, {
-						Url = "https://music.163.com/api/login/qrcode/client/login?key=" .. musicUrlEncode(key) .. "&type=1",
-						Method = "GET",
-						Headers = musicNcmHeaders(""),
-					})
-					if ok and type(alt) == "table" then
-						token = self:_CookieFromHeaders(alt.Cookies)
-						if not token then
-							token = self:_CookieFromHeaders(alt.cookies)
-						end
-						if not token then
-							token = self:_CookieFromHeaders(alt.Headers)
-						end
-						if not token then
-							token = self:_CookieFromHeaders(alt.headers)
-						end
-						local body = alt.Body or alt.body
-						if not token and body then
-							token = string.match(tostring(body), "MUSIC_U=([^;%s\"}]+)")
-						end
-					end
+				Headers = altHeaders,
+			})
+			if ok and type(alt) == "table" then
+				token = self:_CookieFromHeaders(alt.Cookies)
+					or self:_CookieFromHeaders(alt.cookies)
+					or self:_CookieFromHeaders(alt.Headers)
+					or self:_CookieFromHeaders(alt.headers)
+				local body = alt.Body or alt.body
+				if not token and body then
+					token = string.match(tostring(body), "MUSIC_U=([^;%s\"}]+)")
 				end
 			end
 		end
@@ -18550,7 +18813,12 @@ function Music:SetProviderCookie(text)
 		local key = text:match("qqmusic_key=([^;%s]+)")
 			or text:match("qm_keyst=([^;%s]+)")
 			or text:match("musickey=([^;%s]+)")
-		local uin = text:match("qqmusic_uin=(%d+)") or text:match("[;%s]uin=(%d+)") or text:match("^uin=(%d+)")
+		local uin = text:match("qqmusic_uin=o?(%d+)")
+			or text:match("[;%s]uin=o?(%d+)")
+			or text:match("^uin=o?(%d+)")
+			or text:match("luin=(%d+)")
+			or text:match("wxuin=(%d+)")
+			or text:match("p_uin=o?(%d+)")
 		if not key and not text:find("=", 1, true) and #text > 10 then
 			key = text
 		end
@@ -26502,7 +26770,7 @@ function MusicPage.Build(page, config)
 				Text = M.Settings.provider == "kugou"
 					and "浏览器登录 kugou.com → 开发者工具 → Application → Cookies → 复制 KuGoo（或 userid=...; token=...）。"
 					or (M.Settings.provider == "qq"
-						and "浏览器登录 y.qq.com → 开发者工具 → Application → Cookies → 复制 qqmusic_key 与 uin（可整段粘贴）。"
+						and "浏览器登录 y.qq.com → 开发者工具 → Application → Cookies → 复制 qqmusic_key 与 qqmusic_uin（或 uin），可整段粘贴。"
 						or "浏览器登录 music.163.com → 开发者工具 → Application → Cookies → 复制 MUSIC_U 的值。"),
 				TextSize = 8,
 				TextColor3 = T.Faint,
@@ -26519,7 +26787,7 @@ function MusicPage.Build(page, config)
 				Text = "",
 				PlaceholderText = M:ProviderLoggedIn() and "已保存 Cookie，输入新值覆盖"
 					or (M.Settings.provider == "kugou" and "KuGoo=... 或 userid=...; token=..."
-						or (M.Settings.provider == "qq" and "qqmusic_key=...; uin=..." or "MUSIC_U=...")),
+						or (M.Settings.provider == "qq" and "qqmusic_key=...; qqmusic_uin=..." or "MUSIC_U=...")),
 				PlaceholderColor3 = T.Faint,
 				TextColor3 = T.Text,
 				TextSize = 9,
@@ -26529,11 +26797,42 @@ function MusicPage.Build(page, config)
 				Size = UDim2.new(1, -100, 0, 30),
 			}, login.Body)
 			U.corner(cookieBox, 7)
+			local uinBox
+			if M.Settings.provider == "qq" then
+				U.label(login.Body, {
+					Text = "uin（QQ 号，若 Cookie 里没有 qqmusic_uin 时填写）",
+					TextSize = 8,
+					TextColor3 = T.Faint,
+					TextTransparency = 0.3,
+					Position = UDim2.fromOffset(0, 88),
+					Size = UDim2.new(1, 0, 0, 12),
+				})
+				uinBox = U.new("TextBox", {
+					BackgroundColor3 = T.FieldDeep,
+					BackgroundTransparency = 0.1,
+					BorderSizePixel = 0,
+					Font = F.Regular,
+					Text = tostring(M.Settings.qqUin or ""),
+					PlaceholderText = "例如 123456789",
+					PlaceholderColor3 = T.Faint,
+					TextColor3 = T.Text,
+					TextSize = 9,
+					ClearTextOnFocus = false,
+					TextXAlignment = Enum.TextXAlignment.Left,
+					Position = UDim2.fromOffset(0, 102),
+					Size = UDim2.new(1, -100, 0, 26),
+				}, login.Body)
+				U.corner(uinBox, 7)
+			end
 			local save = textButton(login.Body, 90, 30, "保存并验证", "circle-check", true, function()
 				local value = musicTrim(cookieBox.Text)
+				local uinValue = uinBox and musicTrim(uinBox.Text) or ""
 				if value == "" then
 					notify(M:ProviderName(), "请先粘贴 Cookie", "triangle-exclamation", T.Amber)
 					return
+				end
+				if M.Settings.provider == "qq" and uinValue ~= "" then
+					value = value .. "; qqmusic_uin=" .. uinValue
 				end
 				M:SetProviderCookie(value)
 				cookieBox.Text = ""
@@ -26551,14 +26850,14 @@ function MusicPage.Build(page, config)
 					end
 				end)
 			end)
-			save.Position = UDim2.new(1, -92, 0, 52)
+			save.Position = UDim2.new(1, -92, 0, uinBox and 100 or 52)
 			U.label(login.Body, {
 				Text = state.qrStatus ~= "" and state.qrStatus or "",
 				TextSize = 8.5,
 				TextColor3 = T.Faint,
 				TextTransparency = 0.2,
 				TextWrapped = true,
-				Position = UDim2.fromOffset(0, 90),
+				Position = UDim2.fromOffset(0, uinBox and 134 or 90),
 				Size = UDim2.new(1, 0, 0, 28),
 			})
 		end
