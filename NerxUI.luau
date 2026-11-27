@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.6.0
+	Nerx UI Library · v1.7.1
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.6.0"
+Nerx.Version = "1.7.1"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -4359,8 +4359,8 @@ function Nerx:CreateWindow(config)
 		ClipsDescendants = true,
 		Visible = true,
 	})
-	U.corner(root, 12)
-	U.stroke(root, Theme.Stroke, 0.55, 1)
+	U.corner(root, 14)
+	U.stroke(root, Theme.Stroke, 0.7, 1)
 	U.shadow(root, "soft")
 	local windowLight = U.frame(root, {
 		Name = "NerxWindowTopLight",
@@ -9437,9 +9437,9 @@ do
 		Grain = 0.40,
 		Sheen = 0.60,
 		Sweep = 0.35,
-		Dispersion = 0.50,
-		Outline = 0.70,
-		Thickness = 1.5,
+		Dispersion = 0.35,
+		Outline = 0.55,
+		Thickness = 1.0,
 		Radius = 12,
 		Press = 0.965,
 		Spring = 22,
@@ -9450,7 +9450,7 @@ do
 		Params = {},
 		Presets = {
 			Clear = { Blur = 0, Opacity = 0.20, Tint = 0.14, Grain = 0.20, Sheen = 0.35, Sweep = 0.18, Dispersion = 0.30, Outline = 0.50, Thickness = 1 },
-			Frosted = { Blur = 0, Opacity = 0.32, Tint = 0.25, Grain = 0.40, Sheen = 0.60, Sweep = 0.35, Dispersion = 0.50, Outline = 0.70, Thickness = 1.5 },
+			Frosted = { Blur = 0, Opacity = 0.32, Tint = 0.25, Grain = 0.40, Sheen = 0.60, Sweep = 0.35, Dispersion = 0.35, Outline = 0.55, Thickness = 1.0 },
 			Heavy = { Blur = 12, Opacity = 0.45, Tint = 0.38, Grain = 0.65, Sheen = 0.85, Sweep = 0.55, Dispersion = 0.75, Outline = 0.95, Thickness = 2 },
 		},
 		OnChanged = {},
@@ -15622,6 +15622,14 @@ local function musicBuildApiUrl(path)
 		return "https://music.163.com/api/search/get/web?csrf_token=&type=" .. searchType
 			.. "&offset=" .. (param("offset") or "0") .. "&total=true&s=" .. (param("keywords") or "")
 			.. "&limit=" .. (param("limit") or "30")
+	elseif base == "/cloudsearch" then
+		-- The legacy /search payload has an empty album.picUrl, which is why
+		-- search tracks showed generated gradient covers. cloudsearch/pc
+		-- returns al.picUrl for every song.
+		return "https://music.163.com/api/cloudsearch/pc?s=" .. (param("keywords") or "")
+			.. "&type=" .. (param("type") or "1")
+			.. "&offset=" .. (param("offset") or "0")
+			.. "&limit=" .. (param("limit") or "30")
 	elseif base == "/personalized" then
 		return "https://music.163.com/api/personalized/playlist?limit=" .. (param("limit") or "12")
 	elseif base == "/top/playlist" then
@@ -16238,7 +16246,7 @@ function Music:SearchNetease(keyword, callback)
 	self.SearchIds = {}
 	self:_Emit("search")
 	task.spawn(function()
-		local data = self:_ApiGet("/search?keywords=" .. musicUrlEncode(keyword) .. "&limit=30&offset=0", 120)
+		local data = self:_ApiGet("/cloudsearch?keywords=" .. musicUrlEncode(keyword) .. "&type=1&limit=30&offset=0", 120)
 		if self.SearchQuery ~= keyword then
 			return
 		end
@@ -16872,9 +16880,22 @@ function Music:QrLoginStart(callback)
 			asset = self:_Asset(qrPath)
 		end
 		if not asset then
-			local ok = self:_DownloadFile("https://music.163.com/qrcode/" .. key .. "?type=1", qrPath, 20)
-			if ok then
-				asset = self:_Asset(qrPath)
+			-- NetEase's /qrcode/<key> endpoint now returns 404, so render the
+			-- login URL (same content the web client encodes) through a QR
+			-- image service, with a second provider as fallback.
+			local loginUrl = "https://music.163.com/login?codekey=" .. key
+			local encoded = musicUrlEncode(loginUrl)
+			local candidates = {
+				"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=" .. encoded,
+				"https://quickchart.io/qr?size=300&text=" .. encoded,
+			}
+			for _, url in ipairs(candidates) do
+				if self:_DownloadFile(url, qrPath, 20) then
+					asset = self:_Asset(qrPath)
+					if asset then
+						break
+					end
+				end
 			end
 		end
 		if callback then
@@ -18184,6 +18205,30 @@ function MusicPage.Build(page, config)
 		return row
 	end
 
+	-- The ESP glow sheet (9-slice, soft rounded halo) — the same technique the
+	-- user's gamesense ESP uses under its boxes. Much closer to real bloom than
+	-- flat circles or multiple strokes.
+	local GLOW_TEXTURE = "rbxassetid://110204605000367"
+	local function bloom(parent, color, transparency, padding, props)
+		props = props or {}
+		local pad = padding or 24
+		return U.new("ImageLabel", {
+			Name = "NerxBloom",
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Image = GLOW_TEXTURE,
+			ImageColor3 = color or T.Accent,
+			ImageTransparency = transparency or 0.88,
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(21, 21, 79, 79),
+			AnchorPoint = props.AnchorPoint or Vector2.new(0, 0),
+			Position = props.Position or UDim2.fromOffset(-pad, -pad),
+			Size = props.Size or UDim2.new(1, pad * 2, 1, pad * 2),
+			Visible = props.Visible ~= false,
+			ZIndex = props.ZIndex or 0,
+		}, parent)
+	end
+
 	local function coverBox(parent, size, source, radius, options)
 		options = options or {}
 		local c1, c2 = sourceColors(source)
@@ -18639,12 +18684,12 @@ function MusicPage.Build(page, config)
 		ClipsDescendants = true,
 		ZIndex = 0,
 	})
-	U.corner(stage, 16)
-	U.stroke(stage, T.Stroke, 0.5, 1)
+	U.corner(stage, 18)
+	U.stroke(stage, T.Stroke, 0.7, 1)
 	local stageGradient = Instance.new("UIGradient")
 	stageGradient.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, T.Window),
-		ColorSequenceKeypoint.new(0.52, T.Main),
+		ColorSequenceKeypoint.new(0, T.Window:Lerp(T.Accent, 0.10)),
+		ColorSequenceKeypoint.new(0.52, T.Main:Lerp(T.Accent, 0.03)),
 		ColorSequenceKeypoint.new(1, T.Sidebar),
 	})
 	stageGradient.Transparency = NumberSequence.new({
@@ -18654,11 +18699,6 @@ function MusicPage.Build(page, config)
 	})
 	stageGradient.Rotation = 145
 	stageGradient.Parent = stage
-	if Nerx.Frosted and Nerx.Frosted.Enabled then
-		pcall(function()
-			Nerx.Frosted:Register(stage, { Kind = "card", Radius = 16, Opacity = 0.92 })
-		end)
-	end
 	local function stageGlow(size, px, py, alpha)
 		local glow = U.frame(stage, {
 			BackgroundColor3 = T.Accent,
@@ -18673,6 +18713,7 @@ function MusicPage.Build(page, config)
 	end
 	stageGlow(SHELL_W * 0.58, 0.04, -0.1, 0.93)
 	stageGlow(SHELL_W * 0.46, 0.99, 0.1, 0.95)
+	stageGlow(SHELL_W * 0.5, 0.92, -0.04, 0.955)
 	stageGlow(SHELL_W * 0.52, 0.6, 1.06, 0.955)
 	U.frame(stage, {
 		BackgroundColor3 = T.White,
@@ -18698,8 +18739,8 @@ function MusicPage.Build(page, config)
 		Size = UDim2.fromOffset(RAIL_W, SHELL_H - PAD * 2),
 		BackgroundColor3 = T.Surface,
 		BackgroundTransparency = 0.35,
-		Radius = 12,
-	}, true)
+		Radius = 14,
+	}, false)
 	rail.Position = UDim2.fromOffset(PAD, PAD)
 
 	local brand = U.frame(rail, {
@@ -18861,12 +18902,13 @@ function MusicPage.Build(page, config)
 		BackgroundTransparency = 0.24,
 		ZIndex = 20,
 	}, 12)
-	if Nerx.Frosted and Nerx.Frosted.Enabled then
-		pcall(function()
-			Nerx.Frosted:Register(playerBar, { Kind = "card", Radius = 12, Opacity = 0.92 })
-		end)
-	end
 	player.Root = playerBar
+	bloom(workspacePanel, T.Accent, 0.93, 0, {
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, -10, 1, 22),
+		Size = UDim2.new(1, 20, 0, PLAYER_H + 36),
+		ZIndex = 19,
+	})
 	U.frame(playerBar, {
 		BackgroundColor3 = T.Accent,
 		BackgroundTransparency = 0.72,
@@ -19131,7 +19173,7 @@ function MusicPage.Build(page, config)
 		ClipsDescendants = true,
 		Visible = false,
 		ZIndex = 60,
-	}, true)
+	}, false)
 	island.CoverHolder = U.frame(island.Root, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
@@ -19233,7 +19275,7 @@ function MusicPage.Build(page, config)
 	local function railItem(order, iconName, text, count, active, callback, rightClick, coverSource)
 		local item = U.frame(railScroll, {
 			BackgroundColor3 = active and T.Accent or T.White,
-			BackgroundTransparency = active and 0.86 or 1,
+			BackgroundTransparency = active and 0.9 or 1,
 			BorderSizePixel = 0,
 			Size = UDim2.new(1, 0, 0, 26),
 			LayoutOrder = order,
@@ -19897,16 +19939,22 @@ function MusicPage.Build(page, config)
 			AutomaticSize = Enum.AutomaticSize.Y,
 		})
 		U.list(content, 0)
-		local head = pageHeader(content, "NERX MUSIC · NET EASE", "Nerx Music!", "网易云推荐 · 为你而选")
+		local playlists = M.Recommended or {}
+		local head = pageHeader(content, "NERX MUSIC · NET EASE", "Nerx Music!",
+			"为你推荐 · " .. tostring(#playlists) .. " 个网易云歌单")
 		head.LayoutOrder = 1
+		local chartsButton = textButton(head, 76, 24, "排行榜", "chart-line", false, function()
+			setView({ kind = "charts" })
+		end)
+		chartsButton.AnchorPoint = Vector2.new(1, 0)
+		chartsButton.Position = UDim2.new(1, -18, 0, 22)
 		local refresh = iconButton(head, 22, "arrow-spin-clockwise", function()
 			M:LoadRecommended(true)
 			notify("网易云", "正在刷新推荐", "arrow-spin-clockwise", T.Accent)
 		end)
 		refresh.Parent.AnchorPoint = Vector2.new(1, 0)
-		refresh.Parent.Position = UDim2.new(1, -18, 0, 24)
+		refresh.Parent.Position = UDim2.new(1, -102, 0, 23)
 
-		local playlists = M.Recommended or {}
 		local needCovers = false
 		for _, entry in ipairs(playlists) do
 			if (entry.coverUrl or "") == "" then
@@ -19941,7 +19989,7 @@ function MusicPage.Build(page, config)
 		end
 
 		local gap = 12
-		local columns = math.clamp(math.floor((WORK_W - 32 + gap) / (118 + gap)), 3, 5)
+		local columns = math.clamp(math.floor((WORK_W - 32 + gap) / (100 + gap)), 3, 5)
 		local cardW = math.floor((WORK_W - 32 - gap * (columns - 1)) / columns)
 		local cardH = cardW + 40
 		local rows = math.ceil(#playlists / columns)
@@ -19960,6 +20008,12 @@ function MusicPage.Build(page, config)
 				BorderSizePixel = 0,
 				Position = UDim2.fromOffset(16 + column * (cardW + gap), rowIndex * cardH),
 				Size = UDim2.fromOffset(cardW, cardH - 6),
+			})
+			local cardGlow = bloom(card, T.Accent, 0.9, 0, {
+				Position = UDim2.fromOffset(-10, -10),
+				Size = UDim2.fromOffset(cardW + 20, cardW + 20),
+				Visible = false,
+				ZIndex = 1,
 			})
 			local cover = coverBox(card, UDim2.fromOffset(cardW, cardW), entry, 9, { CoverSize = 320 })
 			local badge = U.frame(cover, {
@@ -20003,10 +20057,12 @@ function MusicPage.Build(page, config)
 			end)
 			U.connect(input.MouseEnter, function()
 				badge.Visible = true
+				cardGlow.Visible = true
 				U.tween(name, U.Tween.Fast, { TextColor3 = T.Accent })
 			end)
 			U.connect(input.MouseLeave, function()
 				badge.Visible = false
+				cardGlow.Visible = false
 				U.tween(name, U.Tween.Fast, { TextColor3 = T.Text })
 			end)
 		end
@@ -20049,7 +20105,7 @@ function MusicPage.Build(page, config)
 		end
 
 		local gap = 12
-		local columns = math.clamp(math.floor((WORK_W - 32 + gap) / (118 + gap)), 3, 5)
+		local columns = math.clamp(math.floor((WORK_W - 32 + gap) / (100 + gap)), 3, 5)
 		local cardW = math.floor((WORK_W - 32 - gap * (columns - 1)) / columns)
 		local cardH = cardW + 40
 		local rows = math.ceil(#M.Charts / columns)
@@ -20068,6 +20124,12 @@ function MusicPage.Build(page, config)
 				BorderSizePixel = 0,
 				Position = UDim2.fromOffset(16 + column * (cardW + gap), rowIndex * cardH),
 				Size = UDim2.fromOffset(cardW, cardH - 6),
+			})
+			local cardGlow = bloom(card, T.Accent, 0.9, 0, {
+				Position = UDim2.fromOffset(-10, -10),
+				Size = UDim2.fromOffset(cardW + 20, cardW + 20),
+				Visible = false,
+				ZIndex = 1,
 			})
 			local cover = coverBox(card, UDim2.fromOffset(cardW, cardW), entry, 10, { CoverSize = 320 })
 			local rank = U.frame(cover, {
@@ -20127,10 +20189,12 @@ function MusicPage.Build(page, config)
 			end)
 			U.connect(input.MouseEnter, function()
 				badge.Visible = true
+				cardGlow.Visible = true
 				U.tween(name, U.Tween.Fast, { TextColor3 = T.Accent })
 			end)
 			U.connect(input.MouseLeave, function()
 				badge.Visible = false
+				cardGlow.Visible = false
 				U.tween(name, U.Tween.Fast, { TextColor3 = T.Text })
 			end)
 		end
@@ -20246,6 +20310,27 @@ function MusicPage.Build(page, config)
 				end
 			end)
 		end
+		-- Cached NetEase playlists from older builds keep tracks without a
+		-- coverUrl; refresh the detail once so search/chart rows get artwork.
+		if playlist and playlist.kind == "netease" and playlist.loaded and not playlist.loading
+			and not playlist._trackCoverTried and #ids > 0 then
+			local missingCover = false
+			for _, id in ipairs(ids) do
+				local entry = M.Tracks[id]
+				if entry and (entry.coverUrl or "") == "" then
+					missingCover = true
+					break
+				end
+			end
+			if missingCover then
+				playlist._trackCoverTried = true
+				task.defer(function()
+					if canvas.Parent then
+						M:OpenNeteasePlaylist(playlist.netId, playlist, nil, true)
+					end
+				end)
+			end
+		end
 		local scroll = newScroll(parent, 0, 0)
 		local content = U.frame(scroll, {
 			BackgroundTransparency = 1,
@@ -20265,6 +20350,11 @@ function MusicPage.Build(page, config)
 			Position = UDim2.fromOffset(16, 8),
 			Size = UDim2.new(1, -32, 0, 144),
 		}, 12)
+		bloom(head, T.Accent, 0.86, 0, {
+			Position = UDim2.fromOffset(4, 4),
+			Size = UDim2.fromOffset(136, 136),
+			ZIndex = 1,
+		})
 		local coverHolder = U.frame(head, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
@@ -20599,45 +20689,56 @@ function MusicPage.Build(page, config)
 		clear.Position = UDim2.new(1, -18, 0, 18)
 		local track = M.CurrentId and M.Tracks[M.CurrentId] or nil
 		local card = nativeCard(parent, {
-			Position = UDim2.fromOffset(16, 66),
-			Size = UDim2.new(1, -32, 0, 78),
-		}, 10)
+			Position = UDim2.fromOffset(16, 64),
+			Size = UDim2.new(1, -32, 0, 128),
+		}, 12)
 		if track then
 			local coverHolder = U.frame(card, {
 				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
-				Position = UDim2.fromOffset(10, 9),
-				Size = UDim2.fromOffset(60, 60),
+				Position = UDim2.fromOffset(14, 16),
+				Size = UDim2.fromOffset(96, 96),
 			})
-			coverBox(coverHolder, UDim2.fromScale(1, 1), track, 8, { CoverSize = 240 })
+			coverBox(coverHolder, UDim2.fromScale(1, 1), track, 10, { CoverSize = 300 })
 			U.label(card, {
 				Text = track.name,
 				Font = F.Bold,
-				TextSize = 13,
+				TextSize = 18,
 				TextColor3 = T.Text,
 				TextTransparency = 0.03,
-				Position = UDim2.fromOffset(84, 14),
-				Size = UDim2.new(1, -100, 0, 18),
+				TextTruncate = Enum.TextTruncate.AtEnd,
+				Position = UDim2.fromOffset(126, 20),
+				Size = UDim2.new(1, -164, 0, 24),
 			})
 			U.label(card, {
-				Text = track.artist .. " — " .. track.album,
-				TextSize = 8.5,
+				Text = track.artist,
+				TextSize = 10,
 				TextColor3 = T.Muted,
-				TextTransparency = 0.35,
-				Position = UDim2.fromOffset(84, 34),
-				Size = UDim2.new(1, -100, 0, 14),
+				TextTransparency = 0.3,
+				TextTruncate = Enum.TextTruncate.AtEnd,
+				Position = UDim2.fromOffset(126, 48),
+				Size = UDim2.new(1, -164, 0, 15),
 			})
-			local like = iconButton(card, 22, "heart", function()
+			U.label(card, {
+				Text = track.album,
+				TextSize = 9,
+				TextColor3 = T.Muted,
+				TextTransparency = 0.45,
+				TextTruncate = Enum.TextTruncate.AtEnd,
+				Position = UDim2.fromOffset(126, 66),
+				Size = UDim2.new(1, -164, 0, 14),
+			})
+			local like = iconButton(card, 26, "heart", function()
 				M:ToggleLike(track.id)
 				renderMain()
 			end, { Active = track.liked })
 			like.TextColor3 = track.liked and T.Pink or T.Muted
 			like.Parent.AnchorPoint = Vector2.new(1, 0.5)
-			like.Parent.Position = UDim2.new(1, -14, 0.5, 0)
+			like.Parent.Position = UDim2.new(1, -16, 0.5, 0)
 		else
 			U.label(card, {
 				Text = "还没有正在播放的歌曲",
-				TextSize = 10,
+				TextSize = 11,
 				TextColor3 = T.Muted,
 				TextTransparency = 0.3,
 				TextXAlignment = Enum.TextXAlignment.Center,
@@ -20653,15 +20754,15 @@ function MusicPage.Build(page, config)
 			end
 		end
 		if #ids == 0 then
-			emptyState(parent, "rectangle-list", "队列是空的", "播放歌曲或点“下一首播放”添加到这里").Position = UDim2.fromOffset(0, 166)
+			emptyState(parent, "rectangle-list", "队列是空的", "播放歌曲或点“下一首播放”添加到这里").Position = UDim2.fromOffset(0, 214)
 			return
 		end
-		sectionTitle(parent, "播放队列 · " .. tostring(#ids), 4, 154, true)
+		sectionTitle(parent, "接下来播放 · " .. tostring(#ids), 4, 204, true)
 		local listHolder = U.frame(parent, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(0, 174),
-			Size = UDim2.new(1, 0, 1, -174),
+			Position = UDim2.fromOffset(0, 224),
+			Size = UDim2.new(1, 0, 1, -224),
 		})
 		local scroll = newScroll(listHolder, 0, 0)
 		local content = U.frame(scroll, {
@@ -21367,23 +21468,22 @@ function MusicPage.Build(page, config)
 				{ Value = "wall", Label = "墙面" },
 				{ Value = "orbit", Label = "环绕" },
 			}, function()
-				world.Anchor = nil
-				world.AnchorProjection = nil
+				syncWorld(true)
 			end)
-			rangeRow(card4, addRow4, "距离", "离玩家的距离", "worldDistance", 3, 16, 1, "m", function()
-				world.Anchor = nil
-				world.AnchorProjection = nil
+			rangeRow(card4, addRow4, "距离", "离玩家的距离", "worldDistance", 4, 20, 1, "m", function()
+				syncWorld(true)
 			end)
 			rangeRow(card4, addRow4, "高度", "相对视线的高度", "worldHeight", -2, 4, 0.5, "m", function()
-				world.Anchor = nil
-				world.AnchorProjection = nil
+				syncWorld(true)
 			end)
-			rangeRow(card4, addRow4, "大小", "歌词整体缩放", "worldSize", 0.6, 1.8, 0.05, "x")
+			rangeRow(card4, addRow4, "大小", "歌词整体缩放", "worldSize", 0.6, 1.8, 0.05, "x", function()
+				syncWorld(true)
+			end)
 
 			local card5, addRow5 = settingsCard(content, "世界 3D 观感", "世界内歌词的渲染效果。", 5)
-			rangeRow(card5, addRow5, "发光强度", "当前行与高亮词的辉光", "worldGlow", 0, 100, 1, "%")
-			toggleRow(card5, addRow5, "场景压暗", "压暗歌词后面的背景", "worldDim")
-			toggleRow(card5, addRow5, "轻微摇摆", "歌词随节拍轻轻浮动", "worldWiggle")
+			rangeRow(card5, addRow5, "发光强度", "当前行与高亮词的辉光", "worldGlow", 0, 100, 1, "%", function()
+				syncWorld(true)
+			end)
 			buttonRow(card5, addRow5, "预览", "隐藏菜单查看世界内效果", {
 				{ Text = "打开世界 3D 预览", Icon = "eye", Primary = true, Width = 130, Callback = function() openWorldPreview() end },
 			})
@@ -21746,6 +21846,21 @@ function MusicPage.Build(page, config)
 					row.Main.TextSize = row.BaseTextSize + (depth and 2 or 0)
 					row.Main.TextStrokeColor3 = T.Accent
 					row.Main.TextStrokeTransparency = M.Settings.glow and 0.35 or 1
+					if row.Glow then
+						row.Glow.Visible = M.Settings.glow == true
+					end
+					if M.Settings.glow then
+						pcall(function()
+							local shadow = row.Main:FindFirstChildOfClass("UIShadow")
+							if not shadow then
+								shadow = Instance.new("UIShadow")
+								shadow.Parent = row.Main
+							end
+							shadow.BlurSize = 20
+							shadow.Color = T.Accent
+							shadow.Transparency = 0.48
+						end)
+					end
 					if row.Trans then
 						row.Trans.TextTransparency = M.Settings.showTranslation and 0.15 or 1
 					end
@@ -21756,6 +21871,13 @@ function MusicPage.Build(page, config)
 					row.Main.TextColor3 = T.White
 					row.Main.TextSize = depth and (near and row.BaseTextSize or row.BaseTextSize - 2) or row.BaseTextSize
 					row.Main.TextStrokeTransparency = 1
+					if row.Glow then
+						row.Glow.Visible = false
+					end
+					local staleShadow = row.Main:FindFirstChildOfClass("UIShadow")
+					if staleShadow then
+						staleShadow:Destroy()
+					end
 					if row.Trans then
 						row.Trans.TextTransparency = M.Settings.showTranslation and (near and 0.7 or 0.85) or 1
 					end
@@ -21846,16 +21968,28 @@ function MusicPage.Build(page, config)
 	})
 	lyrics.BgGradient.Rotation = 90
 	lyrics.BgGradient.Parent = lyrics.BgGradientFrame
-	lyrics.Glow = U.frame(lyrics.Root, {
-		BackgroundColor3 = T.Accent,
-		BackgroundTransparency = 0.94,
-		BorderSizePixel = 0,
+	-- Soft accent haze behind the lyric column.
+	lyrics.Glow = bloom(lyrics.Root, T.Accent, 0.95, 0, {
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.new(0.45, 0, 0.35, 0),
-		Size = UDim2.fromOffset(overlayHeight * 0.7, overlayHeight * 0.55),
+		Position = UDim2.new(0.45, 0, 0.38, 0),
+		Size = UDim2.fromOffset(overlayHeight * 1.35, overlayHeight * 1.05),
 		ZIndex = 1,
 	})
-	U.corner(lyrics.Glow, 999)
+	local lyricsVignette = U.frame(lyrics.Root, {
+		BackgroundColor3 = T.Black,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+		ZIndex = 2,
+	})
+	local vignette = Instance.new("UIGradient")
+	vignette.Rotation = 90
+	vignette.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.05),
+		NumberSequenceKeypoint.new(0.35, 0.82),
+		NumberSequenceKeypoint.new(0.62, 0.86),
+		NumberSequenceKeypoint.new(1, 0.35),
+	})
+	vignette.Parent = lyricsVignette
 
 	lyrics.Tabs = U.frame(lyrics.Root, {
 		BackgroundColor3 = T.White,
@@ -22261,6 +22395,12 @@ function MusicPage.Build(page, config)
 					Size = UDim2.fromOffset(width, rowHeight),
 					ZIndex = 1,
 				})
+				local rowGlow = bloom(row, T.Accent, 0.84, 0, {
+					Position = UDim2.fromOffset(-30, -14),
+					Size = UDim2.fromOffset(width + 60, rowHeight + 28),
+					Visible = false,
+					ZIndex = 1,
+				})
 				local main = U.label(row, {
 					Text = M:RichEscape(entry.Text),
 					Font = mainFont,
@@ -22294,6 +22434,7 @@ function MusicPage.Build(page, config)
 					Frame = row,
 					Main = main,
 					Trans = trans,
+					Glow = rowGlow,
 					TopY = y,
 					Height = rowHeight,
 					BaseTextSize = mainSize,
@@ -22329,206 +22470,259 @@ function MusicPage.Build(page, config)
 	if oldWorldAnchor then
 		oldWorldAnchor:Destroy()
 	end
-	local worldPart = Instance.new("Part")
-	worldPart.Name = "NerxMusicWorldLyricsAnchor"
-	worldPart.Anchored = true
-	worldPart.CanCollide = false
-	worldPart.CanQuery = false
-	worldPart.CanTouch = false
-	worldPart.CastShadow = false
-	worldPart.Transparency = 1
-	worldPart.Size = Vector3.new(0.2, 0.2, 0.2)
-	worldPart.Parent = workspace
-	world.Part = worldPart
+	world.Lines = {}
+	world.Entries = nil
+	world.ActiveIndex = nil
+	world.TrackId = nil
 
-	local billboard = Instance.new("BillboardGui")
-	billboard.Name = "NerxMusicWorldLyrics"
-	billboard.Adornee = worldPart
-	billboard.AlwaysOnTop = true
-	billboard.LightInfluence = 0
-	billboard.MaxDistance = 500
-	billboard.Size = UDim2.fromOffset(640, 340)
-	billboard.Enabled = false
-	billboard.Parent = worldPart
-	world.Billboard = billboard
+	local function destroyWorldLine(line)
+		if line.Billboard then
+			line.Billboard:Destroy()
+		end
+		if line.Part then
+			line.Part:Destroy()
+		end
+	end
 
-	world.Frame = U.frame(billboard, {
-		BackgroundColor3 = T.Black,
-		BackgroundTransparency = 0.55,
-		BorderSizePixel = 0,
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromScale(1, 1),
-	})
-	U.corner(world.Frame, 18)
-	U.stroke(world.Frame, T.Accent, 0.78, 1)
-	world.Scale = Instance.new("UIScale")
-	world.Scale.Scale = M.Settings.worldSize or 1
-	world.Scale.Parent = world.Frame
-	world.Clip = U.frame(world.Frame, {
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		Size = UDim2.fromScale(1, 1),
-		ClipsDescendants = true,
-	})
-	world.Track = U.frame(world.Clip, {
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(0, 0),
-		Size = UDim2.new(1, 0, 0, 0),
-	})
-	world.Dots = makeDots(world.Clip, 280, 140, 16, 5)
-	world.Hint = U.label(world.Clip, {
-		Text = "",
-		TextSize = 11,
-		TextColor3 = T.White,
-		TextTransparency = 0.5,
-		TextXAlignment = Enum.TextXAlignment.Center,
-		Position = UDim2.fromOffset(0, 164),
-		Size = UDim2.new(1, 0, 0, 20),
-		ZIndex = 5,
-	})
+	local function clearWorldLines()
+		for _, line in ipairs(world.Lines or {}) do
+			destroyWorldLine(line)
+		end
+		world.Lines = {}
+		world.ActiveIndex = nil
+	end
+
+	-- Dango spawns one lyric line at a time at a random point in front of the
+	-- player, lets it float in world space (occluded by geometry), then fades
+	-- the old one upward. No background plate, no screen-space rotation.
+	local function spawnWorldLine(entry, index)
+		local camera = workspace.CurrentCamera
+		if not camera or not entry then
+			return nil
+		end
+		local distance = math.clamp(tonumber(M.Settings.worldDistance) or 10, 4, 20)
+		local height = math.clamp(tonumber(M.Settings.worldHeight) or 0, -2, 4)
+		local scale = math.clamp(tonumber(M.Settings.worldSize) or 1, 0.6, 1.8)
+		local projection = M.Settings.worldProjection or "follow"
+		local yaw, pitch
+		if projection == "wall" then
+			yaw = 0
+			pitch = -math.rad(7)
+		elseif projection == "orbit" then
+			yaw = ((index - 1) % 6) * (math.pi * 2 / 6)
+			pitch = -math.rad(8)
+		else
+			yaw = (math.random() * 2 - 1) * math.rad(24)
+			pitch = -math.rad(3 + math.random() * 9)
+		end
+		local base = camera.CFrame
+		local position
+		if projection == "orbit" then
+			position = base.Position
+				+ Vector3.new(math.sin(yaw) * distance, height + math.sin(pitch) * distance, math.cos(yaw) * distance)
+		else
+			local direction = (base * CFrame.Angles(0, yaw, 0) * CFrame.Angles(pitch, 0, 0)).LookVector
+			position = base.Position + direction * distance + Vector3.new(0, height, 0)
+		end
+		local part = Instance.new("Part")
+		part.Name = "NerxMusicWorldLyric"
+		part.Anchored = true
+		part.CanCollide = false
+		part.CanQuery = false
+		part.CanTouch = false
+		part.CastShadow = false
+		part.Transparency = 1
+		part.Size = Vector3.new(0.1, 0.1, 0.1)
+		part.CFrame = CFrame.new(position)
+		part.Parent = workspace
+
+		local translation = M.Settings.showTranslation and entry.Trans ~= "" and entry.Trans or nil
+		local textWidth = 560
+		local mainH = math.max(40, U.measureWrap(entry.Text, 30, F.Bold, textWidth).Y + 6)
+		local transH = 0
+		if translation then
+			transH = math.max(20, U.measureWrap(translation, 16, F.Regular, textWidth).Y + 4)
+		end
+		local totalH = mainH + (translation and (transH + 4) or 0)
+		local billboard = Instance.new("BillboardGui")
+		billboard.Name = "NerxMusicWorldLyric"
+		billboard.Adornee = part
+		billboard.AlwaysOnTop = false
+		billboard.LightInfluence = 0
+		billboard.MaxDistance = 800
+		billboard.Size = UDim2.fromOffset(textWidth * scale, totalH * scale)
+		billboard.Enabled = true
+		billboard.Parent = part
+
+		local main = U.label(billboard, {
+			Text = M:RichEscape(entry.Text),
+			Font = F.Bold,
+			TextSize = 30,
+			TextScaled = true,
+			TextWrapped = true,
+			RichText = true,
+			TextColor3 = T.White,
+			TextTransparency = 1,
+			TextStrokeColor3 = T.Accent,
+			TextStrokeTransparency = 0.55,
+			TextXAlignment = Enum.TextXAlignment.Center,
+			TextYAlignment = Enum.TextYAlignment.Center,
+			Size = UDim2.new(1, 0, mainH / totalH, 0),
+		})
+		U.new("UITextSizeConstraint", {
+			MaxTextSize = math.floor(96 * scale),
+			MinTextSize = 10,
+		}, main)
+		local trans = nil
+		if translation then
+			trans = U.label(billboard, {
+				Text = translation,
+				TextSize = 16,
+				TextScaled = true,
+				TextWrapped = true,
+				TextColor3 = T.White,
+				TextTransparency = 1,
+				TextStrokeTransparency = 1,
+				TextXAlignment = Enum.TextXAlignment.Center,
+				TextYAlignment = Enum.TextYAlignment.Center,
+				Position = UDim2.new(0, 0, mainH / totalH, 0),
+				Size = UDim2.new(1, 0, transH / totalH, 0),
+			})
+			U.new("UITextSizeConstraint", {
+				MaxTextSize = math.floor(34 * scale),
+				MinTextSize = 8,
+			}, trans)
+		end
+		if M.Settings.glow then
+			local amount = math.clamp((M.Settings.worldGlow or 70) / 100, 0, 1)
+			local stroke = Instance.new("UIStroke")
+			stroke.Thickness = 1.6 + amount * 2.4
+			stroke.Color = T.Accent
+			stroke.Transparency = 0.72 - amount * 0.32
+			stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+			stroke.Parent = main
+			pcall(function()
+				local shadow = Instance.new("UIShadow")
+				shadow.BlurSize = 18 + amount * 22
+				shadow.Color = T.Accent
+				shadow.Transparency = 0.55 - amount * 0.25
+				shadow.Parent = main
+			end)
+		end
+		U.tween(main, U.Tween.Fast, { TextTransparency = 0.06 })
+		if trans then
+			U.tween(trans, U.Tween.Fast, { TextTransparency = 0.25 })
+		end
+		local line = {
+			Entry = entry,
+			Index = index,
+			Part = part,
+			Billboard = billboard,
+			Main = main,
+			Trans = trans,
+			BasePosition = position,
+			BaseWidth = textWidth,
+			BaseHeight = totalH,
+			RefDistance = distance,
+			Scale = scale,
+			Spawned = os.clock(),
+		}
+		world.Lines[#world.Lines + 1] = line
+		while #world.Lines > 5 do
+			local old = table.remove(world.Lines, 1)
+			destroyWorldLine(old)
+		end
+		return line
+	end
 
 	syncWorld = function(force)
-		if not world.Billboard then
-			return
-		end
 		local enabled = (M.Settings.worldLyrics or state.worldPreview) and M.CurrentId ~= nil
 		local track = enabled and M.CurrentId and M.Tracks[M.CurrentId] or nil
 		if not track then
-			world.Billboard.Enabled = false
+			clearWorldLines()
+			world.Entries = nil
+			world.TrackId = nil
 			return
 		end
 		if track.source == "netease" and track.lyrics == "" and not track.lyricsLoaded and not track.lyricsLoading then
 			M:FetchNeteaseLyrics(track.id)
 		end
 		local entries = M:ParseLyrics(track)
-		local signature = table.concat({
-			tostring(track.id),
-			tostring(track.yrc and #track.yrc or 0),
-			tostring(track.lyrics and #track.lyrics or 0),
-			tostring(M.Settings.showTranslation),
-			tostring(M.Settings.worldSize),
-			tostring(M.Settings.fontSize),
-			tostring(M.Settings.lineGap),
-		}, ":")
-		if force or world.Signature ~= signature then
-			world.Signature = signature
-			world.Track:ClearAllChildren()
-			world.Track.Position = UDim2.fromOffset(0, 0)
-			world.Track.Size = UDim2.new(1, 0, 0, 0)
-			if #entries == 0 then
-				world.System = nil
-				world.Dots.Visible = false
-				world.Hint.Visible = true
-				world.Hint.Text = track.lyricsLoading and "正在获取网易云歌词..." or (track.lyricsError or "暂无歌词")
-				world.Billboard.Enabled = enabled
-				return
-			end
-			local width = 600
-			local mainSize = math.clamp(math.floor((M.Settings.fontSize or 31) * 0.92), 20, 42)
-			local mainFont = M.Settings.lyricsFont == "pixel" and F.Mono or F.Bold
-			local transSize = math.max(11, math.floor(mainSize * 0.45))
-			local gap = math.clamp(M.Settings.lineGap or 22, 8, 44)
-			local y = 0
-			local rows = {}
-			local previousTime = nil
-			for _, entry in ipairs(entries) do
-				if previousTime and entry.Time - previousTime >= 10 then
-					local breakRow = U.frame(world.Track, {
-						BackgroundTransparency = 1,
-						BorderSizePixel = 0,
-						Position = UDim2.fromOffset(0, y),
-						Size = UDim2.fromOffset(width, 24),
-					})
-					makeDots(breakRow, width / 2 - 30, 4, 12, 5)
-					y = y + 24 + gap
-				end
-				local mainHeight = math.max(mainSize + 6, U.measureWrap(entry.Text, mainSize, mainFont, width).Y + 2)
-				local transText = M.Settings.showTranslation and entry.Trans ~= "" and entry.Trans or nil
-				local transHeight = 0
-				if transText then
-					transHeight = math.max(transSize + 2, U.measureWrap(transText, transSize, F.Regular, width).Y + 2)
-				end
-				local rowHeight = mainHeight + (transText and (transHeight + 3) or 0)
-				local row = U.frame(world.Track, {
-					BackgroundTransparency = 1,
-					BorderSizePixel = 0,
-					Position = UDim2.fromOffset(0, y),
-					Size = UDim2.fromOffset(width, rowHeight),
-				})
-				local main = U.label(row, {
-					Text = M:RichEscape(entry.Text),
-					Font = mainFont,
-					TextSize = mainSize,
-					TextColor3 = T.White,
-					TextTransparency = 0.82,
-					TextWrapped = true,
-					RichText = true,
-					TextXAlignment = Enum.TextXAlignment.Center,
-					TextYAlignment = Enum.TextYAlignment.Top,
-					Size = UDim2.fromOffset(width, mainHeight),
-					ZIndex = 2,
-				})
-				local trans = nil
-				if transText then
-					trans = U.label(row, {
-						Text = transText,
-						TextSize = transSize,
-						TextColor3 = T.White,
-						TextTransparency = 0.8,
-						TextWrapped = true,
-						TextXAlignment = Enum.TextXAlignment.Center,
-						TextYAlignment = Enum.TextYAlignment.Top,
-						Position = UDim2.fromOffset(0, mainHeight + 3),
-						Size = UDim2.fromOffset(width, transHeight),
-						ZIndex = 2,
-					})
-				end
-				rows[#rows + 1] = {
-					Entry = entry,
-					Frame = row,
-					Main = main,
-					Trans = trans,
-					TopY = y,
-					Height = rowHeight,
-					BaseTextSize = mainSize,
-				}
-				y = y + rowHeight + gap
-				previousTime = entry.Time
-			end
-			world.Track.Size = UDim2.fromOffset(width, math.max(1, y))
-			world.System = {
-				Rows = rows,
-				Track = world.Track,
-				Clip = world.Clip,
-				Width = width,
-				Height = y,
-			}
-			world.Dots.Visible = false
-			world.Hint.Visible = false
+		local trackChanged = world.TrackId ~= track.id
+		world.TrackId = track.id
+		world.Entries = entries
+		if force or trackChanged then
+			clearWorldLines()
 		end
-		world.Billboard.Enabled = enabled
-		world.Frame.BackgroundTransparency = M.Settings.worldDim and 0.55 or 1
-		if world.Scale then
-			world.Scale.Scale = M.Settings.worldSize or 1
+		if #entries == 0 then
+			world.ActiveIndex = nil
+			return
 		end
 		updateWorld(true)
 	end
 
 	updateWorld = function(force)
-		if not world.Billboard or not world.Billboard.Enabled or not world.System then
+		local entries = world.Entries
+		if not entries or #entries == 0 then
+			return
+		end
+		if not (M.Settings.worldLyrics or state.worldPreview) then
 			return
 		end
 		local duration = M:GetDuration()
 		local position = math.clamp(M:GetPosition() + (M.Settings.offset or 0), 0, math.max(0.1, duration))
-		local active = paintLyricSystem(world.System, position, "world", U.hex(T.Accent))
-		if active and world.System.Rows[active] then
-			local row = world.System.Rows[active].Main
-			row.TextStrokeColor3 = T.Accent
-			row.TextStrokeTransparency = 1 - math.clamp((M.Settings.worldGlow or 70) / 100, 0, 1) * 0.7
+		local active = 0
+		for index, entry in ipairs(entries) do
+			if entry.Time <= position + 0.03 then
+				active = index
+			else
+				break
+			end
 		end
-		world.Track.Rotation = (M.Settings.worldWiggle and M.Settings.motion ~= false) and math.sin(os.clock() * 2.1) * 0.35 or 0
+		if force or active ~= world.ActiveIndex then
+			for _, line in ipairs(world.Lines) do
+				if not line.Fading then
+					line.Fading = os.clock()
+				end
+			end
+			world.ActiveIndex = active
+			if active > 0 then
+				spawnWorldLine(entries[active], active)
+			end
+		end
+		local now = os.clock()
+		local accentHex = U.hex(T.Accent)
+		local camera = workspace.CurrentCamera
+		local repaint = not world.LastPaint or now - world.LastPaint >= 0.05
+		if repaint then
+			world.LastPaint = now
+		end
+		for index = #world.Lines, 1, -1 do
+			local line = world.Lines[index]
+			if camera and line.Billboard and line.Billboard.Parent then
+				local distance = (camera.CFrame.Position - line.BasePosition).Magnitude
+				local k = math.clamp((line.RefDistance / math.max(1, distance)) * line.Scale, 0.35, 2.8)
+				line.Billboard.Size = UDim2.fromOffset(line.BaseWidth * k, line.BaseHeight * k)
+			end
+			if line.Fading then
+				local t = (now - line.Fading) / 0.45
+				if t >= 1 or not line.Billboard.Parent then
+					destroyWorldLine(line)
+					table.remove(world.Lines, index)
+				else
+					local a = 1 - t
+					line.Main.TextTransparency = 0.06 + 0.94 * (1 - a)
+					if line.Trans then
+						line.Trans.TextTransparency = 0.25 + 0.75 * (1 - a)
+					end
+					line.Part.CFrame = CFrame.new(line.BasePosition + Vector3.new(0, t * 0.7, 0))
+				end
+			else
+				if repaint then
+					line.Main.Text = richLyricLine(line.Entry, position, accentHex)
+				end
+			end
+		end
 	end
 
 	state.returnGui = nil
@@ -22810,11 +23004,11 @@ function MusicPage.Build(page, config)
 	login.Panel = glassPanel(login.Root, {
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromOffset(math.min(460, overlayWidth - 80), 400),
+		Size = UDim2.fromOffset(math.min(460, overlayWidth - 80), 360),
 		BackgroundColor3 = T.Window,
 		BackgroundTransparency = 0.03,
 		Radius = 14,
-	}, true)
+	}, false)
 	login.Header = U.frame(login.Panel, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
@@ -22862,7 +23056,7 @@ function MusicPage.Build(page, config)
 	login.Footer = U.frame(login.Panel, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(16, 366),
+		Position = UDim2.fromOffset(16, 326),
 		Size = UDim2.new(1, -32, 0, 26),
 	})
 
@@ -23845,33 +24039,11 @@ function MusicPage.Build(page, config)
 	end)
 
 	-- -----------------------------------------------------------------------------------
-	-- World anchor
+	-- World lyric animation
 	-- -----------------------------------------------------------------------------------
 	U.connect(RunService.RenderStepped, function()
-		if not world.Billboard or not world.Billboard.Parent or not world.Billboard.Enabled then
-			return
-		end
-		local camera = workspace.CurrentCamera
-		if not camera then
-			return
-		end
-		local projection = M.Settings.worldProjection or "follow"
-		local distance = math.clamp(tonumber(M.Settings.worldDistance) or 8, 3, 16)
-		local height = math.clamp(tonumber(M.Settings.worldHeight) or 0, -2, 4)
-		if projection == "follow" then
-			world.Anchor = nil
-			world.AnchorProjection = nil
-			worldPart.CFrame = camera.CFrame * CFrame.new(0, height, -distance)
-		elseif projection == "wall" then
-			if not world.Anchor or world.AnchorProjection ~= "wall" then
-				world.Anchor = camera.CFrame * CFrame.new(0, height, -distance)
-				world.AnchorProjection = "wall"
-			end
-			worldPart.CFrame = world.Anchor
-		else
-			world.AnchorProjection = "orbit"
-			local angle = os.clock() * 0.32
-			worldPart.CFrame = camera.CFrame * CFrame.new(math.sin(angle) * distance, height, -math.cos(angle) * distance)
+		if (M.Settings.worldLyrics or state.worldPreview) and world.Entries and #world.Entries > 0 then
+			updateWorld()
 		end
 	end)
 
@@ -23924,9 +24096,6 @@ function MusicPage.Build(page, config)
 				renderPlayer()
 				if state.lyricsOpen then
 					updateLyrics()
-				end
-				if world.Billboard and world.Billboard.Enabled then
-					updateWorld()
 				end
 				renderHud()
 			end
