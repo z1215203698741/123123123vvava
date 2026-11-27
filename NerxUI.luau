@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v1.4.0
+	Nerx UI Library · v1.5.0
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "1.4.0"
+Nerx.Version = "1.5.0"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -18114,6 +18114,65 @@ function MusicPage.Build(page, config)
 		return root
 	end
 
+	-- Native section card: same fill / hairline / top-light recipe the menu uses
+	-- for page sections, so music content sits in the UI instead of on its own plate.
+	local function nativeCard(parent, props, radius)
+		local merged = {
+			BackgroundColor3 = T.Surface,
+			BackgroundTransparency = 0.5,
+			BorderSizePixel = 0,
+		}
+		if props then
+			for key, value in pairs(props) do
+				merged[key] = value
+			end
+		end
+		local topLight = merged.TopLight
+		merged.TopLight = nil
+		radius = radius or merged.Radius or 10
+		merged.Radius = nil
+		local root = U.frame(parent, merged)
+		U.corner(root, radius)
+		U.stroke(root, T.Stroke, 0.65, 1)
+		if topLight ~= false then
+			local light = U.frame(root, {
+				BackgroundColor3 = T.White,
+				BorderSizePixel = 0,
+				Position = UDim2.fromOffset(14, 1),
+				Size = UDim2.new(1, -28, 0, 1),
+				ZIndex = (merged.ZIndex or 1) + 1,
+			})
+			local fade = Instance.new("UIGradient")
+			fade.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1),
+				NumberSequenceKeypoint.new(0.5, 0.72),
+				NumberSequenceKeypoint.new(1, 1),
+			})
+			fade.Parent = light
+		end
+		return root
+	end
+
+	local function sectionTitle(parent, text, order, top, canvas)
+		local row = U.frame(parent, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(canvas and 16 or 0, top or 0),
+			Size = UDim2.new(1, -32, 0, 16),
+			LayoutOrder = order,
+		})
+		U.label(row, {
+			Text = string.upper(text),
+			Font = F.Bold,
+			TextSize = 8,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.45,
+			Position = UDim2.fromOffset(canvas and 0 or 16, 0),
+			Size = UDim2.fromScale(1, 1),
+		})
+		return row
+	end
+
 	local function coverBox(parent, size, source, radius, options)
 		options = options or {}
 		local c1, c2 = sourceColors(source)
@@ -18129,13 +18188,14 @@ function MusicPage.Build(page, config)
 		gradient.Color = ColorSequence.new(c1, c2)
 		gradient.Rotation = 135
 		gradient.Parent = root
-		local placeholder = U.icon(root, options.Icon or "music-note", options.IconSize or 16, T.White, {
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.fromScale(0.5, 0.5),
-			Size = UDim2.fromOffset((options.IconSize or 16) + 4, (options.IconSize or 16) + 4),
-			TextTransparency = 0.55,
-			ZIndex = (options.ZIndex or 1) + 1,
-		})
+		local placeholder = U.icon(root, options.Icon or "music-note", options.IconSize or 16,
+			musicLuminance(c1) > 0.62 and T.Black or T.White, {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(0.5, 0.5),
+				Size = UDim2.fromOffset((options.IconSize or 16) + 4, (options.IconSize or 16) + 4),
+				TextTransparency = 0.55,
+				ZIndex = (options.ZIndex or 1) + 1,
+			})
 		local image = U.new("ImageLabel", {
 			Name = "Cover",
 			BackgroundTransparency = 1,
@@ -18198,14 +18258,14 @@ function MusicPage.Build(page, config)
 
 	local function textButton(parent, width, height, text, iconName, primary, callback)
 		local root = U.frame(parent, {
-			BackgroundColor3 = primary and T.Accent or T.White,
-			BackgroundTransparency = primary and 0 or 0.94,
+			BackgroundColor3 = primary and T.Accent or T.Button,
+			BackgroundTransparency = primary and 0 or 0.55,
 			BorderSizePixel = 0,
 			Size = UDim2.fromOffset(width, height),
 		})
 		U.corner(root, 7)
 		if not primary then
-			U.stroke(root, T.Stroke, 0.5, 1)
+			U.stroke(root, T.Stroke, 0.55, 1)
 		end
 		local iconSize = 11
 		local textSize = 9.5
@@ -18233,14 +18293,14 @@ function MusicPage.Build(page, config)
 			if primary then
 				U.tween(root, U.Tween.Fast, { BackgroundTransparency = 0.08 })
 			else
-				U.tween(root, U.Tween.Fast, { BackgroundColor3 = T.SurfaceHover })
+				U.tween(root, U.Tween.Fast, { BackgroundColor3 = T.ButtonHover, BackgroundTransparency = 0.2 })
 			end
 		end)
 		U.connect(input.MouseLeave, function()
 			if primary then
 				U.tween(root, U.Tween.Fast, { BackgroundTransparency = 0 })
 			else
-				U.tween(root, U.Tween.Fast, { BackgroundColor3 = T.White })
+				U.tween(root, U.Tween.Fast, { BackgroundColor3 = T.Button, BackgroundTransparency = 0.55 })
 			end
 		end)
 		return root
@@ -18248,13 +18308,13 @@ function MusicPage.Build(page, config)
 
 	local function segmented(parent, width, height, items, selected, callback)
 		local root = U.frame(parent, {
-			BackgroundColor3 = T.White,
-			BackgroundTransparency = 0.96,
+			BackgroundColor3 = T.Field,
+			BackgroundTransparency = 0.45,
 			BorderSizePixel = 0,
 			Size = UDim2.fromOffset(width, height),
 		})
 		U.corner(root, 8)
-		U.stroke(root, T.StrokeSoft, 0.5, 1)
+		U.stroke(root, T.Stroke, 0.55, 1)
 		local buttons = {}
 		local api = {}
 		local function paint()
@@ -18504,8 +18564,8 @@ function MusicPage.Build(page, config)
 			Text = eyebrow,
 			Font = F.Bold,
 			TextSize = 8,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.2,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.4,
 			Position = UDim2.fromOffset(30, 13),
 			Size = UDim2.new(1, -48, 0, 12),
 		})
@@ -18521,8 +18581,8 @@ function MusicPage.Build(page, config)
 		U.label(head, {
 			Text = subtitle or "",
 			TextSize = 9,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.2,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.4,
 			Position = UDim2.fromOffset(20, 52),
 			Size = UDim2.new(1, -40, 0, 12),
 		})
@@ -18605,10 +18665,10 @@ function MusicPage.Build(page, config)
 		Size = UDim2.new(1, -32, 0, 14),
 	})
 	U.label(brand, {
-		Text = "DANGO UI · 网易云",
+		Text = "网易云音乐 · v" .. tostring(Nerx.Version),
 		TextSize = 7.5,
-		TextColor3 = T.Faint,
-		TextTransparency = 0.25,
+		TextColor3 = T.Muted,
+		TextTransparency = 0.35,
 		Position = UDim2.fromOffset(32, 14),
 		Size = UDim2.new(1, -32, 0, 12),
 	})
@@ -18701,8 +18761,8 @@ function MusicPage.Build(page, config)
 	accountSubLabel = U.label(account, {
 		Text = "网易云音乐",
 		TextSize = 7.5,
-		TextColor3 = T.Faint,
-		TextTransparency = 0.3,
+		TextColor3 = T.Muted,
+		TextTransparency = 0.4,
 		Position = UDim2.fromOffset(42, 21),
 		Size = UDim2.new(1, -50, 0, 12),
 	})
@@ -18710,32 +18770,35 @@ function MusicPage.Build(page, config)
 		openLogin()
 	end)
 
-	local workspacePanel = glassPanel(shell, {
+	local workspacePanel = U.frame(shell, {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(RAIL_W + GAP, 0),
 		Size = UDim2.fromOffset(WORK_W, SHELL_H),
-		BackgroundColor3 = T.Main,
-		BackgroundTransparency = 0.02,
-		Radius = 12,
-	}, false)
+	})
 
 	viewHost = U.canvas(workspacePanel, {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Size = UDim2.new(1, 0, 1, -PLAYER_H),
+		Size = UDim2.new(1, 0, 1, -(PLAYER_H + 12)),
 		ClipsDescendants = true,
 	})
 
 	-- -----------------------------------------------------------------------------------
 	-- Player bar
 	-- -----------------------------------------------------------------------------------
-	local playerBar = glassPanel(workspacePanel, {
+	local playerBar = nativeCard(workspacePanel, {
 		AnchorPoint = Vector2.new(0, 1),
-		Position = UDim2.new(0, 0, 1, 0),
-		Size = UDim2.new(1, 0, 0, PLAYER_H),
-		BackgroundColor3 = T.Window,
-		BackgroundTransparency = 0.12,
-		Radius = 12,
-	}, true)
+		Position = UDim2.new(0, 6, 1, -4),
+		Size = UDim2.new(1, -12, 0, PLAYER_H),
+		BackgroundTransparency = 0.24,
+		ZIndex = 20,
+	}, 12)
+	if Nerx.Frosted and Nerx.Frosted.Enabled then
+		pcall(function()
+			Nerx.Frosted:Register(playerBar, { Kind = "card", Radius = 12, Opacity = 0.92 })
+		end)
+	end
 	player.Root = playerBar
 
 	local coverHolder = U.frame(playerBar, {
@@ -18764,8 +18827,8 @@ function MusicPage.Build(page, config)
 	player.Artist = U.label(playerBar, {
 		Text = "选择一首歌曲开始",
 		TextSize = 8,
-		TextColor3 = T.Faint,
-		TextTransparency = 0.2,
+		TextColor3 = T.Muted,
+		TextTransparency = 0.4,
 		Position = UDim2.fromOffset(55, 27),
 		Size = UDim2.fromOffset(math.clamp(WORK_W * 0.22, 100, 150), 12),
 	})
@@ -18793,14 +18856,14 @@ function MusicPage.Build(page, config)
 	player.PrevIcon.Parent.Position = UDim2.fromOffset(controlX, 4)
 	controlX = controlX + 26
 	local playButton = U.frame(controls, {
-		BackgroundColor3 = T.White,
-		BackgroundTransparency = 0.1,
+		BackgroundColor3 = T.Accent,
+		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(controlX, 1),
 		Size = UDim2.fromOffset(28, 28),
 	})
 	U.corner(playButton, 14)
-	player.PlayIcon = U.icon(playButton, "play-small", 13, T.White, {
+	player.PlayIcon = U.icon(playButton, "play-small", 13, accentText(), {
 		Size = UDim2.fromScale(1, 1),
 		TextTransparency = 0.02,
 	})
@@ -18819,10 +18882,10 @@ function MusicPage.Build(page, config)
 	end)
 	U.pressFx(playInput, playButton, 0.92)
 	U.connect(playInput.MouseEnter, function()
-		U.tween(playButton, U.Tween.Fast, { BackgroundTransparency = 0 })
+		U.tween(playButton, U.Tween.Fast, { BackgroundTransparency = 0.12 })
 	end)
 	U.connect(playInput.MouseLeave, function()
-		U.tween(playButton, U.Tween.Fast, { BackgroundTransparency = 0.1 })
+		U.tween(playButton, U.Tween.Fast, { BackgroundTransparency = 0 })
 	end)
 	controlX = controlX + 32
 	player.NextIcon = iconButton(controls, 22, "skip-next-large", function()
@@ -18876,8 +18939,8 @@ function MusicPage.Build(page, config)
 	local qualityLabel = U.label(rightCluster, {
 		Text = "无损",
 		TextSize = 7.5,
-		TextColor3 = T.Faint,
-		TextTransparency = 0.2,
+		TextColor3 = T.Muted,
+		TextTransparency = 0.4,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		Position = UDim2.fromOffset(rightX, 0),
 		Size = UDim2.fromOffset(34, 26),
@@ -18917,9 +18980,9 @@ function MusicPage.Build(page, config)
 		state.volumeDragging = dragging
 		M:SetVolume(value, dragging)
 	end, {
-		FillColor = T.White,
-		BaseColor = T.White,
-		BaseTransparency = 0.82,
+		FillColor = T.Accent,
+		BaseColor = T.Track,
+		BaseTransparency = 0.45,
 		TrackHeight = 3,
 		KnobSize = 7,
 	})
@@ -18949,16 +19012,16 @@ function MusicPage.Build(page, config)
 		Text = "00:00",
 		Font = F.Mono,
 		TextSize = 7.5,
-		TextColor3 = T.Faint,
-		TextTransparency = 0.1,
+		TextColor3 = T.Muted,
+		TextTransparency = 0.35,
 		Size = UDim2.fromOffset(30, 12),
 	})
 	player.RemainingTime = U.label(progressWrap, {
 		Text = "-00:00",
 		Font = F.Mono,
 		TextSize = 7.5,
-		TextColor3 = T.Faint,
-		TextTransparency = 0.1,
+		TextColor3 = T.Muted,
+		TextTransparency = 0.35,
 		TextXAlignment = Enum.TextXAlignment.Right,
 		Position = UDim2.new(1, -32, 0, 0),
 		Size = UDim2.fromOffset(32, 12),
@@ -18973,8 +19036,8 @@ function MusicPage.Build(page, config)
 		renderPlayer()
 	end, {
 		FillColor = T.Accent,
-		BaseColor = T.White,
-		BaseTransparency = 0.86,
+		BaseColor = T.Track,
+		BaseTransparency = 0.5,
 		TrackHeight = 3,
 		KnobSize = 7,
 	})
@@ -18985,9 +19048,9 @@ function MusicPage.Build(page, config)
 	-- -----------------------------------------------------------------------------------
 	island.Root = glassPanel(workspacePanel, {
 		AnchorPoint = Vector2.new(0.5, 0),
-		BackgroundColor3 = T.Black,
-		BackgroundTransparency = 0.18,
-		Position = UDim2.new(0.5, 0, 0, -42),
+		BackgroundColor3 = T.SurfaceRaised,
+		BackgroundTransparency = 0.12,
+		Position = UDim2.new(0.5, 0, 0, 4),
 		Size = UDim2.fromOffset(260, 34),
 		Radius = 17,
 		ClipsDescendants = true,
@@ -19006,7 +19069,7 @@ function MusicPage.Build(page, config)
 		Text = "未播放",
 		Font = F.Bold,
 		TextSize = 9.5,
-		TextColor3 = T.White,
+		TextColor3 = T.Text,
 		Position = UDim2.fromOffset(38, 5),
 		Size = UDim2.fromOffset(150, 13),
 		ZIndex = 62,
@@ -19014,8 +19077,8 @@ function MusicPage.Build(page, config)
 	island.Artist = U.label(island.Root, {
 		Text = "网易云音乐",
 		TextSize = 7.5,
-		TextColor3 = T.White,
-		TextTransparency = 0.45,
+		TextColor3 = T.Muted,
+		TextTransparency = 0.25,
 		Position = UDim2.fromOffset(38, 18),
 		Size = UDim2.fromOffset(150, 11),
 		ZIndex = 62,
@@ -19057,11 +19120,11 @@ function MusicPage.Build(page, config)
 			LayoutOrder = order,
 		})
 		U.label(row, {
-			Text = text,
+			Text = string.upper(text),
 			Font = F.Bold,
-			TextSize = 7.5,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.2,
+			TextSize = 8,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.45,
 			Position = UDim2.fromOffset(8, 0),
 			Size = UDim2.new(1, -32, 0, 22),
 		})
@@ -19140,8 +19203,8 @@ function MusicPage.Build(page, config)
 			U.label(item, {
 				Text = tostring(count),
 				TextSize = 7.5,
-				TextColor3 = active and T.Accent or T.Faint,
-				TextTransparency = active and 0.05 or 0.3,
+				TextColor3 = active and T.Accent or T.Muted,
+				TextTransparency = active and 0.05 or 0.4,
 				TextXAlignment = Enum.TextXAlignment.Right,
 				Position = UDim2.new(1, -30, 0, 0),
 				Size = UDim2.fromOffset(24, 25),
@@ -19446,56 +19509,54 @@ function MusicPage.Build(page, config)
 	-- -----------------------------------------------------------------------------------
 	local function paintTrackRow(row, playing)
 		row.Root.BackgroundColor3 = playing and T.Accent or T.White
-		row.Root.BackgroundTransparency = playing and 0.86 or row.BaseTransparency
+		row.Root.BackgroundTransparency = playing and 0.88 or row.BaseTransparency
 		row.Title.TextColor3 = playing and T.Text or T.Text
 		row.Mark.Visible = playing
 		if row.Artist then
-			row.Artist.TextColor3 = playing and T.Text or T.Faint
+			row.Artist.TextColor3 = playing and T.Text or T.Muted
 			row.Artist.TextTransparency = playing and 0.15 or 0.2
 		end
 		if row.Album then
-			row.Album.TextColor3 = playing and T.Text or T.Faint
-			row.Album.TextTransparency = playing and 0.3 or 0.25
+			row.Album.TextColor3 = playing and T.Text or T.Muted
+			row.Album.TextTransparency = playing and 0.3 or 0.3
 		end
 		if row.Duration then
-			row.Duration.TextColor3 = playing and T.Text or T.Faint
-			row.Duration.TextTransparency = playing and 0.3 or 0.25
+			row.Duration.TextColor3 = playing and T.Text or T.Muted
+			row.Duration.TextTransparency = playing and 0.3 or 0.28
 		end
 	end
 
 	local function createTrackRow(parent, index, track, ids, options)
 		options = options or {}
-		local odd = index % 2 == 1
-		local baseTransparency = odd and 0.982 or 1
 		local row = U.frame(parent, {
 			BackgroundColor3 = T.White,
-			BackgroundTransparency = baseTransparency,
+			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Size = UDim2.new(1, 0, 0, 31),
+			Size = UDim2.new(1, 0, 0, 32),
 			LayoutOrder = index,
 		})
-		U.corner(row, 4)
+		U.corner(row, 7)
 		local mark = U.frame(row, {
 			BackgroundColor3 = T.Accent,
 			BorderSizePixel = 0,
 			Position = UDim2.fromOffset(0, 9),
-			Size = UDim2.fromOffset(2, 13),
+			Size = UDim2.fromOffset(2, 14),
 			Visible = false,
 		})
 		U.corner(mark, 1)
 		local indexLabel = U.label(row, {
 			Text = tostring(index),
 			TextSize = 8,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.3,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.4,
 			TextXAlignment = Enum.TextXAlignment.Center,
 			Position = UDim2.fromOffset(2, 0),
-			Size = UDim2.fromOffset(26, 31),
+			Size = UDim2.fromOffset(26, 32),
 		})
 		local coverHolder = U.frame(row, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(30, 4),
+			Position = UDim2.fromOffset(30, 4.5),
 			Size = UDim2.fromOffset(23, 23),
 		})
 		coverBox(coverHolder, UDim2.fromScale(1, 1), track, 4, { IconSize = 9, Stroke = false })
@@ -19505,37 +19566,31 @@ function MusicPage.Build(page, config)
 			TextSize = 9.5,
 			TextColor3 = T.Text,
 			TextTransparency = 0.04,
-			Position = UDim2.fromOffset(60, 2),
-			Size = UDim2.new(1, -220, 0, 14),
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			Position = UDim2.fromOffset(60, 3),
+			Size = UDim2.new(1, -210, 0, 14),
 		})
 		local artist = U.label(row, {
 			Text = track.artist,
 			TextSize = 7.5,
-			TextColor3 = T.Faint,
+			TextColor3 = T.Muted,
 			TextTransparency = 0.2,
-			Position = UDim2.fromOffset(60, 16),
-			Size = UDim2.new(1, -220, 0, 11),
-		})
-		local album = U.label(row, {
-			Text = (track.album or "") .. (tonumber(track.fee) == 1 and " · VIP" or ""),
-			TextSize = 7.5,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.25,
-			Position = UDim2.new(1, -166, 0, 0),
-			Size = UDim2.fromOffset(96, 31),
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			Position = UDim2.fromOffset(60, 17),
+			Size = UDim2.new(1, -210, 0, 11),
 		})
 		local duration = U.label(row, {
 			Text = musicFormatTime(track.duration),
 			TextSize = 7.5,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.25,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.28,
 			TextXAlignment = Enum.TextXAlignment.Right,
-			Position = UDim2.new(1, -66, 0, 0),
-			Size = UDim2.fromOffset(38, 31),
+			Position = UDim2.new(1, -90, 0, 0),
+			Size = UDim2.fromOffset(38, 32),
 		})
 		local more = U.frame(row, {
 			BackgroundColor3 = T.Window,
-			BackgroundTransparency = 0.3,
+			BackgroundTransparency = 0.25,
 			BorderSizePixel = 0,
 			Position = UDim2.new(1, -24, 0.5, -9),
 			Size = UDim2.fromOffset(18, 18),
@@ -19543,7 +19598,7 @@ function MusicPage.Build(page, config)
 			ZIndex = 5,
 		})
 		U.corner(more, 5)
-		local moreIcon = U.icon(more, "three-dots-horizontal", 9, T.Faint, {
+		local moreIcon = U.icon(more, "three-dots-horizontal", 9, T.Muted, {
 			Size = UDim2.fromScale(1, 1),
 			ZIndex = 6,
 			TextTransparency = 0.2,
@@ -19552,11 +19607,10 @@ function MusicPage.Build(page, config)
 			Root = row,
 			Title = title,
 			Artist = artist,
-			Album = album,
 			Duration = duration,
 			Mark = mark,
 			More = more,
-			BaseTransparency = baseTransparency,
+			BaseTransparency = 1,
 		}
 		local input = U.inputButton(row, function()
 			if not ids or #ids == 0 then
@@ -19583,10 +19637,10 @@ function MusicPage.Build(page, config)
 			openTrackMenu(more, track.id)
 		end)
 		U.connect(moreInput.MouseEnter, function()
-			U.tween(more, U.Tween.Fast, { BackgroundTransparency = 0.15 })
+			U.tween(more, U.Tween.Fast, { BackgroundTransparency = 0.1 })
 		end)
 		U.connect(moreInput.MouseLeave, function()
-			U.tween(more, U.Tween.Fast, { BackgroundTransparency = 0.3 })
+			U.tween(more, U.Tween.Fast, { BackgroundTransparency = 0.25 })
 		end)
 		if options.OnRemove then
 			local remove = U.frame(row, {
@@ -19599,7 +19653,7 @@ function MusicPage.Build(page, config)
 				ZIndex = 5,
 			})
 			U.corner(remove, 5)
-			U.icon(remove, "x-small", 9, T.Faint, {
+			U.icon(remove, "x-small", 9, T.Muted, {
 				Size = UDim2.fromScale(1, 1),
 				ZIndex = 6,
 				TextTransparency = 0.2,
@@ -19630,7 +19684,7 @@ function MusicPage.Build(page, config)
 			Font = F.Bold,
 			TextSize = 10.5,
 			TextColor3 = T.Muted,
-			TextTransparency = 0.25,
+			TextTransparency = 0.2,
 			TextXAlignment = Enum.TextXAlignment.Center,
 			Position = UDim2.new(0, 0, 0.5, 4),
 			Size = UDim2.new(1, 0, 0, 16),
@@ -19638,8 +19692,8 @@ function MusicPage.Build(page, config)
 		U.label(box, {
 			Text = detailText or "",
 			TextSize = 8.5,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.25,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.45,
 			TextWrapped = true,
 			TextXAlignment = Enum.TextXAlignment.Center,
 			Position = UDim2.new(0, 20, 0.5, 20),
@@ -19669,10 +19723,29 @@ function MusicPage.Build(page, config)
 			end
 			return scroll
 		end
+		local count = 0
+		for _, id in ipairs(ids) do
+			if M.Tracks[id] then
+				count = count + 1
+			end
+		end
+		local holder = U.frame(content, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, count * 32 + 8),
+			LayoutOrder = 1,
+		})
+		local card = nativeCard(holder, {
+			Size = UDim2.new(1, -32, 0, count * 32 + 8),
+			Position = UDim2.fromOffset(16, 0),
+			ClipsDescendants = true,
+		}, 10)
+		U.padding(card, 4, 3, 4, 3)
+		U.list(card, 0)
 		for index, id in ipairs(ids) do
 			local track = M.Tracks[id]
 			if track then
-				createTrackRow(content, index, track, ids, options)
+				createTrackRow(card, index, track, ids, options)
 			end
 		end
 		return scroll
@@ -19723,11 +19796,12 @@ function MusicPage.Build(page, config)
 		local cardW = math.floor((WORK_W - 32 - gap * (columns - 1)) / columns)
 		local cardH = cardW + 38
 		local rows = math.ceil(#playlists / columns)
+		sectionTitle(content, "推荐歌单", 2)
 		local grid = U.frame(content, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			Size = UDim2.new(1, 0, 0, rows * cardH + 12),
-			LayoutOrder = 2,
+			LayoutOrder = 3,
 		})
 		for index, entry in ipairs(playlists) do
 			local column = (index - 1) % columns
@@ -19766,8 +19840,8 @@ function MusicPage.Build(page, config)
 			U.label(card, {
 				Text = tostring(entry.creator or "网易云音乐") .. " · " .. formatCount(entry.playCount or entry.count) .. " 播放",
 				TextSize = 7,
-				TextColor3 = T.Faint,
-				TextTransparency = 0.25,
+				TextColor3 = T.Muted,
+				TextTransparency = 0.35,
 				Position = UDim2.fromOffset(1, cardW + 20),
 				Size = UDim2.fromOffset(cardW - 2, 11),
 			})
@@ -19779,7 +19853,7 @@ function MusicPage.Build(page, config)
 			end)
 			U.connect(input.MouseEnter, function()
 				badge.Visible = true
-				U.tween(name, U.Tween.Fast, { TextColor3 = T.White })
+				U.tween(name, U.Tween.Fast, { TextColor3 = T.Accent })
 			end)
 			U.connect(input.MouseLeave, function()
 				badge.Visible = false
@@ -19829,24 +19903,20 @@ function MusicPage.Build(page, config)
 		local cardW = math.floor((WORK_W - 32 - gap * (columns - 1)) / columns)
 		local cardH = cardW + 58
 		local rows = math.ceil(#M.Charts / columns)
+		sectionTitle(content, "官方榜单", 2)
 		local grid = U.frame(content, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			Size = UDim2.new(1, 0, 0, rows * cardH + 12),
-			LayoutOrder = 2,
+			LayoutOrder = 3,
 		})
 		for index, entry in ipairs(M.Charts) do
 			local column = (index - 1) % columns
 			local rowIndex = math.floor((index - 1) / columns)
-			local card = U.frame(grid, {
-				BackgroundColor3 = T.White,
-				BackgroundTransparency = 0.97,
-				BorderSizePixel = 0,
+			local card = nativeCard(grid, {
 				Position = UDim2.fromOffset(16 + column * (cardW + gap), rowIndex * cardH),
 				Size = UDim2.fromOffset(cardW, cardH - 8),
-			})
-			U.corner(card, 10)
-			U.stroke(card, T.StrokeSoft, 0.4, 1)
+			}, 10)
 			local cover = coverBox(card, UDim2.fromOffset(cardW - 20, cardW - 20), entry, 8, { CoverSize = 320 })
 			cover.Position = UDim2.fromOffset(10, 10)
 			local rank = U.frame(cover, {
@@ -19877,8 +19947,8 @@ function MusicPage.Build(page, config)
 			U.label(card, {
 				Text = tostring(entry.tag or "") .. " · " .. formatCount(entry.playCount or 0) .. " 播放",
 				TextSize = 7.5,
-				TextColor3 = T.Faint,
-				TextTransparency = 0.25,
+				TextColor3 = T.Muted,
+				TextTransparency = 0.35,
 				Position = UDim2.fromOffset(11, cardW + 20),
 				Size = UDim2.fromOffset(cardW - 22, 12),
 			})
@@ -19935,9 +20005,10 @@ function MusicPage.Build(page, config)
 			box.LayoutOrder = 2
 			return
 		end
+		sectionTitle(content, "云盘歌曲 · " .. tostring(#M.CloudIds), 2)
 		local list = buildTrackList(content, M.CloudIds, { Top = 0 })
-		list.LayoutOrder = 2
-		list.Size = UDim2.new(1, 0, 0, math.max(120, #M.CloudIds * 31 + 10))
+		list.LayoutOrder = 3
+		list.Size = UDim2.new(1, 0, 0, math.max(120, #M.CloudIds * 32 + 20))
 		list.AutomaticCanvasSize = Enum.AutomaticSize.None
 	end
 
@@ -19996,33 +20067,37 @@ function MusicPage.Build(page, config)
 			Size = UDim2.new(1, 0, 0, 0),
 			AutomaticSize = Enum.AutomaticSize.Y,
 		})
-		U.list(content, 0)
+		U.list(content, 6)
 
-		local head = U.frame(content, {
+		local headWrap = U.frame(content, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Size = UDim2.new(1, 0, 0, 132),
+			Size = UDim2.new(1, 0, 0, 118),
 			LayoutOrder = 1,
 		})
+		local head = nativeCard(headWrap, {
+			Position = UDim2.fromOffset(16, 8),
+			Size = UDim2.new(1, -32, 0, 104),
+		}, 10)
 		local coverHolder = U.frame(head, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(18, 12),
-			Size = UDim2.fromOffset(96, 96),
+			Position = UDim2.fromOffset(12, 12),
+			Size = UDim2.fromOffset(80, 80),
 		})
-		coverBox(coverHolder, UDim2.fromScale(1, 1), source, 10, {
+		coverBox(coverHolder, UDim2.fromScale(1, 1), source, 9, {
 			CoverSize = 360,
 			Icon = state.view.kind == "liked" and "heart" or "music-note",
-			IconSize = 22,
+			IconSize = 20,
 		})
 		U.label(head, {
 			Text = subtitle,
 			Font = F.Bold,
-			TextSize = 7.5,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.2,
-			Position = UDim2.fromOffset(128, 10),
-			Size = UDim2.new(1, -150, 0, 12),
+			TextSize = 8,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.35,
+			Position = UDim2.fromOffset(104, 10),
+			Size = UDim2.new(1, -128, 0, 12),
 		})
 		U.label(head, {
 			Text = titleText,
@@ -20030,30 +20105,31 @@ function MusicPage.Build(page, config)
 			TextSize = 18,
 			TextColor3 = T.Text,
 			TextTransparency = 0.02,
-			Position = UDim2.fromOffset(128, 22),
-			Size = UDim2.new(1, -150, 0, 26),
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			Position = UDim2.fromOffset(104, 22),
+			Size = UDim2.new(1, -128, 0, 24),
 		})
 		U.label(head, {
 			Text = description,
 			TextSize = 8.5,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.2,
-			Position = UDim2.fromOffset(128, 50),
-			Size = UDim2.new(1, -150, 0, 14),
+			TextColor3 = T.Muted,
+			TextTransparency = 0.3,
+			Position = UDim2.fromOffset(104, 47),
+			Size = UDim2.new(1, -128, 0, 14),
 		})
 		U.label(head, {
 			Text = playlist and playlist.creator or "Nerx Music · 网易云",
 			TextSize = 8,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.3,
-			Position = UDim2.fromOffset(128, 66),
-			Size = UDim2.new(1, -150, 0, 12),
+			TextColor3 = T.Muted,
+			TextTransparency = 0.45,
+			Position = UDim2.fromOffset(104, 62),
+			Size = UDim2.new(1, -128, 0, 12),
 		})
 		local actions = U.frame(head, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(128, 88),
-			Size = UDim2.new(1, -146, 0, 26),
+			Position = UDim2.fromOffset(104, 77),
+			Size = UDim2.new(1, -122, 0, 24),
 		})
 		local cursor = 0
 		local function playAll(shuffle)
@@ -20069,53 +20145,70 @@ function MusicPage.Build(page, config)
 				M:Play(ids[1], ids)
 			end
 		end
-		textButton(actions, 78, 26, "播放全部", "play-small", true, function() playAll(false) end).Position = UDim2.fromOffset(cursor, 0)
+		textButton(actions, 78, 24, "播放全部", "play-small", true, function() playAll(false) end).Position = UDim2.fromOffset(cursor, 0)
 		cursor = cursor + 84
-		textButton(actions, 72, 26, "乱序", "two-arrows-switch-right", false, function() playAll(true) end).Position = UDim2.fromOffset(cursor, 0)
+		textButton(actions, 72, 24, "乱序", "two-arrows-switch-right", false, function() playAll(true) end).Position = UDim2.fromOffset(cursor, 0)
 		cursor = cursor + 78
-		textButton(actions, 78, 26, "Coverflow", "rectangle-play-stacked", false, function()
+		textButton(actions, 78, 24, "Coverflow", "rectangle-play-stacked", false, function()
 			openCoverflow(ids)
 		end).Position = UDim2.fromOffset(cursor, 0)
 		cursor = cursor + 84
-		textButton(actions, 66, 26, "搜索", "magnifying-glass", false, function()
+		textButton(actions, 66, 24, "搜索", "magnifying-glass", false, function()
 			searchBox:CaptureFocus()
 		end).Position = UDim2.fromOffset(cursor, 0)
 		cursor = cursor + 72
 		if playlist and playlist.kind ~= "netease" then
-			textButton(actions, 26, 26, "", "plus-small", false, function()
+			textButton(actions, 26, 24, "", "plus-small", false, function()
 				openAddTrackPanel(actions, playlist.id)
 			end).Position = UDim2.fromOffset(cursor, 0)
 		end
 
-		local divider = U.frame(content, {
-			BackgroundColor3 = T.StrokeSoft,
-			BackgroundTransparency = 0.55,
-			BorderSizePixel = 0,
-			Size = UDim2.new(1, -32, 0, 1),
-			LayoutOrder = 2,
-		})
-		local listHolder = U.frame(content, {
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			Size = UDim2.new(1, 0, 0, math.max(120, #ids * 31 + 10)),
-			LayoutOrder = 3,
-		})
+		sectionTitle(content, "歌曲 · " .. tostring(#ids), 2)
 		if #ids == 0 then
-			local empty = emptyState(listHolder, playlist and playlist.kind == "netease" and "cloud" or "music-note",
+			local emptyWrap = U.frame(content, {
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Size = UDim2.new(1, 0, 0, 194),
+				LayoutOrder = 3,
+			})
+			local emptyCard = nativeCard(emptyWrap, {
+				Size = UDim2.new(1, -32, 0, 194),
+				Position = UDim2.fromOffset(16, 0),
+			}, 10)
+			local empty = emptyState(emptyCard, playlist and playlist.kind == "netease" and "cloud" or "music-note",
 				playlist and playlist.loading and "正在加载网易云歌单..." or "这里还没有歌曲",
 				playlist and playlist.error or "从网易云搜索歌曲，或导入一个歌单",
 				playlist and playlist.kind == "netease" and "刷新" or nil,
 				playlist and playlist.kind == "netease" and function()
 					M:OpenNeteasePlaylist(playlist.netId, playlist, nil, true)
 				end or nil)
-			empty.Position = UDim2.fromOffset(0, 0)
+			empty.Position = UDim2.fromOffset(0, 4)
 			empty.Size = UDim2.new(1, 0, 0, 180)
 			return
 		end
+		local count = 0
+		for _, id in ipairs(ids) do
+			if M.Tracks[id] then
+				count = count + 1
+			end
+		end
+		local listWrap = U.frame(content, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, count * 32 + 8),
+			LayoutOrder = 3,
+		})
+		local listCard = nativeCard(listWrap, {
+			Size = UDim2.new(1, -32, 0, count * 32 + 8),
+			Position = UDim2.fromOffset(16, 0),
+			ClipsDescendants = true,
+		}, 10)
+		U.padding(listCard, 4, 3, 4, 3)
+		U.list(listCard, 0)
 		for index, id in ipairs(ids) do
 			local track = M.Tracks[id]
 			if track then
-				createTrackRow(listHolder, index, track, ids)
+				createTrackRow(listCard, index, track, ids)
 			end
 		end
 	end
@@ -20185,19 +20278,32 @@ function MusicPage.Build(page, config)
 				AutomaticSize = Enum.AutomaticSize.Y,
 			})
 			U.list(content, 0)
+			local cardWrap = U.frame(content, {
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Size = UDim2.new(1, 0, 0, #results * 48 + 8),
+				LayoutOrder = 1,
+			})
+			local card = nativeCard(cardWrap, {
+				Size = UDim2.new(1, -32, 0, #results * 48 + 8),
+				Position = UDim2.fromOffset(16, 0),
+				ClipsDescendants = true,
+			}, 10)
+			U.padding(card, 4, 3, 4, 3)
+			U.list(card, 0)
 			for index, entry in ipairs(results) do
-				local row = U.frame(content, {
+				local row = U.frame(card, {
 					BackgroundColor3 = T.White,
-					BackgroundTransparency = index % 2 == 1 and 0.982 or 1,
+					BackgroundTransparency = 1,
 					BorderSizePixel = 0,
 					Size = UDim2.new(1, 0, 0, 48),
 					LayoutOrder = index,
 				})
-				U.corner(row, 5)
+				U.corner(row, 7)
 				local avatarHolder = U.frame(row, {
 					BackgroundTransparency = 1,
 					BorderSizePixel = 0,
-					Position = UDim2.fromOffset(12, 7),
+					Position = UDim2.fromOffset(10, 7),
 					Size = UDim2.fromOffset(34, 34),
 				})
 				coverBox(avatarHolder, UDim2.fromScale(1, 1), { coverUrl = entry.avatarUrl, color1 = "#6a5acd", color2 = "#241a52" }, 999, { Icon = "person-standing", IconSize = 14 })
@@ -20207,19 +20313,25 @@ function MusicPage.Build(page, config)
 					TextSize = 10,
 					TextColor3 = T.Text,
 					TextTransparency = 0.04,
-					Position = UDim2.fromOffset(58, 8),
-					Size = UDim2.new(1, -80, 0, 16),
+					Position = UDim2.fromOffset(56, 8),
+					Size = UDim2.new(1, -76, 0, 16),
 				})
 				U.label(row, {
 					Text = tostring(entry.musicSize or 0) .. " 首歌曲 · " .. formatCount(entry.fans or 0) .. " 粉丝",
 					TextSize = 8,
-					TextColor3 = T.Faint,
-					TextTransparency = 0.25,
-					Position = UDim2.fromOffset(58, 26),
-					Size = UDim2.new(1, -80, 0, 14),
+					TextColor3 = T.Muted,
+					TextTransparency = 0.35,
+					Position = UDim2.fromOffset(56, 26),
+					Size = UDim2.new(1, -76, 0, 14),
 				})
-				U.inputButton(row, function()
+				local input = U.inputButton(row, function()
 					openArtist(entry.netId, entry)
+				end)
+				U.connect(input.MouseEnter, function()
+					U.tween(row, U.Tween.Fast, { BackgroundTransparency = 0.94 })
+				end)
+				U.connect(input.MouseLeave, function()
+					U.tween(row, U.Tween.Fast, { BackgroundTransparency = 1 })
 				end)
 			end
 		else
@@ -20270,8 +20382,8 @@ function MusicPage.Build(page, config)
 				U.label(card, {
 					Text = tostring(entry.creator or "网易云音乐") .. " · " .. formatCount(entry.playCount or entry.count) .. " 播放",
 					TextSize = 7,
-					TextColor3 = T.Faint,
-					TextTransparency = 0.25,
+					TextColor3 = T.Muted,
+					TextTransparency = 0.35,
 					Position = UDim2.fromOffset(1, cardW + 20),
 					Size = UDim2.fromOffset(cardW - 2, 11),
 				})
@@ -20300,13 +20412,10 @@ function MusicPage.Build(page, config)
 		clear.AnchorPoint = Vector2.new(1, 0)
 		clear.Position = UDim2.new(1, -18, 0, 18)
 		local track = M.CurrentId and M.Tracks[M.CurrentId] or nil
-		local card = glassPanel(parent, {
-			BackgroundColor3 = T.White,
-			BackgroundTransparency = 0.965,
+		local card = nativeCard(parent, {
 			Position = UDim2.fromOffset(16, 66),
 			Size = UDim2.new(1, -32, 0, 78),
-			Radius = 10,
-		})
+		}, 10)
 		if track then
 			local coverHolder = U.frame(card, {
 				BackgroundTransparency = 1,
@@ -20327,8 +20436,8 @@ function MusicPage.Build(page, config)
 			U.label(card, {
 				Text = track.artist .. " — " .. track.album,
 				TextSize = 8.5,
-				TextColor3 = T.Faint,
-				TextTransparency = 0.2,
+				TextColor3 = T.Muted,
+				TextTransparency = 0.35,
 				Position = UDim2.fromOffset(84, 34),
 				Size = UDim2.new(1, -100, 0, 14),
 			})
@@ -20358,14 +20467,15 @@ function MusicPage.Build(page, config)
 			end
 		end
 		if #ids == 0 then
-			emptyState(parent, "rectangle-list", "队列是空的", "播放歌曲或点“下一首播放”添加到这里").Position = UDim2.fromOffset(0, 156)
+			emptyState(parent, "rectangle-list", "队列是空的", "播放歌曲或点“下一首播放”添加到这里").Position = UDim2.fromOffset(0, 166)
 			return
 		end
+		sectionTitle(parent, "播放队列 · " .. tostring(#ids), 4, 154, true)
 		local listHolder = U.frame(parent, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(0, 152),
-			Size = UDim2.new(1, 0, 1, -152),
+			Position = UDim2.fromOffset(0, 174),
+			Size = UDim2.new(1, 0, 1, -174),
 		})
 		local scroll = newScroll(listHolder, 0, 0)
 		local content = U.frame(scroll, {
@@ -20375,10 +20485,23 @@ function MusicPage.Build(page, config)
 			AutomaticSize = Enum.AutomaticSize.Y,
 		})
 		U.list(content, 0)
+		local listWrap = U.frame(content, {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, #ids * 32 + 8),
+			LayoutOrder = 1,
+		})
+		local listCard = nativeCard(listWrap, {
+			Size = UDim2.new(1, -32, 0, #ids * 32 + 8),
+			Position = UDim2.fromOffset(16, 0),
+			ClipsDescendants = true,
+		}, 10)
+		U.padding(listCard, 4, 3, 4, 3)
+		U.list(listCard, 0)
 		for index, id in ipairs(ids) do
 			local item = M.Tracks[id]
 			if item then
-				createTrackRow(content, index, item, ids, {
+				createTrackRow(listCard, index, item, ids, {
 					OnRemove = function(trackId)
 						local nextQueue = {}
 						for _, value in ipairs(M.Queue) do
@@ -20400,20 +20523,17 @@ function MusicPage.Build(page, config)
 	-- -----------------------------------------------------------------------------------
 	buildParty = function(parent)
 		local head = pageHeader(parent, "LISTEN TOGETHER", "一起听", "和好友同步听歌 · 本服预览")
-		local code = string.format("DANGO-%04X", LocalPlayer.UserId % 0xFFFF)
-		local card = glassPanel(parent, {
-			BackgroundColor3 = T.White,
-			BackgroundTransparency = 0.96,
+		local code = string.format("NERX-%04X", LocalPlayer.UserId % 0xFFFF)
+		local card = nativeCard(parent, {
 			Position = UDim2.fromOffset(16, 64),
 			Size = UDim2.new(1, -32, 0, 104),
-			Radius = 10,
-		})
+		}, 10)
 		U.label(card, {
 			Text = "房间号",
 			Font = F.Bold,
-			TextSize = 7.5,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.2,
+			TextSize = 8,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.4,
 			Position = UDim2.fromOffset(14, 12),
 			Size = UDim2.new(1, -28, 0, 12),
 		})
@@ -20439,28 +20559,18 @@ function MusicPage.Build(page, config)
 		U.label(card, {
 			Text = "跨客户端同步需要房间服务；这里展示本服成员与房间状态。",
 			TextSize = 7.5,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.3,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.4,
 			Position = UDim2.fromOffset(190, 56),
 			Size = UDim2.new(1, -204, 0, 24),
 		})
 
-		local section = U.label(parent, {
-			Text = "房间成员",
-			Font = F.Bold,
-			TextSize = 8,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.2,
-			Position = UDim2.fromOffset(20, 178),
-			Size = UDim2.new(1, -40, 0, 12),
-		})
+		sectionTitle(parent, "房间成员", 5, 176, true)
 		local players = Players:GetPlayers()
-		local listHolder = U.frame(parent, {
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
+		local listHolder = nativeCard(parent, {
 			Position = UDim2.fromOffset(16, 194),
-			Size = UDim2.new(1, -32, 0, math.min(180, #players * 44 + 8)),
-		})
+			Size = UDim2.new(1, -32, 0, math.min(180, #players * 42 + 8)),
+		}, 10)
 		local sorted = {}
 		for _, player in ipairs(players) do
 			sorted[#sorted + 1] = player
@@ -20477,10 +20587,10 @@ function MusicPage.Build(page, config)
 		for index, player in ipairs(sorted) do
 			local row = U.frame(listHolder, {
 				BackgroundColor3 = T.White,
-				BackgroundTransparency = index % 2 == 1 and 0.975 or 1,
+				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
-				Position = UDim2.fromOffset(0, (index - 1) * 42),
-				Size = UDim2.new(1, 0, 0, 38),
+				Position = UDim2.fromOffset(4, 4 + (index - 1) * 42),
+				Size = UDim2.new(1, -8, 0, 38),
 			})
 			U.corner(row, 6)
 			local avatarFrame = U.frame(row, {
@@ -20511,8 +20621,8 @@ function MusicPage.Build(page, config)
 			U.label(row, {
 				Text = player == LocalPlayer and "房主 · 本机" or "听众 · 本服",
 				TextSize = 7.5,
-				TextColor3 = T.Faint,
-				TextTransparency = 0.25,
+				TextColor3 = T.Muted,
+				TextTransparency = 0.4,
 				Position = UDim2.fromOffset(46, 20),
 				Size = UDim2.new(1, -140, 0, 12),
 			})
@@ -20569,26 +20679,25 @@ function MusicPage.Build(page, config)
 		if not artist.loaded and not artist.loading and not artist.error and #artist.songs == 0 then
 			M:LoadArtist(artist.netId, artist, false)
 		end
-		local head = U.frame(parent, {
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			Size = UDim2.new(1, 0, 0, 132),
-		})
+		local head = nativeCard(parent, {
+			Position = UDim2.fromOffset(16, 6),
+			Size = UDim2.new(1, -32, 0, 112),
+		}, 10)
 		local avatarHolder = U.frame(head, {
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(18, 12),
-			Size = UDim2.fromOffset(86, 86),
+			Position = UDim2.fromOffset(14, 16),
+			Size = UDim2.fromOffset(80, 80),
 		})
 		coverBox(avatarHolder, UDim2.fromScale(1, 1), artist, 999, { Icon = "person-standing", IconSize = 24, CoverSize = 360 })
 		U.label(head, {
 			Text = "NET EASE · ARTIST",
 			Font = F.Bold,
 			TextSize = 7.5,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.2,
-			Position = UDim2.fromOffset(118, 12),
-			Size = UDim2.new(1, -136, 0, 12),
+			TextColor3 = T.Muted,
+			TextTransparency = 0.4,
+			Position = UDim2.fromOffset(108, 14),
+			Size = UDim2.new(1, -126, 0, 12),
 		})
 		U.label(head, {
 			Text = artist.name or "网易云歌手",
@@ -20596,25 +20705,26 @@ function MusicPage.Build(page, config)
 			TextSize = 20,
 			TextColor3 = T.Text,
 			TextTransparency = 0.02,
-			Position = UDim2.fromOffset(118, 24),
-			Size = UDim2.new(1, -136, 0, 28),
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			Position = UDim2.fromOffset(108, 26),
+			Size = UDim2.new(1, -126, 0, 26),
 		})
 		U.label(head, {
 			Text = tostring(artist.musicSize or #artist.songs) .. " 首歌曲 · " .. tostring(artist.albumSize or #artist.albums) .. " 张专辑 · " .. formatCount(artist.fans or 0) .. " 粉丝",
 			TextSize = 8.5,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.2,
-			Position = UDim2.fromOffset(118, 54),
-			Size = UDim2.new(1, -136, 0, 14),
+			TextColor3 = T.Muted,
+			TextTransparency = 0.35,
+			Position = UDim2.fromOffset(108, 52),
+			Size = UDim2.new(1, -126, 0, 14),
 		})
 		U.label(head, {
 			Text = artist.briefDesc or "",
 			TextSize = 8,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.3,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.45,
 			TextWrapped = true,
-			Position = UDim2.fromOffset(118, 70),
-			Size = UDim2.new(1, -136, 0, 28),
+			Position = UDim2.fromOffset(108, 70),
+			Size = UDim2.new(1, -126, 0, 28),
 		})
 		local tabs = segmented(parent, 150, 24, {
 			{ Value = "songs", Label = "歌曲" },
@@ -20623,7 +20733,7 @@ function MusicPage.Build(page, config)
 			state.artistTab = value
 			renderMain()
 		end)
-		tabs.Root.Position = UDim2.fromOffset(18, 106)
+		tabs.Root.Position = UDim2.fromOffset(18, 126)
 		local playButton = textButton(parent, 80, 24, "播放全部", "play-small", true, function()
 			if #(artist.songs or {}) > 0 then
 				M:Play(artist.songs[1], artist.songs)
@@ -20632,15 +20742,15 @@ function MusicPage.Build(page, config)
 			end
 		end)
 		playButton.AnchorPoint = Vector2.new(1, 0)
-		playButton.Position = UDim2.new(1, -18, 0, 106)
+		playButton.Position = UDim2.new(1, -18, 0, 126)
 
 		if #artist.songs == 0 and not artist.loaded and state.artistTab == "songs" then
 			emptyState(parent, "person-standing", artist.loading and "正在加载歌手..." or (artist.error or "歌手暂无歌曲"),
-				artist.loading and "请稍候" or "可以尝试刷新").Position = UDim2.fromOffset(0, 146)
+				artist.loading and "请稍候" or "可以尝试刷新").Position = UDim2.fromOffset(0, 166)
 			return
 		end
 		if state.artistTab == "albums" then
-			local scroll = newScroll(parent, 146, 0)
+			local scroll = newScroll(parent, 166, 0)
 			local content = U.frame(scroll, {
 				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
@@ -20664,8 +20774,8 @@ function MusicPage.Build(page, config)
 				U.label(grid, {
 					Text = "暂无专辑",
 					TextSize = 9,
-					TextColor3 = T.Faint,
-					TextTransparency = 0.3,
+					TextColor3 = T.Muted,
+					TextTransparency = 0.4,
 					Position = UDim2.fromOffset(18, 8),
 					Size = UDim2.new(1, -36, 0, 16),
 				})
@@ -20693,8 +20803,8 @@ function MusicPage.Build(page, config)
 				U.label(card, {
 					Text = tostring(album.count or 0) .. " 首",
 					TextSize = 7,
-					TextColor3 = T.Faint,
-					TextTransparency = 0.25,
+					TextColor3 = T.Muted,
+					TextTransparency = 0.35,
 					Position = UDim2.fromOffset(1, cardW + 20),
 					Size = UDim2.fromOffset(cardW - 2, 11),
 				})
@@ -20710,7 +20820,7 @@ function MusicPage.Build(page, config)
 				end)
 			end
 		else
-			local list = buildTrackList(parent, artist.songs, { Top = 146 })
+			local list = buildTrackList(parent, artist.songs, { Top = 166 })
 			list.ZIndex = 2
 		end
 	end
@@ -20733,15 +20843,15 @@ function MusicPage.Build(page, config)
 
 	local function settingsCard(content, title, desc, order)
 		local card = U.frame(content, {
-			BackgroundColor3 = T.SurfaceRaised,
-			BackgroundTransparency = 0.62,
+			BackgroundColor3 = T.Surface,
+			BackgroundTransparency = 0.45,
 			BorderSizePixel = 0,
 			Size = UDim2.new(1, -32, 0, 0),
 			AutomaticSize = Enum.AutomaticSize.Y,
 			LayoutOrder = order,
 		})
 		U.corner(card, 10)
-		U.stroke(card, T.StrokeSoft, 0.55, 1)
+		U.stroke(card, T.Stroke, 0.65, 1)
 		U.padding(card, 12, 12, 12, 12)
 		local list = U.list(card, 8)
 		list.Padding = UDim.new(0, 4)
@@ -20762,8 +20872,8 @@ function MusicPage.Build(page, config)
 		U.label(head, {
 			Text = desc or "",
 			TextSize = 7.5,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.25,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.4,
 			Position = UDim2.fromOffset(0, 16),
 			Size = UDim2.new(1, 0, 0, 11),
 		})
@@ -20794,8 +20904,8 @@ function MusicPage.Build(page, config)
 			U.label(row, {
 				Text = sub,
 				TextSize = 7.5,
-				TextColor3 = T.Faint,
-				TextTransparency = 0.3,
+				TextColor3 = T.Muted,
+				TextTransparency = 0.45,
 				Position = UDim2.fromOffset(0, 16),
 				Size = UDim2.new(1, -(width or 190), 0, 12),
 			})
@@ -20860,8 +20970,8 @@ function MusicPage.Build(page, config)
 		local valueLabel = U.label(row, {
 			Text = display(value),
 			TextSize = 8,
-			TextColor3 = T.Faint,
-			TextTransparency = 0.15,
+			TextColor3 = T.Muted,
+			TextTransparency = 0.3,
 			TextXAlignment = Enum.TextXAlignment.Right,
 			AnchorPoint = Vector2.new(1, 0.5),
 			Position = UDim2.new(1, 0, 0.5, 0),
@@ -20993,6 +21103,7 @@ function MusicPage.Build(page, config)
 		})
 		local list = U.list(content, 10)
 		list.Padding = UDim.new(0, 6)
+		list.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
 		if state.settingsTab == "lyrics" then
 			local card, addRow = settingsCard(content, "通用歌词", "同时应用到菜单歌词和世界 3D 歌词。", 1)
@@ -21117,8 +21228,8 @@ function MusicPage.Build(page, config)
 			U.label(card5, {
 				Text = "存储：" .. Nerx.Storage:Path(MUSIC_STORE_FILE) .. " · 音频缓存：" .. tostring(M.CacheDir),
 				TextSize = 7.5,
-				TextColor3 = T.Faint,
-				TextTransparency = 0.3,
+				TextColor3 = T.Muted,
+				TextTransparency = 0.45,
 				TextWrapped = true,
 				Size = UDim2.new(1, -24, 0, 24),
 				LayoutOrder = 100,
@@ -21146,8 +21257,8 @@ function MusicPage.Build(page, config)
 			U.label(card, {
 				Text = "所有高亮、进度、播放行和世界歌词都会跟随这个颜色。",
 				TextSize = 7.5,
-				TextColor3 = T.Faint,
-				TextTransparency = 0.3,
+				TextColor3 = T.Muted,
+				TextTransparency = 0.45,
 				TextWrapped = true,
 				Size = UDim2.new(1, -24, 0, 22),
 				LayoutOrder = 2,
@@ -21173,8 +21284,8 @@ function MusicPage.Build(page, config)
 			U.label(card2, {
 				Text = "毛玻璃参数（模糊、透明度、色散）在主题页的“毛玻璃参数”里调整。",
 				TextSize = 7.5,
-				TextColor3 = T.Faint,
-				TextTransparency = 0.3,
+				TextColor3 = T.Muted,
+				TextTransparency = 0.45,
 				TextWrapped = true,
 				Size = UDim2.new(1, -24, 0, 22),
 				LayoutOrder = 2,
@@ -21187,8 +21298,8 @@ function MusicPage.Build(page, config)
 			U.label(card4, {
 				Text = "数据源：网易云音乐 · 播放：Sound + 本地缓存 · 歌词：LRC / YRC 逐字",
 				TextSize = 7.5,
-				TextColor3 = T.Faint,
-				TextTransparency = 0.3,
+				TextColor3 = T.Muted,
+				TextTransparency = 0.45,
 				TextWrapped = true,
 				Size = UDim2.new(1, -24, 0, 24),
 				LayoutOrder = 2,
@@ -22328,8 +22439,8 @@ function MusicPage.Build(page, config)
 	coverflow.Artist = U.label(coverflow.Root, {
 		Text = "",
 		TextSize = 8.5,
-		TextColor3 = T.Faint,
-		TextTransparency = 0.2,
+		TextColor3 = T.Muted,
+		TextTransparency = 0.35,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		Position = UDim2.new(0, 0, 1, -78),
 		Size = UDim2.new(1, 0, 0, 14),
