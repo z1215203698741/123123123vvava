@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v2.2.0
+	Nerx UI Library · v2.2.2
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "2.2.0"
+Nerx.Version = "2.2.2"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -18311,7 +18311,10 @@ function Music:QrLoginStart(callback)
 		-- as "设备环境异常"; mirrors are only used to read MUSIC_U after the
 		-- official endpoint returns 803 without exposing Set-Cookie.
 		local response = musicHttp({
-			Url = "https://music.163.com/api/login/qrcode/unikey?type=1",
+			-- type 3 matches the current web/mirror QR check. Mixing type 1
+			-- here and type 3 on the mirrors left the mirror permanently at
+			-- 801, so its 803 JSON never carried MUSIC_U.
+			Url = "https://music.163.com/api/login/qrcode/unikey?type=3",
 			Method = "POST",
 			Headers = musicNcmHeaders(""),
 			Body = "",
@@ -18485,14 +18488,14 @@ function Music:QrLoginPoll(key, callback)
 			-- Official QR session: poll the official endpoint only. Sending the
 			-- key to third-party mirrors while waiting is what triggered the
 			-- phone's "设备环境异常" risk control.
-			local directCode, directToken = directCheck(1)
+			local directCode, directToken = directCheck(3)
 			code, token = directCode, directToken
 			if code == 803 and not token then
-				local type3Code, type3Token = directCheck(3)
-				if type3Token then
-					code, token = 803, type3Token
+				local type1Code, type1Token = directCheck(1)
+				if type1Token then
+					code, token = 803, type1Token
 				elseif not code then
-					code = type3Code
+					code = type1Code
 				end
 			end
 			-- Authorized, but the executor stripped Set-Cookie: ask the mirrors
@@ -18578,7 +18581,7 @@ function Music:QrLoginPoll(key, callback)
 					end
 				end)
 			elseif callback then
-				callback("failed", "登录成功但没有拿到 MUSIC_U Cookie，可改用 Cookie 登录")
+				callback("failed", "扫码已确认，但镜像未返回 MUSIC_U；请关闭 VPN/代理后重试，或改用 Cookie 登录")
 			end
 			return
 		end
@@ -20638,7 +20641,6 @@ function MusicPage.Build(page, config)
 		worldSystem = nil,
 		worldTrackId = nil,
 		artistTab = "songs",
-		partyControl = true,
 		hotkeyCapture = nil,
 		lastPlayerTrack = nil,
 		islandToken = 0,
@@ -20671,7 +20673,6 @@ function MusicPage.Build(page, config)
 	local buildPlaylist
 	local buildSearch
 	local buildQueue
-	local buildParty
 	local buildArtist
 	local buildSettings
 	local openLyrics
@@ -21400,8 +21401,6 @@ function MusicPage.Build(page, config)
 			return state.query ~= "" and ("搜索 · " .. state.query) or "搜索结果"
 		elseif state.view.kind == "queue" then
 			return "正在播放"
-		elseif state.view.kind == "party" then
-			return "一起听"
 		elseif state.view.kind == "artist" then
 			local artist = M:GetArtist(state.view.id)
 			return artist and artist.name or "歌手"
@@ -22445,9 +22444,6 @@ function MusicPage.Build(page, config)
 		railItem(nextOrder(), "music-note", "正在播放", nil, state.view.kind == "queue", function()
 			setView({ kind = "queue" })
 		end)
-		railItem(nextOrder(), "microphone", "一起听", nil, state.view.kind == "party", function()
-			setView({ kind = "party" })
-		end)
 		if M.Settings.provider == "netease" then
 			railItem(nextOrder(), "cloud", "云盘", nil, state.view.kind == "cloud", function()
 				setView({ kind = "cloud" })
@@ -22687,8 +22683,6 @@ function MusicPage.Build(page, config)
 			buildSettings(viewHost)
 		elseif state.view.kind == "queue" then
 			buildQueue(viewHost)
-		elseif state.view.kind == "party" then
-			buildParty(viewHost)
 		elseif state.view.kind == "artist" then
 			buildArtist(viewHost)
 		elseif state.view.kind == "search" then
@@ -23996,196 +23990,6 @@ function MusicPage.Build(page, config)
 				})
 			end
 		end
-	end
-
-	-- -----------------------------------------------------------------------------------
-	-- Listen together (local preview)
-	-- -----------------------------------------------------------------------------------
-	buildParty = function(parent)
-		local head = pageHeader(parent, "LISTEN TOGETHER", "一起听", "和好友同步听歌 · 本服预览")
-		local code = string.format("NERX-%04X", LocalPlayer.UserId % 0xFFFF)
-		local card = nativeCard(parent, {
-			Position = UDim2.fromOffset(16, 64),
-			Size = UDim2.new(1, -32, 0, 104),
-		}, 10)
-		U.label(card, {
-			Text = "房间号",
-			Font = F.Bold,
-			TextSize = 8,
-			TextColor3 = T.Muted,
-			TextTransparency = 0.4,
-			Position = UDim2.fromOffset(14, 12),
-			Size = UDim2.new(1, -28, 0, 12),
-		})
-		U.label(card, {
-			Text = code,
-			Font = F.Mono,
-			TextSize = 18,
-			TextColor3 = T.Text,
-			TextTransparency = 0.02,
-			Position = UDim2.fromOffset(14, 24),
-			Size = UDim2.new(1, -28, 0, 24),
-		})
-		local copy = textButton(card, 70, 24, "复制", "floppy-disk", false, function()
-			Nerx.Storage:Copy(code)
-			notify("一起听", "房间号已复制", "floppy-disk", T.Green)
-		end)
-		copy.Position = UDim2.fromOffset(14, 56)
-		local invite = textButton(card, 88, 24, "邀请好友", "person-standing", true, function()
-			Nerx.Storage:Copy("来一起听歌：房间 " .. code)
-			notify("一起听", "邀请文案已复制", "person-standing", T.Accent)
-		end)
-		invite.Position = UDim2.fromOffset(90, 56)
-		U.label(card, {
-			Text = "跨客户端同步需要房间服务；这里展示本服成员与房间状态。",
-			TextSize = 7.5,
-			TextColor3 = T.Muted,
-			TextTransparency = 0.4,
-			Position = UDim2.fromOffset(190, 56),
-			Size = UDim2.new(1, -204, 0, 24),
-		})
-
-		sectionTitle(parent, "房间成员", 5, 176, true)
-		local players = Players:GetPlayers()
-		local sorted = {}
-		for _, player in ipairs(players) do
-			sorted[#sorted + 1] = player
-		end
-		table.sort(sorted, function(a, b)
-			if a == LocalPlayer then
-				return true
-			end
-			if b == LocalPlayer then
-				return false
-			end
-			return a.Name < b.Name
-		end)
-		local scroll = newScroll(parent, 194, 10)
-		local content = U.frame(scroll, {
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			Size = UDim2.new(1, 0, 0, 0),
-			AutomaticSize = Enum.AutomaticSize.Y,
-		})
-		U.list(content, 8)
-		local memberWrap = U.frame(content, {
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			Size = UDim2.new(1, 0, 0, #players * 42 + 8),
-			LayoutOrder = 1,
-		})
-		local listHolder = nativeCard(memberWrap, {
-			Size = UDim2.new(1, -32, 0, #players * 42 + 8),
-			Position = UDim2.fromOffset(16, 0),
-			ClipsDescendants = true,
-		}, 10)
-		for index, player in ipairs(sorted) do
-			local row = U.frame(listHolder, {
-				BackgroundColor3 = T.White,
-				BackgroundTransparency = 1,
-				BorderSizePixel = 0,
-				Position = UDim2.fromOffset(4, 4 + (index - 1) * 42),
-				Size = UDim2.new(1, -8, 0, 38),
-			})
-			U.corner(row, 7)
-			local avatarFrame = U.frame(row, {
-				BackgroundColor3 = T.Accent,
-				BackgroundTransparency = 0.82,
-				BorderSizePixel = 0,
-				Position = UDim2.fromOffset(10, 4),
-				Size = UDim2.fromOffset(30, 30),
-			})
-			U.corner(avatarFrame, 999)
-			U.label(avatarFrame, {
-				Text = string.upper(string.sub(player.Name, 1, 1)),
-				Font = F.Bold,
-				TextSize = 10,
-				TextColor3 = T.Text,
-				TextXAlignment = Enum.TextXAlignment.Center,
-				Size = UDim2.fromScale(1, 1),
-			})
-			U.label(row, {
-				Text = player.Name,
-				Font = F.Bold,
-				TextSize = 10,
-				TextColor3 = T.Text,
-				TextTransparency = 0.05,
-				Position = UDim2.fromOffset(50, 4),
-				Size = UDim2.new(1, -160, 0, 15),
-			})
-			U.label(row, {
-				Text = player == LocalPlayer and "房主 · 本机" or "听众 · 本服",
-				TextSize = 8,
-				TextColor3 = T.Muted,
-				TextTransparency = 0.4,
-				Position = UDim2.fromOffset(50, 19),
-				Size = UDim2.new(1, -160, 0, 12),
-			})
-			local role = U.frame(row, {
-				AnchorPoint = Vector2.new(1, 0.5),
-				BackgroundColor3 = player == LocalPlayer and T.Accent or T.White,
-				BackgroundTransparency = player == LocalPlayer and 0.84 or 0.94,
-				BorderSizePixel = 0,
-				Position = UDim2.new(1, -12, 0.5, 0),
-				Size = UDim2.fromOffset(40, 18),
-			})
-			U.corner(role, 6)
-			U.label(role, {
-				Text = player == LocalPlayer and "房主" or "成员",
-				Font = F.Bold,
-				TextSize = 7.5,
-				TextColor3 = player == LocalPlayer and T.Accent or T.Muted,
-				TextXAlignment = Enum.TextXAlignment.Center,
-				Size = UDim2.fromScale(1, 1),
-			})
-		end
-		local controlWrap = U.frame(content, {
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			Size = UDim2.new(1, 0, 0, 46),
-			LayoutOrder = 2,
-		})
-		local controlCard = nativeCard(controlWrap, {
-			Size = UDim2.new(1, -32, 0, 46),
-			Position = UDim2.fromOffset(16, 0),
-		}, 10)
-		U.label(controlCard, {
-			Text = "成员控制",
-			Font = F.Bold,
-			TextSize = 9.5,
-			TextColor3 = T.Text,
-			TextTransparency = 0.08,
-			Position = UDim2.fromOffset(14, 8),
-			Size = UDim2.new(1, -90, 0, 14),
-		})
-		U.label(controlCard, {
-			Text = "允许房间成员切换歌曲",
-			TextSize = 7.5,
-			TextColor3 = T.Muted,
-			TextTransparency = 0.4,
-			Position = UDim2.fromOffset(14, 23),
-			Size = UDim2.new(1, -90, 0, 12),
-		})
-		local toggle = U.frame(controlCard, {
-			BackgroundColor3 = state.partyControl and T.Accent or T.ToggleOff,
-			BorderSizePixel = 0,
-			AnchorPoint = Vector2.new(1, 0.5),
-			Position = UDim2.new(1, -14, 0.5, 0),
-			Size = UDim2.fromOffset(30, 16),
-		})
-		U.corner(toggle, 8)
-		local knob = U.frame(toggle, {
-			BackgroundColor3 = T.White,
-			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(state.partyControl and 16 or 2, 2),
-			Size = UDim2.fromOffset(12, 12),
-		})
-		U.corner(knob, 6)
-		U.inputButton(toggle, function()
-			state.partyControl = not state.partyControl
-			U.tween(toggle, U.Tween.Fast, { BackgroundColor3 = state.partyControl and T.Accent or T.ToggleOff })
-			U.tween(knob, U.Tween.Fast, { Position = UDim2.fromOffset(state.partyControl and 16 or 2, 2) })
-		end)
 	end
 
 	-- -----------------------------------------------------------------------------------
