@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v2.1.1
+	Nerx UI Library · v2.2.0
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "2.1.1"
+Nerx.Version = "2.2.0"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -15303,6 +15303,29 @@ local function musicFormatTime(seconds)
 	return string.format("%02d:%02d", math.floor(seconds / 60), seconds % 60)
 end
 
+-- QQ's lyric endpoint returns HTML entities (`&#58;` for ":", `&#10;` for
+-- newline). Without decoding them the LRC timestamps never match.
+local function musicHtmlUnescape(text)
+	text = tostring(text or "")
+	local function numeric(code, base)
+		local value = tonumber(code, base) or 0
+		if value <= 0 or value > 1114111 or (value >= 0xD800 and value <= 0xDFFF) then
+			return ""
+		end
+		return utf8.char(value)
+	end
+	text = text:gsub("&#(%d+);?", function(code)
+		return numeric(code, 10)
+	end)
+	text = text:gsub("&#[xX](%x+);?", function(code)
+		return numeric(code, 16)
+	end)
+	text = text:gsub("&nbsp;", " ")
+	text = text:gsub("&quot;", '"'):gsub("&apos;", "'")
+	text = text:gsub("&lt;", "<"):gsub("&gt;", ">"):gsub("&amp;", "&")
+	return text
+end
+
 local function musicParseLrc(raw)
 	local entries = {}
 	for line in tostring(raw or ""):gmatch("[^\r\n]+") do
@@ -16010,9 +16033,9 @@ local function musicNormalizeData(decoded)
 		immersiveDim = math.clamp(tonumber(settings.immersiveDim) or 46, 0, 100),
 		worldLyrics = settings.worldLyrics ~= false,
 		worldProjection = projection,
-		worldDistance = math.clamp(tonumber(settings.worldDistance) or 8, 3, 20),
+		worldDistance = math.clamp(tonumber(settings.worldDistance) or 8, 3, 300),
 		worldHeight = math.clamp(tonumber(settings.worldHeight) or 0, -2, 4),
-		worldSize = math.clamp(tonumber(settings.worldSize) or 1.1, 0.6, 4),
+		worldSize = math.clamp(tonumber(settings.worldSize) or 1.1, 0.6, 20),
 		worldGlow = math.clamp(tonumber(settings.worldGlow) or 70, 0, 100),
 		worldDim = settings.worldDim ~= false,
 		worldWiggle = settings.worldWiggle ~= false,
@@ -18283,41 +18306,44 @@ function Music:QrLoginStart(callback)
 		local failure
 		self._QrBase = nil
 		self._QrCookie = ""
-		-- Mirror first: its QR check returns MUSIC_U inside the JSON body.
-		for _, base in ipairs(Music.QrMirrors) do
-			local mirror = musicMirrorJson(base, "/login/qr/key?timestamp=" .. musicTimestamp(), 15)
-			local candidate = type(mirror) == "table"
-				and tostring((type(mirror.data) == "table" and mirror.data.unikey) or mirror.unikey or "")
-				or ""
-			if string.match(candidate, "^[%w%-]+$") then
-				key = candidate
-				self._QrBase = base
-				break
+		-- Create the QR session from the executor's own network first. A key
+		-- created by a Vercel mirror makes NetEase's phone app flag the scan
+		-- as "设备环境异常"; mirrors are only used to read MUSIC_U after the
+		-- official endpoint returns 803 without exposing Set-Cookie.
+		local response = musicHttp({
+			Url = "https://music.163.com/api/login/qrcode/unikey?type=1",
+			Method = "POST",
+			Headers = musicNcmHeaders(""),
+			Body = "",
+		}, 20)
+		local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
+		local candidate = data and tostring(data.unikey or "") or ""
+		if string.match(candidate, "^[%w%-]+$") then
+			key = candidate
+			-- Keep the NMTID the official endpoint set on the key request;
+			-- the QR session can be bound to it.
+			local rawCookie = self:_CookieStringFromHeaders(response and response.cookies)
+				or self:_CookieStringFromHeaders(response and response.headers)
+			if rawCookie and rawCookie ~= "" then
+				self._QrCookie = rawCookie
 			end
-			if type(mirror) == "table" then
-				failure = mirror.message or mirror.msg or failure
-			end
+		else
+			failure = (data and (data.message or data.msg)) or (response and response.error) or failure
 		end
 		if key == "" then
-			local response = musicHttp({
-				Url = "https://music.163.com/api/login/qrcode/unikey?type=3",
-				Method = "POST",
-				Headers = musicNcmHeaders(""),
-				Body = "",
-			}, 20)
-			local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
-			local candidate = data and tostring(data.unikey or "") or ""
-			if string.match(candidate, "^[%w%-]+$") then
-				key = candidate
-				-- Keep the NMTID the official endpoint set on the key request;
-				-- the QR session can be bound to it.
-				local rawCookie = self:_CookieStringFromHeaders(response and response.cookies)
-					or self:_CookieStringFromHeaders(response and response.headers)
-				if rawCookie and rawCookie ~= "" then
-					self._QrCookie = rawCookie
+			for _, base in ipairs(Music.QrMirrors) do
+				local mirror = musicMirrorJson(base, "/login/qr/key?timestamp=" .. musicTimestamp(), 15)
+				local mirrorKey = type(mirror) == "table"
+					and tostring((type(mirror.data) == "table" and mirror.data.unikey) or mirror.unikey or "")
+					or ""
+				if string.match(mirrorKey, "^[%w%-]+$") then
+					key = mirrorKey
+					self._QrBase = base
+					break
 				end
-			else
-				failure = (data and (data.message or data.msg)) or (response and response.error) or failure
+				if type(mirror) == "table" then
+					failure = mirror.message or mirror.msg or failure
+				end
 			end
 		end
 		if key == "" then
@@ -18432,76 +18458,94 @@ function Music:QrLoginPoll(key, callback)
 			end
 			return nil
 		end
-		-- 1) Mirror first, keeping the session cookie returned at 801 so the
-		--    final 803 response is tied to the same QR session.
-		if self._QrBase then
+		local function directCheck(qrType)
+			local headers = musicNcmHeaders("")
+			if self._QrCookie and self._QrCookie ~= "" then
+				headers["Cookie"] = self._QrCookie .. "; " .. tostring(headers["Cookie"] or "")
+			end
+			local response = musicHttp({
+				Url = "https://music.163.com/api/login/qrcode/client/login?key=" .. musicUrlEncode(key) .. "&type=" .. tostring(qrType),
+				Method = "GET",
+				Headers = headers,
+			}, 15)
+			local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
+			local rawCookie = self:_CookieStringFromHeaders(response and response.cookies)
+				or self:_CookieStringFromHeaders(response and response.headers)
+			if rawCookie and rawCookie ~= "" then
+				self._QrCookie = rawCookie
+			end
+			local directCode = tonumber(data and data.code) or 801
+			local directToken = self:_CookieFromHeaders(response and response.cookies)
+				or self:_CookieFromHeaders(response and response.headers)
+				or tokenFromData(data)
+				or (response and response.body and string.match(tostring(response.body), "MUSIC_U=([^;%s\"}]+)"))
+			return directCode, directToken
+		end
+		if not self._QrBase then
+			-- Official QR session: poll the official endpoint only. Sending the
+			-- key to third-party mirrors while waiting is what triggered the
+			-- phone's "设备环境异常" risk control.
+			local directCode, directToken = directCheck(1)
+			code, token = directCode, directToken
+			if code == 803 and not token then
+				local type3Code, type3Token = directCheck(3)
+				if type3Token then
+					code, token = 803, type3Token
+				elseif not code then
+					code = type3Code
+				end
+			end
+			-- Authorized, but the executor stripped Set-Cookie: ask the mirrors
+			-- purely to read MUSIC_U from their JSON body.
+			if code == 803 and not token then
+				for _, base in ipairs(Music.QrMirrors) do
+					local mirrorCode, mirrorToken = mirrorCheck(base)
+					if mirrorToken then
+						code, token = 803, mirrorToken
+						break
+					end
+					if not code and mirrorCode then
+						code = mirrorCode
+					end
+				end
+			end
+		else
+			-- The direct key request failed, so this QR was created by a mirror;
+			-- keep polling that same session.
 			local mirrorCode, mirrorToken = mirrorCheck(self._QrBase)
 			if mirrorCode then
 				code, token = mirrorCode, mirrorToken
 			end
-		end
-		if not code or (code == 803 and not token) then
-			for _, base in ipairs(Music.QrMirrors) do
-				if base ~= self._QrBase then
-					local mirrorCode, mirrorToken = mirrorCheck(base)
-					if mirrorCode then
-						-- Never downgrade a confirmed 803 back to 801/802.
-						if mirrorCode == 803 or not code then
-							code, token = mirrorCode, mirrorToken
-						end
-						if mirrorCode ~= 803 or mirrorToken then
+			if code == 803 and not token then
+				for _, base in ipairs(Music.QrMirrors) do
+					if base ~= self._QrBase then
+						local otherCode, otherToken = mirrorCheck(base)
+						if otherCode == 803 and otherToken then
+							code, token = 803, otherToken
 							break
 						end
 					end
 				end
 			end
-		end
-		-- 2) Official endpoint fallback. Try type 3 first (current web flow),
-		--    then type 1; a mirror can return 803 without exposing the cookie.
-		if not token then
-			local directHeaders = musicNcmHeaders("")
-			if self._QrCookie and self._QrCookie ~= "" then
-				directHeaders["Cookie"] = self._QrCookie .. "; " .. tostring(directHeaders["Cookie"] or "")
-			end
-			for _, qrType in ipairs({ 3, 1 }) do
-				local response = musicHttp({
-					Url = "https://music.163.com/api/login/qrcode/client/login?key=" .. musicUrlEncode(key) .. "&type=" .. tostring(qrType),
-					Method = "GET",
-					Headers = directHeaders,
-				}, 15)
-				local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
-				local rawCookie = self:_CookieStringFromHeaders(response and response.cookies)
-					or self:_CookieStringFromHeaders(response and response.headers)
-				if rawCookie and rawCookie ~= "" then
-					self._QrCookie = rawCookie
-				end
-				local directCode = tonumber(data and data.code) or 801
-				if directCode == 803 then
-					local directToken = self:_CookieFromHeaders(response and response.cookies)
-						or self:_CookieFromHeaders(response and response.headers)
-						or tokenFromData(data)
-						or (response and response.body and string.match(tostring(response.body), "MUSIC_U=([^;%s\"}]+)"))
-					if directToken then
-						code, token = 803, directToken
-						break
-					end
-					if not code then
-						code = 803
-					end
+			if not token and (not code or code ~= 803) then
+				local directCode, directToken = directCheck(1)
+				if directToken then
+					code, token = 803, directToken
 				elseif not code then
 					code = directCode
 				end
 			end
 		end
-		-- 3) NetEase sometimes sets the login cookie on the request right after
-		--    the 803 confirmation; ask the primary mirror once more.
-		if code == 803 and not token and self._QrBase then
+		-- NetEase sometimes sets the login cookie on the request right after
+		-- the 803 confirmation; ask the mirrors once more after a short beat.
+		if code == 803 and not token then
 			task.wait(0.8)
-			local retryCode, retryToken = mirrorCheck(self._QrBase)
-			if retryToken then
-				code, token = 803, retryToken
-			elseif not code and retryCode then
-				code = retryCode
+			for _, base in ipairs(Music.QrMirrors) do
+				local retryCode, retryToken = mirrorCheck(base)
+				if retryToken then
+					code, token = 803, retryToken
+					break
+				end
 			end
 		end
 		if code == 803 and not token and type(altRequest) == "function" then
@@ -20169,7 +20213,7 @@ function Music:FetchQqLyrics(trackId)
 		}, 20)
 		local data = response and response.body and Nerx.Storage:Decode(response.body) or nil
 		track.lyricsLoading = false
-		local raw = data and tostring(data.lyric or "") or ""
+		local raw = musicHtmlUnescape(data and tostring(data.lyric or "") or "")
 		if raw == "" then
 			track.lyricsError = "QQ 音乐暂无歌词"
 			self:_Emit("lyrics", track)
@@ -20239,10 +20283,11 @@ function Music:Seek(ratio)
 	if not sound or duration <= 0 then
 		return
 	end
-	local speed = tonumber(self.Settings and self.Settings.speed) or 1
 	local position = math.clamp(tonumber(ratio) or 0, 0, 1) * duration
 	pcall(function()
-		sound.TimePosition = math.min(position / math.max(0.5, speed), math.max(0, duration - 0.05))
+		-- TimePosition is media time. PlaybackSpeed already changes how fast
+		-- it advances, so dividing by speed here made seeks drift at non-1x.
+		sound.TimePosition = math.min(position, math.max(0, duration - 0.05))
 	end)
 end
 
@@ -20257,8 +20302,9 @@ end
 
 function Music:GetPosition()
 	if self.Sound and self.Sound.TimeLength and self.Sound.TimeLength > 0 then
-		local speed = tonumber(self.Settings and self.Settings.speed) or 1
-		return math.clamp(self.Sound.TimePosition * math.max(0.5, speed), 0, self.Sound.TimeLength)
+		-- Media time, not wall-clock time. Multiplying by PlaybackSpeed made
+		-- every lyric/slider run ahead or behind at non-1x speeds.
+		return math.clamp(self.Sound.TimePosition, 0, self.Sound.TimeLength)
 	end
 	return 0
 end
@@ -24698,13 +24744,13 @@ function MusicPage.Build(page, config)
 			}, function()
 				syncWorld(true)
 			end)
-			rangeRow(card4, addRow4, "距离", "离玩家的距离", "worldDistance", 4, 20, 1, "m", function()
+			rangeRow(card4, addRow4, "距离", "离玩家的距离", "worldDistance", 4, 300, 2, "m", function()
 				scheduleWorldSync(0.05)
 			end)
 			rangeRow(card4, addRow4, "高度", "相对视线的高度", "worldHeight", -2, 4, 0.5, "m", function()
 				scheduleWorldSync(0.05)
 			end)
-			rangeRow(card4, addRow4, "大小", "歌词整体缩放", "worldSize", 0.6, 4, 0.05, "x", function()
+			rangeRow(card4, addRow4, "大小", "歌词整体缩放", "worldSize", 0.6, 20, 0.1, "x", function()
 				scheduleWorldSync(0.05)
 			end)
 
@@ -25134,9 +25180,11 @@ function MusicPage.Build(page, config)
 				local near = distance == 1
 				if isActive then
 					local flashAge = row.Flash and (os.clock() - row.Flash) or 99
-					local pulse = math.clamp(1 - flashAge / 0.5, 0, 1)
+					local pulse = math.clamp(1 - flashAge / 0.18, 0, 1)
 					row.Main.Text = richLyricLine(row.Entry, position, accentHex)
-					row.Main.TextTransparency = 0.45 * pulse
+					-- Keep the new line readable immediately; the old 0.45 fade
+					-- made the highlight look ~0.5s behind the vocal.
+					row.Main.TextTransparency = 0.1 * pulse
 					row.Main.TextColor3 = T.White
 					row.Main.TextSize = row.BaseTextSize + (depth and 2 or 0)
 					row.Main.TextStrokeColor3 = T.Accent
@@ -25902,9 +25950,9 @@ function MusicPage.Build(page, config)
 		if not camera or not entry then
 			return nil
 		end
-		local distance = math.clamp(tonumber(M.Settings.worldDistance) or 10, 4, 20)
+		local distance = math.clamp(tonumber(M.Settings.worldDistance) or 10, 4, 300)
 		local height = math.clamp(tonumber(M.Settings.worldHeight) or 0, -2, 4)
-		local scale = math.clamp(tonumber(M.Settings.worldSize) or 1, 0.6, 1.8)
+		local scale = math.clamp(tonumber(M.Settings.worldSize) or 1, 0.6, 20)
 		local projection = M.Settings.worldProjection or "follow"
 		local yaw, pitch, spawnDistance
 		if projection == "wall" then
@@ -25914,13 +25962,13 @@ function MusicPage.Build(page, config)
 		elseif projection == "orbit" then
 			yaw = math.random() * math.pi * 2
 			pitch = -math.rad(3 + math.random() * 10)
-			spawnDistance = distance * (0.75 + math.random() * 0.5)
+			spawnDistance = distance * (0.6 + math.random() * 0.4)
 		else
 			-- Follow: a real random point around the player, not a fixed spot
 			-- glued to the camera. Some lines start far to the side / above.
 			yaw = (math.random() * 2 - 1) * math.rad(65)
 			pitch = -math.rad(2 + math.random() * 16)
-			spawnDistance = distance * (0.55 + math.random() * 0.95)
+			spawnDistance = distance * (0.45 + math.random() * 0.55)
 		end
 		local base = camera.CFrame
 		local position
@@ -26168,7 +26216,7 @@ function MusicPage.Build(page, config)
 				local k = 1
 				if camera then
 					local distance = (camera.CFrame.Position - line.BasePosition).Magnitude
-					k = math.clamp((line.RefDistance / math.max(1, distance)) * line.Scale, 0.35, 2.8)
+					k = math.clamp((line.RefDistance / math.max(1, distance)) * line.Scale, 0.35, 24)
 				end
 				local age = now - (line.Spawned or now)
 				local born = 0.84 + 0.16 * math.clamp(age / 0.26, 0, 1)
@@ -26194,7 +26242,7 @@ function MusicPage.Build(page, config)
 						local viewport = camera.ViewportSize
 						local screen, onScreen = camera:WorldToViewportPoint(line.BasePosition)
 						if not onScreen or screen.Z <= 0 then
-							local distance = math.clamp(tonumber(M.Settings.worldDistance) or 10, 4, 20)
+							local distance = math.clamp(tonumber(M.Settings.worldDistance) or 10, 4, 300)
 							line.BasePosition = camera.CFrame.Position + camera.CFrame.LookVector * distance
 						else
 							local marginX = math.min(viewport.X * 0.45, math.max(60, viewport.X * 0.16))
@@ -26203,7 +26251,7 @@ function MusicPage.Build(page, config)
 							local cy = math.clamp(screen.Y, marginY, viewport.Y - marginY)
 							if math.abs(cx - screen.X) > 0.5 or math.abs(cy - screen.Y) > 0.5 then
 								local ray = camera:ViewportPointToRay(cx, cy)
-								local distance = math.clamp((camera.CFrame.Position - line.BasePosition).Magnitude, 4, 40)
+								local distance = math.clamp((camera.CFrame.Position - line.BasePosition).Magnitude, 4, 300)
 								local target = ray.Origin + ray.Direction * distance
 								line.BasePosition = line.BasePosition:Lerp(target, 1 - math.exp(-dt * 5))
 							end
