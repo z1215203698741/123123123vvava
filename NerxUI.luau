@@ -1,5 +1,5 @@
 --[[
-	Nerx UI Library · v2.2.2
+	Nerx UI Library · v2.2.3
 	A component-first, Neverlose-inspired Roblox interface library.
 
 	Single-file ModuleScript / loadstring library. It returns the Nerx table and
@@ -67,7 +67,7 @@ local function protect(gui)
 end
 
 local Nerx = {}
-Nerx.Version = "2.2.2"
+Nerx.Version = "2.2.3"
 
 local Theme = {
 	Window = Color3.fromRGB(14, 14, 15),
@@ -18306,15 +18306,17 @@ function Music:QrLoginStart(callback)
 		local failure
 		self._QrBase = nil
 		self._QrCookie = ""
+		self._QrScanned = false
+		self._QrMirrorTries = 0
 		-- Create the QR session from the executor's own network first. A key
 		-- created by a Vercel mirror makes NetEase's phone app flag the scan
 		-- as "设备环境异常"; mirrors are only used to read MUSIC_U after the
 		-- official endpoint returns 803 without exposing Set-Cookie.
 		local response = musicHttp({
-			-- type 3 matches the current web/mirror QR check. Mixing type 1
-			-- here and type 3 on the mirrors left the mirror permanently at
-			-- 801, so its 803 JSON never carried MUSIC_U.
-			Url = "https://music.163.com/api/login/qrcode/unikey?type=3",
+			-- The QR image encodes music.163.com/login?codekey=..., which is the
+			-- web authorization page. A type-3 key scanned through that page is
+			-- reported as expired (800), so create the web (type 1) session here.
+			Url = "https://music.163.com/api/login/qrcode/unikey?type=1",
 			Method = "POST",
 			Headers = musicNcmHeaders(""),
 			Body = "",
@@ -18485,30 +18487,59 @@ function Music:QrLoginPoll(key, callback)
 			return directCode, directToken
 		end
 		if not self._QrBase then
-			-- Official QR session: poll the official endpoint only. Sending the
-			-- key to third-party mirrors while waiting is what triggered the
-			-- phone's "设备环境异常" risk control.
-			local directCode, directToken = directCheck(3)
-			code, token = directCode, directToken
-			if code == 803 and not token then
-				local type1Code, type1Token = directCheck(1)
-				if type1Token then
-					code, token = 803, type1Token
-				elseif not code then
-					code = type1Code
+			if not self._QrScanned then
+				-- Before the phone scans, only the official endpoint is polled.
+				local directCode, directToken = directCheck(1)
+				code, token = directCode, directToken
+				if code == 802 then
+					-- Scanned and waiting for phone confirmation. From now on let
+					-- a mirror read the final 803 JSON so its `cookie` field can
+					-- provide MUSIC_U even though the executor drops Set-Cookie.
+					self._QrScanned = true
+					self._QrMirrorTries = 0
+				elseif code == 803 and not token then
+					local type3Code, type3Token = directCheck(3)
+					if type3Token then
+						code, token = 803, type3Token
+					end
 				end
-			end
-			-- Authorized, but the executor stripped Set-Cookie: ask the mirrors
-			-- purely to read MUSIC_U from their JSON body.
-			if code == 803 and not token then
+			else
+				self._QrMirrorTries = (self._QrMirrorTries or 0) + 1
+				local mirrorAny
 				for _, base in ipairs(Music.QrMirrors) do
 					local mirrorCode, mirrorToken = mirrorCheck(base)
-					if mirrorToken then
-						code, token = 803, mirrorToken
-						break
+					if mirrorCode then
+						mirrorAny = mirrorCode
+						if mirrorToken then
+							code, token = 803, mirrorToken
+							break
+						end
 					end
-					if not code and mirrorCode then
-						code = mirrorCode
+				end
+				code = mirrorAny or code
+				-- Keep showing "已扫码，请在手机上确认" if the mirror still
+				-- reports 801 after the phone already scanned the code.
+				if self._QrScanned and (code == 801 or code == nil) then
+					code = 802
+				end
+				-- A mirror using a different QR type may report 800 for a key
+				-- that the official endpoint still considers authorized.
+				if self._QrScanned and code == 800 then
+					local directCode, directToken = directCheck(1)
+					if directToken then
+						code, token = 803, directToken
+					else
+						code = directCode
+					end
+				end
+				-- If the mirror is stuck at 801 (different QR type) assume the
+				-- 803 was consumed by the official poll after ~8s and retry it.
+				if not token and self._QrMirrorTries >= 4 and code ~= 803 then
+					local directCode, directToken = directCheck(1)
+					if directToken then
+						code, token = 803, directToken
+					elseif directCode == 803 then
+						code = 803
 					end
 				end
 			end
@@ -18551,6 +18582,32 @@ function Music:QrLoginPoll(key, callback)
 				end
 			end
 		end
+		-- Roblox's own HTTP client is a separate code path from the executor's
+		-- request(); occasionally it is the only one that exposes Set-Cookie.
+		if code == 803 and not token then
+			local ok, httpService = pcall(function()
+				return game:GetService("HttpService")
+			end)
+			if ok and httpService then
+				local requestHeaders = musicNcmHeaders("")
+				if self._QrCookie and self._QrCookie ~= "" then
+					requestHeaders["Cookie"] = self._QrCookie .. "; " .. tostring(requestHeaders["Cookie"] or "")
+				end
+				local sent, httpResponse = pcall(function()
+					return httpService:RequestAsync({
+						Url = "https://music.163.com/api/login/qrcode/client/login?key=" .. musicUrlEncode(key) .. "&type=1",
+						Method = "GET",
+						Headers = requestHeaders,
+					})
+				end)
+				if sent and type(httpResponse) == "table" then
+					token = self:_CookieFromHeaders(httpResponse.Headers)
+					if not token and httpResponse.Body then
+						token = string.match(tostring(httpResponse.Body), "MUSIC_U=([^;%s\"}]+)")
+					end
+				end
+			end
+		end
 		if code == 803 and not token and type(altRequest) == "function" then
 			local altHeaders = musicNcmHeaders("")
 			if self._QrCookie and self._QrCookie ~= "" then
@@ -18581,7 +18638,7 @@ function Music:QrLoginPoll(key, callback)
 					end
 				end)
 			elseif callback then
-				callback("failed", "扫码已确认，但镜像未返回 MUSIC_U；请关闭 VPN/代理后重试，或改用 Cookie 登录")
+				callback("no_cookie", "扫码已确认，但执行器/镜像都没有返回 MUSIC_U；请改用 Cookie 登录")
 			end
 			return
 		end
@@ -26743,9 +26800,17 @@ function MusicPage.Build(page, config)
 
 	local function pollQrLogin(key, token)
 		task.spawn(function()
+			local startedAt = os.clock()
 			while state.loginOpen and state.qrToken == token and state.qrKey == key do
 				task.wait(2)
 				if not state.loginOpen or state.qrToken ~= token or state.qrKey ~= key then
+					return
+				end
+				-- Refresh proactively before NetEase silently expires the key;
+				-- this avoids "scan the old QR, it is already expired" loops.
+				if state.loginTab == "qr" and not M._QrScanned and os.clock() - startedAt > 100 then
+					state.qrStatus = "二维码已自动刷新，请扫描新的二维码"
+					startQrLogin()
 					return
 				end
 				M:QrLoginPoll(key, function(status, message)
@@ -26757,14 +26822,29 @@ function MusicPage.Build(page, config)
 					elseif status == "scanned" then
 						state.qrStatus = "已扫码，请在手机上确认"
 					elseif status == "expired" then
-						state.qrStatus = "二维码已过期，请刷新"
+						state.qrStatus = "二维码已过期，正在自动刷新..."
 						state.qrKey = nil
+						renderLogin()
+						task.delay(0.8, function()
+							if state.loginOpen and state.loginTab == "qr" then
+								startQrLogin()
+							end
+						end)
+						return
 					elseif status == "success" then
 						state.qrStatus = "登录成功"
 						notify(M:ProviderName(), "登录成功：" .. tostring(message or M:ProviderAccountName()), "circle-check", T.Green)
 						closeLogin()
 						renderRail()
 						return
+					elseif status == "no_cookie" then
+						-- The scan was authorized, but this executor never exposes
+						-- Set-Cookie. Move the user to the guaranteed cookie flow
+						-- instead of leaving them stuck on the QR tab.
+						state.qrStatus = tostring(message or "扫码已确认，但无法读取 Cookie，请改用 Cookie 登录")
+						state.qrKey = nil
+						state.loginTab = "cookie"
+						notify(M:ProviderName(), state.qrStatus, "triangle-exclamation", T.Amber)
 					elseif status == "failed" then
 						state.qrStatus = "登录失败：" .. tostring(message or "未知错误")
 						state.qrKey = nil
